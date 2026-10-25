@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "generator": "@pomegranate/compiler",
+  "files": {
+    "client.consumer.operations.ts": "508e4e8ee26d8af9d85b6d6698b9a54207c9d3a7bc514f9ef771c9c0406bcc03",
+    "client.consumer.schemas.ts": "d170e37a14dd49ca64fc90cd6c8e60d1cd0ffc5f1a3891339c7af582691d0aa8",
+    "client.consumer.ts": "bbbac0a35018d5ee38398c7da560e6499b3489155bbbc341ba0b5d71100324aa",
+    "client.staff.operations.ts": "6b5aef4f538c62b0592345ef7fd5f5054b16ba932b9d8ff3adf0a8e0838b1a46",
+    "client.staff.schemas.ts": "7b1b3aebbfa8e22e12c3cb3c9a6238838c8fddf41b4bfd9a3544fb45b5ae6cc5",
+    "client.staff.ts": "e2c13bfb8d81c1752e2e036de65e2d087b56fe7e76b96a73af44532210df01bb",
+    "runtime.ts": "d582b0ca4eb02d7bf22ee2325a61e5602303dd94b1cc69c2d395f97b3f08550b"
+  }
+}

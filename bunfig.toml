@@ -1,0 +1,2 @@
+[install]
+minimumReleaseAge = 518400 # Six days, in seconds.

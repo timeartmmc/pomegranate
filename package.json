@@ -1,0 +1,65 @@
+{
+  "name": "pomegranate-compiler",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "A strict local OpenAPI compiler for TypeScript request contracts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/timeartmmc/pomegranate.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "packageManager": "bun@1.4.3",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": "26.x"
+  },
+  "bin": {
+    "pom": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "ARCHITECTURE.md",
+    "CONTRIBUTING.md"
+  ],
+  "scripts": {
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json && node scripts/copy-runtime.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint --deny-warnings --type-aware --type-check src examples/json && oxlint --deny-warnings scripts test",
+    "test": "node --test test/*.test.mjs",
+    "test:package": "node scripts/verify-package.mjs",
+    "example:generate": "node dist/cli.js generate --config examples/json/pom.json",
+    "example:check": "node dist/cli.js check --config examples/json/pom.json",
+    "example:run": "tsc -p examples/json/tsconfig.json && node examples/json/.build/demo.js",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "verify": "bun run format:check && bun run lint && bun run build && bun run test && bun run example:check && bun run example:run && bun run test:package",
+    "prepack": "bun run build"
+  },
+  "peerDependencies": {
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "ajv": "8.20.0",
+    "oxlint": "1.88.0",
+    "oxlint-tsgolint": "7.0.2004",
+    "playwright": "1.64.1",
+    "typescript": "7.0.2",
+    "zod": "4.6.7"
+  },
+  "dependencies": {
+    "oxfmt": "0.73.0"
+  }
+}

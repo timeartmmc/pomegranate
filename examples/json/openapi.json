@@ -1,0 +1,402 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Synthetic widget API",
+    "version": "1.0.0"
+  },
+  "x-pom-policy": {
+    "version": 2,
+    "auth": {
+      "public": {
+        "transport": "none"
+      },
+      "session": {
+        "transport": "bearer"
+      },
+      "partnerStaff": {
+        "transport": "bearer"
+      }
+    },
+    "retry": ["never"],
+    "timeout": ["interactive"],
+    "surfaces": ["consumer", "staff"]
+  },
+  "paths": {
+    "/api/widgets/{widgetId}/preparations": {
+      "post": {
+        "operationId": "prepareWidget",
+        "tags": ["Widgets", "Preparations"],
+        "x-pom": {
+          "auth": "session",
+          "retry": "never",
+          "timeout": "interactive",
+          "surfaces": ["consumer"]
+        },
+        "parameters": [
+          {
+            "name": "widgetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WidgetId"
+            }
+          },
+          {
+            "name": "dryRun",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreparationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The request was valid but preparation was refused",
+            "headers": {
+              "X-Request-ID": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Preparation is pending",
+            "headers": {
+              "X-Request-ID": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pending"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid preparation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A conflicting preparation exists",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "X-Request-ID": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/widgets/{widgetId}": {
+      "get": {
+        "operationId": "getWidget",
+        "x-pom": {
+          "auth": "session",
+          "retry": "never",
+          "timeout": "interactive",
+          "surfaces": ["consumer", "staff"]
+        },
+        "parameters": [
+          {
+            "name": "widgetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WidgetId"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Widget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Widget"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Widget missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "head": {
+        "operationId": "checkHealth",
+        "x-pom": {
+          "auth": "public",
+          "retry": "never",
+          "timeout": "interactive",
+          "surfaces": ["consumer", "staff"]
+        },
+        "responses": {
+          "204": {
+            "description": "Healthy"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/widgets": {
+      "options": {
+        "operationId": "widgetOptions",
+        "x-pom": {
+          "auth": "public",
+          "retry": "never",
+          "timeout": "interactive",
+          "surfaces": ["consumer"]
+        },
+        "responses": {
+          "204": {
+            "description": "Options accepted"
+          }
+        },
+        "security": [{}]
+      }
+    },
+    "/api/staff/reports": {
+      "get": {
+        "operationId": "getStaffReport",
+        "x-pom": {
+          "auth": "partnerStaff",
+          "retry": "never",
+          "timeout": "interactive",
+          "surfaces": ["staff"]
+        },
+        "responses": {
+          "200": {
+            "description": "Synthetic staff report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffReport"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PreparationInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["acknowledged", "label"],
+        "properties": {
+          "acknowledged": {
+            "type": "boolean",
+            "const": true
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "Widget": {
+        "type": "object",
+        "required": ["id", "label"],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/WidgetId"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "Refusal": {
+        "type": "object",
+        "required": ["state", "reason"],
+        "properties": {
+          "state": {
+            "type": "string",
+            "const": "refused"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "Pending": {
+        "type": "object",
+        "required": ["state", "reference"],
+        "properties": {
+          "state": {
+            "type": "string",
+            "const": "pending"
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "required": ["code", "detail"],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "Conflict": {
+        "type": "object",
+        "required": ["code", "retryable"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "const": "conflict"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WidgetId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "StaffReport": {
+        "type": "object",
+        "required": ["summary"],
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/StaffSummary"
+          }
+        }
+      },
+      "StaffSummary": {
+        "type": "object",
+        "required": ["total", "period"],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "period": {
+            "$ref": "#/components/schemas/StaffPeriod"
+          }
+        }
+      },
+      "StaffPeriod": {
+        "type": "string",
+        "enum": ["daily", "weekly"]
+      },
+      "UnusedMessage": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "WidgetSession": {
+        "type": "http",
+        "scheme": "Bearer",
+        "bearerFormat": "Synthetic token"
+      }
+    }
+  },
+  "security": [
+    {
+      "WidgetSession": []
+    }
+  ]
+}

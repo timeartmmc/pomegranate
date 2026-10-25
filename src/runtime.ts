@@ -1,0 +1,755 @@
+/*!
+ * MIT License
+ *
+ * Copyright (c) 2026 Jamil Kazimzade
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+import { z } from 'zod';
+
+export function patternTest(pattern: string): (value: string) => boolean {
+  const expression = new RegExp(pattern, 'u');
+  return (value) => expression.test(value);
+}
+
+function decimal(value: number): readonly [bigint, number] {
+  const [mantissa, exponent] = value.toString().split('e');
+  const fraction = mantissa!.split('.')[1]?.length ?? 0;
+  return [BigInt(mantissa!.replace('.', '')), Number(exponent ?? 0) - fraction];
+}
+
+export function multipleOf(divisor: number): (value: number) => boolean {
+  const [divisorDigits, divisorExponent] = decimal(divisor);
+  // Interpret finite JS numbers by their decimal spelling. Integer arithmetic
+  // avoids remainder rounding and handles scientific notation and subnormals.
+  return (value) => {
+    if (!Number.isFinite(value)) return false;
+    const [digits, exponent] = decimal(value);
+    const shift = exponent - divisorExponent;
+    return shift >= 0
+      ? (digits * 10n ** BigInt(shift)) % divisorDigits === 0n
+      : digits % (divisorDigits * 10n ** BigInt(-shift)) === 0n;
+  };
+}
+
+const isoDateTime = z.iso.datetime({ offset: true });
+// The supported RFC 3339 profile requires seconds and a timezone, accepts
+// lowercase t/z, and preserves wire text. Leap-second timestamps are excluded.
+export const dateTime = z
+  .string()
+  .refine(
+    (value) =>
+      /T\d{2}:\d{2}:\d{2}/i.test(value) &&
+      isoDateTime.safeParse(value.toUpperCase()).success,
+    'expected a calendar date-time with seconds and timezone (no leap seconds)',
+  );
+
+// Native applications resolve file references and own file access/serialization.
+// Keep browser File globals and types out of this shared runtime.
+export const nativeFile = z
+  .object({
+    uri: z.string().min(1),
+    name: z.string().min(1).optional(),
+    mediaType: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type NativeFile = z.input<typeof nativeFile>;
+
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+function dictionary<Value>(): Record<string, Value> {
+  return Object.create(null) as Record<string, Value>;
+}
+
+function plainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+const invalidJson = Symbol('invalid JSON');
+
+function cloneJson(input: unknown): JsonValue | typeof invalidJson {
+  const result: Record<string, JsonValue> = {};
+  type Frame = {
+    source?: object;
+    target: Record<string, JsonValue> | JsonValue[];
+    entries: Iterator<readonly [string | number, unknown]>;
+  };
+  const stack: Frame[] = [
+    { target: result, entries: [['value', input] as const].values() },
+  ];
+  const pending = new Set<object>();
+  // Validate and copy iteratively: valid JSON can exceed the JS call stack.
+  // Track ancestors, not all visited nodes, so shared values remain valid.
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1]!;
+    const entry = frame.entries.next();
+    if (entry.done) {
+      if (frame.source) pending.delete(frame.source);
+      stack.pop();
+      continue;
+    }
+    const [key, value] = entry.value;
+    let copy: JsonValue;
+    if (
+      value === null ||
+      typeof value === 'string' ||
+      typeof value === 'boolean' ||
+      (typeof value === 'number' && Number.isFinite(value))
+    )
+      copy = value;
+    else {
+      if ((!Array.isArray(value) && !plainRecord(value)) || pending.has(value))
+        return invalidJson;
+      pending.add(value);
+      copy = Array.isArray(value) ? [] : {};
+      stack.push({
+        source: value,
+        target: copy,
+        entries: Array.isArray(value)
+          ? value.entries()
+          : Object.entries(value).values(),
+      });
+    }
+    // Own JSON keys such as __proto__ must remain data, including in arrays.
+    Object.defineProperty(frame.target, key, {
+      value: copy,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return result['value']!;
+}
+
+export const jsonValue = z.custom<JsonValue>().transform((value, context) => {
+  const result = cloneJson(value);
+  if (result === invalidJson) {
+    context.addIssue({ code: 'custom', message: 'expected a JSON value' });
+    return z.NEVER;
+  }
+  return result;
+});
+
+export function recordSchema<V extends z.ZodType>(values: V) {
+  // Zod records omit __proto__ without validating it. Dynamic JSON keys are
+  // data: inspect own entries and use FromEntries to preserve them safely.
+  return z
+    .custom<Record<string, z.input<V>>>(plainRecord, 'expected an object')
+    .transform((input, context): Record<string, z.output<V>> => {
+      const entries: [string, z.output<V>][] = [];
+      for (const [name, value] of Object.entries(input)) {
+        const parsed = values.safeParse(value);
+        if (parsed.success) entries.push([name, parsed.data]);
+        else
+          for (const issue of validationIssues(parsed.error.issues))
+            context.addIssue({
+              code: 'custom',
+              path: [name, ...issue.path],
+              message: issue.message,
+            });
+      }
+      return Object.fromEntries(entries);
+    });
+}
+
+export type Policy = Readonly<{
+  auth: Readonly<{ label: string; transport: 'none' | 'bearer' }>;
+  retry: string;
+  timeout: string;
+}>;
+export type HeaderContext = Readonly<Record<string, string>>;
+export type ObservedResponse = Readonly<{
+  status: number;
+  headers: HeaderContext;
+  body: string;
+}>;
+export type ValidationIssue = Readonly<{
+  path: readonly (string | number)[];
+  message: string;
+}>;
+function validationIssues(
+  issues: readonly z.core.$ZodIssue[],
+  prefix: readonly (string | number)[] = [],
+): ValidationIssue[] {
+  return issues.flatMap((issue): ValidationIssue[] => {
+    const path = [
+      ...prefix,
+      ...issue.path.map((part) =>
+        typeof part === 'symbol' ? String(part) : part,
+      ),
+    ];
+    // Union alternatives carry relative paths. Preserve each cause before a
+    // custom map issue or public error conversion can erase the branch tree.
+    if (issue.code === 'invalid_union')
+      return issue.errors.flatMap((branch, index) =>
+        validationIssues(branch, path).map((detail) => ({
+          ...detail,
+          message: `union branch ${index + 1}: ${detail.message}`,
+        })),
+      );
+    return [{ path, message: issue.message }];
+  });
+}
+export type ProtocolIssue = Readonly<{
+  part: 'status' | 'headers' | 'content-type' | 'body';
+  path?: readonly (string | number)[];
+  message: string;
+}>;
+
+export type ProtocolFailure = Readonly<{
+  kind: 'protocol';
+  operationId: string;
+  status: number;
+  headers: HeaderContext;
+  validatedHeaders: HeaderContext;
+  issues: readonly ProtocolIssue[];
+}>;
+
+type HeaderSpec = Readonly<{ schema: z.ZodType<string>; required: boolean }>;
+type ResponseSpec = Readonly<{
+  headers: Readonly<Record<string, HeaderSpec>>;
+}> &
+  (
+    | Readonly<{ bodyKind: 'none' }>
+    | Readonly<{ bodyKind: 'json'; schema: z.ZodType }>
+  );
+export type Responses = Readonly<Record<number, ResponseSpec>>;
+
+type Data<R> = R extends { schema: infer S extends z.ZodType }
+  ? z.output<S>
+  : undefined;
+export type DeclaredResponse<R extends Responses> = {
+  [S in keyof R]: S extends number
+    ? Readonly<{
+        kind: number extends S
+          ? 'success' | 'error'
+          : `${S}` extends `2${string}`
+            ? 'success'
+            : 'error';
+        operationId: string;
+        status: S;
+        headers: HeaderContext;
+        validatedHeaders: HeaderContext;
+        data: Data<R[S]>;
+      }>
+    : never;
+}[keyof R];
+
+export type ProtocolResult<R extends Responses> =
+  | DeclaredResponse<R>
+  | ProtocolFailure;
+type BodyKind = 'none' | 'json' | 'multipart';
+export type MultipartField = Readonly<{
+  name: string;
+  kind: 'text' | 'file';
+  multiple: boolean;
+  required: boolean;
+}>;
+type Primitive = string | number | boolean;
+type RequestParts = {
+  path?: Readonly<Record<string, Primitive>> | undefined;
+  query?:
+    | Readonly<
+        Record<string, Primitive | readonly Primitive[] | null | undefined>
+      >
+    | undefined;
+  headers?: Readonly<Record<string, string | null | undefined>> | undefined;
+  body?: unknown;
+};
+
+export type PreparedRequest<
+  R extends Responses = Responses,
+  B extends BodyKind = BodyKind,
+  Body = unknown,
+> = Readonly<{
+  operationId: string;
+  method: string;
+  url: string;
+  policy: Policy;
+  headers: HeaderContext;
+  validateHeaders: (headers: HeaderContext) => HeaderContext;
+  parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
+}> &
+  (B extends 'json'
+    ? Readonly<{ bodyKind: 'json'; body: Body }>
+    : B extends 'multipart'
+      ? Readonly<{
+          bodyKind: 'multipart';
+          body: Body;
+          multipart: readonly MultipartField[];
+        }>
+      : Readonly<{ bodyKind: 'none' }>);
+
+export class RequestValidationError extends Error {
+  readonly operationId: string;
+  readonly issues: readonly ValidationIssue[];
+
+  constructor(operationId: string, issues: readonly ValidationIssue[]) {
+    super(
+      `${operationId}: invalid request (${issues.map((issue) => `${issue.path.join('.') || 'options'}: ${issue.message}`).join('; ')})`,
+    );
+    this.name = 'RequestValidationError';
+    this.operationId = operationId;
+    this.issues = issues;
+  }
+}
+
+type Parameter = Readonly<{
+  name: string;
+  in: 'path' | 'query' | 'header';
+  required: boolean;
+}>;
+type Definition<
+  O extends z.ZodType<RequestParts | undefined>,
+  R extends Responses,
+  B extends BodyKind,
+> = Readonly<{
+  operationId: string;
+  method: string;
+  path: string;
+  policy: Policy;
+  bodyKind: B;
+  multipart?: readonly MultipartField[];
+  parameters: readonly Parameter[];
+  options: O;
+  headers: Readonly<
+    Record<string, { schema: z.ZodType<string | null>; required: boolean }>
+  >;
+  responses: R;
+}>;
+
+function frozenHeaders(headers: Record<string, string>): HeaderContext {
+  return Object.freeze(headers);
+}
+
+function requireWellFormed(
+  value: string,
+  operationId: string,
+  path: readonly (string | number)[],
+): void {
+  // Keep runtime validation local: generated code cannot import compiler helpers.
+  try {
+    encodeURIComponent(value);
+  } catch {
+    throw new RequestValidationError(operationId, [
+      { path, message: 'must contain well-formed Unicode' },
+    ]);
+  }
+}
+
+function encodePath(
+  value: Primitive,
+  operationId: string,
+  name: string,
+): string {
+  const serialized = String(value);
+  if (serialized === '' || serialized === '.' || serialized === '..') {
+    throw new RequestValidationError(operationId, [
+      {
+        path: ['path', name],
+        message: 'must be nonempty and cannot be a dot segment',
+      },
+    ]);
+  }
+  requireWellFormed(serialized, operationId, ['path', name]);
+  return encodeURIComponent(serialized).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+const tokenCharacters = "!#$%&'*+.^_`|~0-9A-Za-z-";
+const invalidHeaderName = new RegExp(`[^${tokenCharacters}]`);
+const token = `[${tokenCharacters}]+`;
+const quotedParameter = String.raw`"(?:[^"\\]|\\.)*"`;
+// RFC 9110 sections 5.6.6 and 8.3: match one complete media type, including
+// quoted parameter data. Each segment owns its trailing whitespace so empty
+// parameters do not introduce overlapping whitespace repetitions.
+const jsonContentType = new RegExp(
+  `^application/json[\\t ]*(?:;[\\t ]*(?:${token}=(?:${token}|${quotedParameter})[\\t ]*)?)*$`,
+  'i',
+);
+
+function validHeaderValue(value: string): boolean {
+  // Preserve canonical HTTP field bytes: Fetch requires ByteString values and
+  // trims boundary SP/HTAB. Reject those transformations before transport;
+  // internal HTAB and Latin-1 obs-text remain valid field content.
+  return (
+    // oxlint-disable-next-line no-control-regex -- HTTP field content excludes controls except internal HTAB.
+    !/[\u0000-\u0008\u000a-\u001f\u007f\u0100-\uffff]/.test(value) &&
+    !/^[\t ]|[\t ]$/.test(value)
+  );
+}
+
+function observedHeaders(input: HeaderContext) {
+  const context: Record<string, string> = dictionary<string>();
+  const issues: ProtocolIssue[] = [];
+  const invalidFields = new Set<string>();
+  for (const [rawName, value] of Object.entries(input)) {
+    const name = rawName.toLowerCase();
+    const repeated = Object.hasOwn(context, name);
+    context[name] = repeated ? `${context[name]}, ${value}` : value;
+    // Validate before case folding: a non-ASCII name can otherwise alias a
+    // declared ASCII field. Its value is evidence, not a validated header.
+    if (rawName.length === 0 || invalidHeaderName.test(rawName)) {
+      invalidFields.add(name);
+      issues.push({
+        part: 'headers',
+        message: `invalid HTTP header name ${JSON.stringify(rawName)}`,
+      });
+    }
+    // Joining malformed duplicate fields can accidentally repair quotes;
+    // reject repeated singleton fields independently of the combined text.
+    if (name === 'content-type' && repeated)
+      issues.push({
+        part: 'content-type',
+        message: 'expected a single Content-Type field',
+      });
+    if (!validHeaderValue(value)) {
+      invalidFields.add(name);
+      issues.push({
+        part: 'headers',
+        message: `invalid HTTP header value for ${JSON.stringify(rawName)}`,
+      });
+    }
+  }
+  const headers = frozenHeaders(context);
+  return { headers, issues, invalidFields };
+}
+
+function declaredHeaders(
+  spec: ResponseSpec | undefined,
+  headers: HeaderContext,
+  invalidFields: ReadonlySet<string>,
+  issues: ProtocolIssue[],
+): HeaderContext {
+  const validated: Record<string, string> = dictionary<string>();
+  if (spec) {
+    for (const [name, header] of Object.entries(spec.headers)) {
+      const raw = headers[name];
+      if (raw === undefined && !header.required) continue;
+      const parsed = header.schema.safeParse(raw);
+      if (!parsed.success)
+        for (const detail of validationIssues(parsed.error.issues)) {
+          issues.push({
+            ...detail,
+            part: 'headers',
+            path: [name, ...detail.path],
+          });
+        }
+      else if (!invalidFields.has(name) && validHeaderValue(parsed.data))
+        validated[name] = parsed.data;
+      else
+        issues.push({
+          part: 'headers',
+          path: [name],
+          message: `invalid or missing declared header ${name}`,
+        });
+    }
+  }
+  return frozenHeaders(validated);
+}
+
+function responseParser<R extends Responses>(
+  operationId: string,
+  responses: R,
+): (observed: ObservedResponse) => ProtocolResult<R> {
+  return (observed) => {
+    const { headers, issues, invalidFields } = observedHeaders(
+      observed.headers,
+    );
+    const spec = Object.hasOwn(responses, observed.status)
+      ? responses[observed.status]
+      : undefined;
+    if (!spec)
+      issues.push({ part: 'status', message: 'undeclared response status' });
+    const validatedHeaders = declaredHeaders(
+      spec,
+      headers,
+      invalidFields,
+      issues,
+    );
+    let data: unknown;
+    if (spec?.bodyKind === 'none') {
+      if (observed.body !== '')
+        issues.push({
+          part: 'body',
+          message: 'expected an empty response body',
+        });
+    } else if (spec?.bodyKind === 'json') {
+      const mediaType = headers['content-type'];
+      if (
+        mediaType === undefined ||
+        !validHeaderValue(mediaType) ||
+        !jsonContentType.test(mediaType)
+      )
+        issues.push({
+          part: 'content-type',
+          message: 'expected a single valid application/json media type',
+        });
+      let decoded: unknown;
+      let decodedSuccessfully = false;
+      try {
+        decoded = JSON.parse(observed.body) as unknown;
+        decodedSuccessfully = true;
+      } catch {
+        issues.push({ part: 'body', message: 'invalid JSON response body' });
+      }
+      if (decodedSuccessfully) {
+        const parsed = spec.schema.safeParse(decoded);
+        if (parsed.success) data = parsed.data;
+        else
+          for (const detail of validationIssues(parsed.error.issues))
+            issues.push({ part: 'body', ...detail });
+      }
+    }
+    if (issues.length > 0) {
+      return Object.freeze({
+        kind: 'protocol',
+        operationId,
+        status: observed.status,
+        headers,
+        validatedHeaders,
+        issues: Object.freeze(issues),
+      });
+    }
+    // The only successful path selects an exact declared status and validates its
+    // schema. TypeScript cannot express that runtime lookup as the mapped union.
+    return Object.freeze({
+      kind:
+        observed.status >= 200 && observed.status < 300 ? 'success' : 'error',
+      operationId,
+      status: observed.status,
+      headers,
+      validatedHeaders,
+      data,
+    }) as DeclaredResponse<R>;
+  };
+}
+
+function validateMultipart(
+  body: unknown,
+  multipart: readonly MultipartField[],
+  operationId: string,
+): void {
+  if (!plainRecord(body))
+    throw new RequestValidationError(operationId, [
+      { path: ['body'], message: 'expected a multipart object' },
+    ]);
+  for (const field of multipart) {
+    const value = body[field.name];
+    if (
+      field.required &&
+      field.multiple &&
+      Array.isArray(value) &&
+      value.length === 0
+    )
+      throw new RequestValidationError(operationId, [
+        {
+          path: ['body', field.name],
+          message: 'a required file array must contain at least one file',
+        },
+      ]);
+    if (field.kind === 'text' && typeof value === 'string') {
+      requireWellFormed(value, operationId, ['body', field.name]);
+      // Standard multipart encoding rewrites isolated CR and LF to CRLF.
+      // Require canonical line breaks to preserve the validated text exactly.
+      if (/\r(?!\n)|(?:^|[^\r])\n/.test(value))
+        throw new RequestValidationError(operationId, [
+          {
+            path: ['body', field.name],
+            message: 'line breaks must use CRLF',
+          },
+        ]);
+    }
+  }
+}
+
+function serializeParameters(
+  operationId: string,
+  template: string,
+  parameters: readonly Parameter[],
+  options: RequestParts,
+): { url: string; headers: HeaderContext } {
+  let path = template;
+  const query = new URLSearchParams();
+  const headers: Record<string, string> = dictionary<string>();
+  for (const parameter of parameters) {
+    if (parameter.in === 'path') {
+      path = path.replace(
+        `{${parameter.name}}`,
+        encodePath(options.path![parameter.name]!, operationId, parameter.name),
+      );
+    } else if (parameter.in === 'query') {
+      const value = options.query?.[parameter.name];
+      // The options schema admits null only for optional nullable primitives.
+      // Their null value means omission, distinct from the string "null".
+      if (value === undefined || value === null) continue;
+      // Repeated-key encoding cannot represent a present empty array.
+      if (parameter.required && Array.isArray(value) && value.length === 0)
+        throw new RequestValidationError(operationId, [
+          {
+            path: ['query', parameter.name],
+            message: 'a required query array must contain at least one value',
+          },
+        ]);
+      for (const item of Array.isArray(value) ? value : [value]) {
+        const serialized = String(item);
+        // URLSearchParams silently replaces unpaired surrogates. Validate first
+        // so the wire query remains the value that passed the endpoint schema.
+        requireWellFormed(serialized, operationId, ['query', parameter.name]);
+        query.append(parameter.name, serialized);
+      }
+    } else {
+      const value = options.headers?.[parameter.name];
+      if (value === undefined || value === null) continue;
+      if (!validHeaderValue(value))
+        throw new RequestValidationError(operationId, [
+          {
+            path: ['headers', parameter.name],
+            message: 'invalid HTTP header value',
+          },
+        ]);
+      headers[parameter.name] = value;
+    }
+  }
+  const search = query.toString();
+  return {
+    url: `${path}${search ? `?${search}` : ''}`,
+    headers: frozenHeaders(headers),
+  };
+}
+
+function headerValidator(
+  operationId: string,
+  specs: Readonly<
+    Record<string, { schema: z.ZodType<string | null>; required: boolean }>
+  >,
+) {
+  return (input: HeaderContext): HeaderContext => {
+    const headers: Record<string, string> = dictionary<string>();
+    const issues: ValidationIssue[] = [];
+    for (const [rawName, value] of Object.entries(input)) {
+      const name = rawName.toLowerCase();
+      if (
+        !name ||
+        invalidHeaderName.test(rawName) ||
+        typeof value !== 'string' ||
+        !validHeaderValue(value) ||
+        Object.hasOwn(headers, name)
+      )
+        issues.push({
+          path: ['headers', rawName],
+          message: 'invalid or duplicate HTTP header',
+        });
+      headers[name] = value;
+    }
+    for (const [name, spec] of Object.entries(specs)) {
+      if (headers[name] === undefined && !spec.required) continue;
+      const parsed = spec.schema.safeParse(headers[name]);
+      if (!parsed.success)
+        for (const detail of validationIssues(parsed.error.issues)) {
+          issues.push({
+            ...detail,
+            path: ['headers', name, ...detail.path],
+          });
+        }
+    }
+    if (issues.length) throw new RequestValidationError(operationId, issues);
+    return frozenHeaders(headers);
+  };
+}
+
+export function defineOperation<
+  const O extends z.ZodType<RequestParts | undefined>,
+  const R extends Responses,
+  const B extends BodyKind,
+>(definition: Definition<O, R, B>) {
+  const policy = Object.freeze({
+    ...definition.policy,
+    auth: Object.freeze({ ...definition.policy.auth }),
+  });
+  const multipart = Object.freeze(
+    (definition.multipart ?? []).map((field) => Object.freeze({ ...field })),
+  );
+  const parseResponse = responseParser(
+    definition.operationId,
+    definition.responses,
+  );
+  const validateHeaders = headerValidator(
+    definition.operationId,
+    definition.headers,
+  );
+  type Body =
+    NonNullable<z.output<O>> extends { body: infer Value } ? Value : never;
+  function build(
+    ...args: undefined extends z.input<O>
+      ? [options?: z.input<O>]
+      : [options: z.input<O>]
+  ): PreparedRequest<R, B, Body> {
+    if (args.length > 1)
+      throw new RequestValidationError(definition.operationId, [
+        { path: [], message: 'expected at most one options argument' },
+      ]);
+    const parsed = definition.options.safeParse(args[0]);
+    if (!parsed.success) {
+      throw new RequestValidationError(
+        definition.operationId,
+        validationIssues(parsed.error.issues),
+      );
+    }
+    const options: RequestParts = parsed.data ?? {};
+    if (definition.bodyKind === 'multipart')
+      validateMultipart(options.body, multipart, definition.operationId);
+    const serialized = serializeParameters(
+      definition.operationId,
+      definition.path,
+      definition.parameters,
+      options,
+    );
+    const request = {
+      operationId: definition.operationId,
+      method: definition.method,
+      url: serialized.url,
+      policy,
+      headers: serialized.headers,
+      validateHeaders,
+      parseResponse,
+      ...(definition.bodyKind === 'json'
+        ? { bodyKind: 'json' as const, body: options.body }
+        : definition.bodyKind === 'multipart'
+          ? { bodyKind: 'multipart' as const, body: options.body, multipart }
+          : { bodyKind: 'none' as const }),
+    };
+    // The generated options schema and bodyKind are emitted together from one
+    // descriptor. Their relationship cannot be inferred through this generic.
+    return Object.freeze(request) as unknown as PreparedRequest<R, B, Body>;
+  }
+  return Object.freeze({ build, parseResponse });
+}

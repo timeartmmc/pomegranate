@@ -1,0 +1,6 @@
+{
+  "version": 2,
+  "openapi": "./openapi.json",
+  "output": "./generated",
+  "clients": ["consumer", "staff"]
+}
