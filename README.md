@@ -1,6 +1,6 @@
 # Pomegranate
 
-Pomegranate (POM) compiles a strict subset of OpenAPI 3.1.0 JSON into TypeScript
+Pomegranate (POM) compiles a strict subset of OpenAPI 3.1 JSON into TypeScript
 request builders, Zod validators, and response validation keyed by HTTP status.
 Generated code performs no network I/O. Applications own the transport and the
 meaning of their authentication, retry, and timeout policy.
@@ -10,45 +10,20 @@ client surfaces, with a synthetic example and an isolated installed-package
 check. It uses one explicit operation-policy format across the owner's projects.
 The package is [MIT licensed](LICENSE).
 
-## Run the example
-
-Use Node.js 26.x and the Bun version pinned in `package.json`. From this repository's checkout:
-
-```sh
-bun ci
-bun run build
-bun run example:generate
-bun run example:check
-bun run example:run
-```
-
-The demo injects a synthetic response and makes no network request. It prints:
-
-```text
-POST /api/widgets/demo%2Fwidget/preparations → 202 synthetic-123
-```
-
-`examples/json/openapi.json` declares distinct `200` and `202` success bodies,
-distinct error bodies, required headers, a `true` constant, and bodyless HEAD and
-OPTIONS operations. It also demonstrates inherited bearer security, public
-overrides, and separate consumer/staff surfaces. `demo.ts` and `transport.ts` show
-application-owned token resolution with a synthetic token. The transport accepts
-an explicit base URL so Node and browser Fetch can resolve generated relative
-paths. It sends once; applications must implement their actual authentication,
-deadlines, retries, cancellation, and error handling.
-
 ## Use POM in a project
 
-In your TypeScript project, install the compiler as a development dependency and
-Zod for runtime use:
+The compiler supports Node.js 22.18+ on the 22.x line, and Node.js 24 or newer.
+Generated code uses Zod 4.6.6 or newer within 4.x. In your TypeScript project,
+install the compiler as a development dependency and Zod for runtime use:
 
 ```sh
-npm install --save-dev pomegranate-compiler@0.1.0
-npm install zod@4.6.7
+npm install --save-dev pomegranate-compiler
+npm install zod@4
 ```
 
-For compiler development, `bun pm pack` builds a local tarball that can be
-installed in place of the registry package.
+npm and Bun can both install the published package. Bun is needed for this
+repository's contributor workflow; `bun pm pack` builds a local tarball for
+testing unreleased changes in place of the registry package.
 
 Create `pom.json` beside your exported `openapi.json`:
 
@@ -71,7 +46,8 @@ npx --package=pomegranate-compiler pom check --config pom.json
 ```
 
 Generated sources use explicit relative `.ts` imports and erasable TypeScript
-syntax. Node 26, Bun, and TypeScript-aware bundlers can consume them directly.
+syntax. Supported Node versions, Bun, and TypeScript-aware bundlers can consume
+them directly.
 They use ES2022 runtime APIs; TypeScript targets must be ES2020 or newer for
 bigint literals. The example uses ES2022 target and library declarations.
 When emitting JavaScript with TypeScript 5.7 or newer, enable
@@ -119,6 +95,34 @@ The auth binding must agree with the operation's effective OpenAPI security.
 Generated requests expose `policy.auth` as `{ label, transport }`; applications
 resolve tokens and enforce the label's meaning. Retry and timeout labels remain
 opaque. No label authorizes a request, enables retries, or sets a numeric deadline.
+
+## Run the example
+
+From this repository's checkout, use a supported Node.js version and the Bun
+version pinned in `package.json`:
+
+```sh
+bun ci
+bun run build
+bun run example:generate
+bun run example:check
+bun run example:run
+```
+
+The demo injects a synthetic response and makes no network request. It prints:
+
+```text
+POST /api/widgets/demo%2Fwidget/preparations → 202 synthetic-123
+```
+
+`examples/json/openapi.json` declares distinct `200` and `202` success bodies,
+distinct error bodies, required headers, a `true` constant, and bodyless HEAD and
+OPTIONS operations. It also demonstrates inherited bearer security, public
+overrides, and separate consumer/staff surfaces. `demo.ts` and `transport.ts` show
+application-owned token resolution with a synthetic token. The transport accepts
+an explicit base URL so Node and browser Fetch can resolve generated relative
+paths. It sends once; applications must implement their actual authentication,
+deadlines, retries, cancellation, and error handling.
 
 ## Security and client boundaries
 
@@ -270,7 +274,7 @@ Bodyless responses require empty text and expose `data: undefined`.
 
 | Surface     | Current support                                                                                                                                                                                                 |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input       | Local JSON with `openapi: "3.1.0"`; version 2 JSON configuration and policy                                                                                                                                     |
+| Input       | Local OpenAPI 3.1 JSON with any patch version; version 2 JSON configuration and policy                                                                                                                          |
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; ASCII operation identifiers; whole-segment path placeholders                                                                                                      |
 | Parameters  | Primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
 | Bodies      | Required JSON or multipart request bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                          |

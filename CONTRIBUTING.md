@@ -10,15 +10,20 @@ bunx playwright install --with-deps --only-shell chromium
 bun run verify
 ```
 
-Bun owns dependency installation, script dispatch, and tarball packaging;
-`bun.lock` is the sole lockfile. The compiler CLI and test suite execute on
-Node 26. Keep Node types on the same major version. Use `bun run test` to invoke
-the declared Node test command.
+Bun owns repository dependency installation, script dispatch, and tarball
+packaging; `bun.lock` is the sole lockfile. Keep development Node types on the
+Node 26 major. CI runs the complete verification command on Node 26 and on the
+advertised Node 22.18.0 and 24.0.0 minimums. Use `bun run test` to invoke the
+declared Node test command. Consumer requirements belong in the
+[README](README.md#use-pom-in-a-project).
 
 `verify` checks formatting and lint, builds the package, runs the compiler and
 runtime tests, exercises generated code through Chromium Fetch against a local
 synthetic server, checks and runs the synthetic example, and exercises a packed
-install in an isolated consumer. After removing the compiler and formatter, the
+install in an isolated consumer. That consumer installs through npm with strict
+engine and peer checks, using the minimum supported Zod and TypeScript 5.7.3
+with Node 22 types. Source tests use the pinned development releases. After
+removing the compiler and formatter, the
 installed-package check runs generated TypeScript directly on Node and Bun and
 emitted JavaScript on Node. It must not rely on a sibling checkout or a source
 symlink. Keep CI and this command aligned.
@@ -93,9 +98,10 @@ does not establish that an application integration is ready.
 
 ## Before publication
 
-Until a release establishes a stable package version, consumers pin the actual
-compiler tarball and its lockfile integrity. Regenerate the complete output set
-with that compiler and its declared runtime dependencies; never mix generated
+Consumers install released versions from npm and record the compiler version
+and integrity in their lockfile. Use a locally packed tarball to verify
+unreleased changes. Regenerate the complete output set with the selected
+compiler and its declared runtime dependencies; never mix generated
 modules from different compiler builds. An upgrade includes reviewing generated
 API changes, adapting every affected caller, and running consumer parity and
 integration checks. `pom check` verifies bytes for the installed compiler, not
@@ -108,9 +114,9 @@ release commit with the complete canonical checks and required consumer checks.
 Then inspect and publish the same packed artifact:
 
 ```sh
-bun pm pack --filename /tmp/pomegranate-compiler-0.1.0.tgz
-bun publish --dry-run --access public /tmp/pomegranate-compiler-0.1.0.tgz
-bun publish --access public /tmp/pomegranate-compiler-0.1.0.tgz
+bun pm pack --filename /tmp/pomegranate-compiler-0.1.1.tgz
+bun publish --dry-run --access public /tmp/pomegranate-compiler-0.1.1.tgz
+bun publish --access public /tmp/pomegranate-compiler-0.1.1.tgz
 ```
 
 Use the selected version in the filename. Confirm the registry's version and

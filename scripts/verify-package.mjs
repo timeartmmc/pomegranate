@@ -24,6 +24,9 @@ import { deepFixture, deepTypeConsumer } from '../test/deep-fixture.mjs';
 
 const exec = promisify(execFile);
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+// Source tests use pinned development releases; installed consumers exercise the
+// Zod peer minimum with the TypeScript 5.7 compiler line instead.
+const minimumZodVersion = '4.6.6';
 const license = await readFile(join(repo, 'LICENSE'), 'utf8');
 const scratch = await mkdtemp(join(await realpath(tmpdir()), 'pom-package-'));
 const consumer = join(scratch, 'isolated consumer');
@@ -117,18 +120,35 @@ try {
         name: 'pom-isolated-verification',
         private: true,
         type: 'module',
-        dependencies: { zod: '4.6.7' },
+        dependencies: { zod: minimumZodVersion },
         devDependencies: {
           'pomegranate-compiler': `file:${tarball}`,
-          typescript: '7.0.2',
-          '@types/node': '26.6.5',
+          typescript: '5.7.3',
+          '@types/node': '22.18.0',
         },
       },
       null,
       2,
     ),
   );
-  await run('bun', ['install', '--ignore-scripts']);
+  // Consumers need no Bun installation. npm's strict engine and peer checks
+  // also catch compatibility promises that Bun alone might let us overlook.
+  await run('npm', [
+    'install',
+    '--ignore-scripts',
+    '--engine-strict',
+    '--strict-peer-deps',
+    '--legacy-peer-deps=false',
+    '--no-audit',
+    '--no-fund',
+    '--package-lock=false',
+  ]);
+  assert.equal(
+    JSON.parse(
+      await readFile(join(consumer, 'node_modules/zod/package.json'), 'utf8'),
+    ).version,
+    minimumZodVersion,
+  );
   const installed = join(consumer, 'node_modules/pomegranate-compiler');
   assert.equal(await readFile(join(installed, 'LICENSE'), 'utf8'), license);
   assert.equal(
@@ -144,6 +164,11 @@ try {
   ]) {
     await cp(join(repo, 'examples/json', name), join(consumer, name));
   }
+  const document = JSON.parse(
+    await readFile(join(consumer, 'openapi.json'), 'utf8'),
+  );
+  document.openapi = '3.1.2';
+  await writeFile(join(consumer, 'openapi.json'), JSON.stringify(document));
   const tsconfig = JSON.parse(
     await readFile(join(consumer, 'tsconfig.json'), 'utf8'),
   );
@@ -301,6 +326,10 @@ try {
     assert.deepEqual(Object.keys(pom).sort(), ['ContractError', 'compile', 'runProject']);
     const document=JSON.parse(await readFile('./openapi.json', 'utf8'));
     const files = await pom.compile(document,{clients:['staff']});
+    for (const version of ['3.1.0','3.1.1','3.1.2']) {
+      document.openapi=version;
+      assert.deepEqual(await pom.compile(document,{clients:['staff']}),files);
+    }
     assert.deepEqual(Object.keys(files).sort(), ['client.staff.operations.ts', 'client.staff.schemas.ts', 'client.staff.ts', 'runtime.ts']);
     assert.doesNotMatch(Object.values(files).join(' '),/PreparationInput|client.consumer/);
     const unsafeHeader = structuredClone(document);
@@ -474,7 +503,7 @@ try {
   `,
   ]);
   console.log(
-    `Packed install passed: ${paths.length} allowed files; CLI, library, drift, strict types, transport and compiler-free Node/Bun source and emitted JavaScript execution`,
+    `Packed install passed: ${paths.length} allowed files; Zod ${minimumZodVersion}; npm engine-strict install, CLI, library, drift, strict types, transport and compiler-free Node/Bun source and emitted JavaScript execution`,
   );
 } finally {
   await rm(scratch, { recursive: true, force: true });

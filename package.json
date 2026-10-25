@@ -1,6 +1,6 @@
 {
   "name": "pomegranate-compiler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "description": "A strict local OpenAPI compiler for TypeScript request contracts",
   "repository": {
@@ -15,7 +15,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": "26.x"
+    "node": "^22.18.0 || >=24.0.0"
   },
   "bin": {
     "pom": "dist/cli.js"
@@ -48,7 +48,7 @@
     "prepack": "bun run build"
   },
   "peerDependencies": {
-    "zod": "^4.6.7"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "26.6.5",

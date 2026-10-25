@@ -567,8 +567,13 @@ export function buildDescriptor(input: unknown): Descriptor {
     ],
     'OpenAPI',
   );
-  if (value.openapi !== '3.1.0')
-    fail('openapi', 'this milestone supports OpenAPI 3.1.0 only');
+  // OAS 3.1 patch releases clarify the same feature set. Match the whole value
+  // so malformed versions, prereleases and trailing line breaks cannot pass.
+  if (
+    typeof value.openapi !== 'string' ||
+    /^3\.1\.(?:0|[1-9][0-9]*)$/.exec(value.openapi)?.[0] !== value.openapi
+  )
+    fail('openapi', 'expected an OpenAPI 3.1.x version');
   const info = record(value.info, 'info');
   keys(info, ['title', 'version', 'description', 'summary'], 'info');
   text(info.title, 'info.title');

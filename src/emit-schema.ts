@@ -52,7 +52,8 @@ function constrain(
       'string does not match pattern',
     );
   }
-  // Native array bounds reject oversized input before parsing the items.
+  // Zod 4.6.6 added size checks before element parsing (upstream #6652). The
+  // peer minimum preserves that bound on work for oversized input arrays.
   if (limits.minItems !== undefined)
     result = method(result, 'min', [literal(limits.minItems)]);
   if (limits.maxItems !== undefined)
