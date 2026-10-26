@@ -17,6 +17,10 @@ operations.checkTypeArrayNonNullEnum.build({ body: 'ready' });
 operations.checkTypeArrayOnlyNull.build({ body: null });
 operations.checkTypeArrayEmptyIntegerBranch.build({ body: null });
 operations.checkTypeArrayEmptyNumberBranch.build({ body: null });
+operations.checkTypeArrayConflictingIntegerBounds.build({ body: null });
+operations.checkTypeArrayConflictingExclusiveBounds.build({ body: null });
+operations.checkTypeArrayConflictingMixedBounds.build({ body: null });
+operations.checkTypeArrayConflictingStringBounds.build({ body: null });
 operations.checkTypeArrayConst.build({ body: false });
 operations.checkTypeArrayNullConst.build({ body: null });
 operations.checkTypeArrayArray.build({ body: [0, null] });
@@ -36,6 +40,14 @@ operations.checkTypeArrayOnlyNull.build({ body: 'A' });
 operations.checkTypeArrayEmptyIntegerBranch.build({ body: 1 });
 // @ts-expect-error A null-only const eliminates the impossible numeric branch.
 operations.checkTypeArrayEmptyNumberBranch.build({ body: Number.MAX_VALUE });
+// @ts-expect-error Conflicting integer bounds do not restore the discarded branch.
+operations.checkTypeArrayConflictingIntegerBounds.build({ body: 1 });
+// @ts-expect-error Conflicting exclusive bounds leave only null.
+operations.checkTypeArrayConflictingExclusiveBounds.build({ body: 2 });
+// @ts-expect-error Conflicting mixed bounds leave only null.
+operations.checkTypeArrayConflictingMixedBounds.build({ body: 1 });
+// @ts-expect-error Conflicting lengths do not restore the discarded string branch.
+operations.checkTypeArrayConflictingStringBounds.build({ body: 'A' });
 // @ts-expect-error Const remains false despite the nullable type spelling.
 operations.checkTypeArrayConst.build({ body: null });
 // @ts-expect-error A null const removes number from the generated type.

@@ -1,0 +1,20 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "declaration": false,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "erasableSyntaxOnly": true
+  },
+  "include": ["./**/*.ts", "../scripts/**/*.ts"],
+  "exclude": [
+    ".generated",
+    "consumer-types.ts",
+    "schema-types.ts",
+    "schema-composition-types.ts",
+    "multipart-types.ts",
+    "symbol-types.ts"
+  ]
+}

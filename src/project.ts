@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer';
 import { readFile, realpath } from 'node:fs/promises';
 import { dirname, extname, resolve } from 'node:path';
 import { buildDescriptor } from './descriptor.js';
@@ -13,13 +14,21 @@ import type { CompileOptions } from './selection.js';
 import { parseYaml } from './yaml.js';
 export type { CompileOptions } from './selection.js';
 
+async function readText(path: string): Promise<string> {
+  const bytes = await readFile(path);
+  // Buffer decoding would replace malformed bytes, changing contract values or
+  // configured paths. Validate first and retain BOMs for the parser's positions.
+  if (!isUtf8(bytes)) fail(path, 'invalid UTF-8');
+  return bytes.toString('utf8');
+}
+
 async function readJson(path: string): Promise<unknown> {
-  return parseJson(await readFile(path, 'utf8'), path);
+  return parseJson(await readText(path), path);
 }
 
 async function readOpenApi(path: string): Promise<unknown> {
   if (['.yaml', '.yml'].includes(extname(path).toLowerCase()))
-    return parseYaml(await readFile(path, 'utf8'), path);
+    return parseYaml(await readText(path), path);
   return readJson(path);
 }
 

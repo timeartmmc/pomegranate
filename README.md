@@ -43,6 +43,8 @@ A symlinked output parent, such as macOS `/tmp`, is supported. The output
 directory itself and generated target files cannot be symlinks.
 For a YAML export, set `openapi` to a `.yaml` or `.yml` file; configuration stays
 JSON. OpenAPI filenames with other extensions are read as JSON.
+Input and configuration files must use UTF-8. Malformed byte sequences fail
+before outputs change.
 Generate or check the complete output set:
 
 ```sh

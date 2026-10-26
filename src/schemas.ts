@@ -57,26 +57,14 @@ function constraints(
   value: Record<string, unknown>,
   location: string,
 ): Constraints {
+  // Parse sibling syntax before folding null-only literals. Check whether the
+  // interval admits a value only for a retained scalar, array or ref target.
   const result = {
     ...bounds(value, 'minLength', 'maxLength', location, true),
     ...bounds(value, 'minItems', 'maxItems', location, true),
     ...bounds(value, 'minimum', 'maximum', location, false),
     ...bounds(value, 'exclusiveMinimum', 'exclusiveMaximum', location, false),
   };
-  const lower = Math.max(
-    result.minimum ?? -Infinity,
-    result.exclusiveMinimum ?? -Infinity,
-  );
-  const upper = Math.min(
-    result.maximum ?? Infinity,
-    result.exclusiveMaximum ?? Infinity,
-  );
-  if (
-    lower > upper ||
-    (lower === upper &&
-      (result.exclusiveMinimum === lower || result.exclusiveMaximum === upper))
-  )
-    fail(location, 'numeric bounds admit no value');
   const multipleOf = bound(value, 'multipleOf', location, false);
   if (multipleOf !== undefined && multipleOf <= 0)
     fail(`${location}.multipleOf`, 'expected a positive number');
@@ -133,8 +121,6 @@ function bounds(
 ): Record<string, number> {
   const min = bound(value, minimum, location, integer);
   const max = bound(value, maximum, location, integer);
-  if (min !== undefined && max !== undefined && min > max)
-    fail(location, `${minimum} exceeds ${maximum}`);
   return {
     ...(min === undefined ? {} : { [minimum]: min }),
     ...(max === undefined ? {} : { [maximum]: max }),
@@ -476,11 +462,13 @@ function normalizeShape(
       [...typedSchemaKeys, 'items', 'minItems', 'maxItems'],
       location,
     );
-    return {
+    const schema: Schema = {
       kind,
       items: normalizeSchema(value.items, `${location}.items`, nesting + 1),
       ...bounds(value, 'minItems', 'maxItems', location, true),
     };
+    assertScalarRules(kind, schema, undefined, location);
+    return schema;
   }
   if (
     kind === 'string' ||

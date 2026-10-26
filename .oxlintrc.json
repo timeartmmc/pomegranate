@@ -28,10 +28,13 @@
   "ignorePatterns": [
     "dist/**",
     "node_modules/**",
+    "test/.generated/**",
     "examples/json/generated/**",
     "examples/json/.build/**",
     "test/consumer-types.ts",
     "test/schema-types.ts",
-    "test/schema-composition-types.ts"
+    "test/schema-composition-types.ts",
+    "test/multipart-types.ts",
+    "test/symbol-types.ts"
   ]
 }

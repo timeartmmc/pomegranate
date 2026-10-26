@@ -8,6 +8,7 @@
   "ignorePatterns": [
     "node_modules/**",
     "dist/**",
+    "test/.generated/**",
     "bun.lock",
     "examples/json/generated/**",
     "examples/json/.build/**"
