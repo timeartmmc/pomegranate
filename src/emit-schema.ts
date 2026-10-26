@@ -172,17 +172,25 @@ export function schemaRenderer(
           ]);
           break;
         case 'union':
-          // Required distinct literal tags make supported oneOf branches disjoint.
-          expression = zod('union', [
-            array(
-              value.branches.map((branch, index) =>
-                child(
-                  branch,
-                  `${location}.${value.discriminator ? 'oneOf' : 'anyOf'}[${index}]`,
+          if (value.discriminator) {
+            helpers.add('discriminatedUnion');
+            const { propertyName, mapping } = value.discriminator;
+            expression = call(identifier('discriminatedUnion'), [
+              literal(propertyName),
+              object(
+                Object.keys(mapping)
+                  .sort()
+                  .map((tag) => [tag, reference(mapping[tag]!, direction)]),
+              ),
+            ]);
+          } else
+            expression = zod('union', [
+              array(
+                value.branches.map((branch, index) =>
+                  child(branch, `${location}.anyOf[${index}]`),
                 ),
               ),
-            ),
-          ]);
+            ]);
           break;
         case 'object':
           // Fixed fields use TypeScript's structural object semantics. Zod

@@ -220,7 +220,7 @@ function normalizeUnion(
   const raw = value[keyword];
   if (!Array.isArray(raw) || raw.length < 2)
     fail(`${location}.${keyword}`, 'expected at least two union branches');
-  const branches = raw.map((branch: unknown, index) =>
+  const branches = Array.from(raw, (branch: unknown, index) =>
     normalizeSchema(branch, `${location}.${keyword}[${index}]`, nesting + 1),
   );
   if (keyword === 'anyOf') return { kind: 'union', branches };

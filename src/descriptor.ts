@@ -5,6 +5,7 @@ import {
   keys,
   record,
   safeKey,
+  stringArray,
   text,
   validHeaderName,
   wellFormedUnicode,
@@ -371,7 +372,7 @@ function operationParameters(
     : [];
   if (!Array.isArray(rawParameters))
     fail(`${location}.parameters`, 'expected an array');
-  const parameters = rawParameters.map((parameter, index) =>
+  const parameters = Array.from(rawParameters, (parameter, index) =>
     normalizeParameter(
       parameter,
       schemas,
@@ -572,8 +573,7 @@ function normalizeOperation(
     fail(`${location}.operationId`, 'expected an identifier');
   if (
     Object.hasOwn(value, 'tags') &&
-    (!Array.isArray(value.tags) ||
-      value.tags.some((tag) => typeof tag !== 'string' || tag.length === 0))
+    (!stringArray(value.tags) || value.tags.some((tag) => tag.length === 0))
   )
     fail(
       `${location}.tags`,

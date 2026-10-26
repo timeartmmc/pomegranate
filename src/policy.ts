@@ -4,7 +4,9 @@ import type { AuthTransport, Policy, PolicyVocabulary } from './model.js';
 export function labels(input: unknown, location: string): readonly string[] {
   if (!Array.isArray(input) || input.length === 0)
     fail(location, 'expected a nonempty array of labels');
-  const result = input.map((label, index) =>
+  // Programmatic callers can supply sparse arrays. Visit every slot so a hole
+  // cannot become an unchecked label or generated client name.
+  const result = Array.from(input, (label, index) =>
     text(label, `${location}[${index}]`),
   );
   if (new Set(result).size !== result.length) fail(location, 'duplicate label');

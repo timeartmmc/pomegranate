@@ -56,6 +56,75 @@ void test('JSON scanning preserves native values, escaped punctuation and separa
   }
 });
 
+void test('JSON scanning preserves the native parser across nested values and escaped key vocabularies', () => {
+  const keys = [
+    '',
+    '__proto__',
+    'constructor',
+    'quote"slash\\',
+    '[,:{}]',
+    '😀',
+    '\ud800',
+    '\u0000',
+    'line\nbreak',
+    'é',
+    'é',
+  ];
+  const values = [
+    null,
+    true,
+    false,
+    0,
+    -0,
+    1.25,
+    Number.MAX_VALUE,
+    '',
+    '{"key":[1,2]}',
+    '\\"',
+    '😀',
+    '\ud800',
+    '\u2028',
+  ];
+  for (const key of keys) {
+    for (const value of values) {
+      const entry = Object.fromEntries([[key, value]]);
+      const source = JSON.stringify({
+        first: entry,
+        nested: [entry, { second: entry }],
+      });
+      for (const prefix of ['', '\ufeff'])
+        assert.deepEqual(
+          parseJson(`${prefix}${source}`, 'nested.json'),
+          json(source),
+        );
+    }
+    // Escape code units, retaining both surrogates in astral keys. A second
+    // spelling of the same decoded key must fail at every object/array depth.
+    const escaped = `"${key
+      .split('')
+      .map((unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`)
+      .join('')}"`;
+    for (const depth of [0, 1, 8, 32]) {
+      let source = `{${JSON.stringify(key)}:1,${escaped}:2}`;
+      for (let index = 0; index < depth; index++)
+        source = index % 2 === 0 ? `[${source}]` : `{"scope":${source}}`;
+      assert.throws(
+        () => parseJson(`\ufeff${source}`, 'duplicate.json'),
+        (error) => {
+          assert.ok(error instanceof ContractError);
+          assert.match(error.location, /^duplicate\.json:1:\d+$/);
+          assert.ok(
+            error.message.endsWith(
+              `invalid JSON: duplicate key ${JSON.stringify(key)}`,
+            ),
+          );
+          return true;
+        },
+      );
+    }
+  }
+});
+
 void test('JSON syntax remains strict before the duplicate scan', () => {
   for (const source of [
     '{',

@@ -179,6 +179,43 @@ export function recordSchema<V extends z.ZodType>(values: V) {
     });
 }
 
+export function discriminatedUnion<
+  Cases extends Readonly<Record<string, z.ZodType>>,
+>(propertyName: string, cases: Cases) {
+  type Branch = Cases[keyof Cases];
+  // The compiler proves that each branch requires its distinct literal tag.
+  // Dispatch before parsing: trying every branch repeats nested union work
+  // exponentially. Named validators can be aliases or refined Zod schemas, so
+  // select from the explicit mapping rather than inspecting Zod internals.
+  return z
+    .custom<z.input<Branch>>()
+    .transform((input, context): z.output<Branch> => {
+      if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+        context.addIssue({ code: 'custom', message: 'expected an object' });
+        return z.NEVER;
+      }
+      const tag: unknown = Reflect.get(input, propertyName);
+      if (typeof tag !== 'string' || !Object.hasOwn(cases, tag)) {
+        context.addIssue({
+          code: 'custom',
+          path: [propertyName],
+          message: 'expected a declared discriminator tag',
+        });
+        return z.NEVER;
+      }
+      const parsed = cases[tag]!.safeParse(input);
+      // This own entry belongs to Cases; retain the union of its output types.
+      if (parsed.success) return parsed.data as z.output<Branch>;
+      for (const issue of validationIssues(parsed.error.issues))
+        context.addIssue({
+          code: 'custom',
+          path: [...issue.path],
+          message: issue.message,
+        });
+      return z.NEVER;
+    });
+}
+
 export type Policy = Readonly<{
   auth: Readonly<{ label: string; transport: 'none' | 'bearer' }>;
   retry: string;

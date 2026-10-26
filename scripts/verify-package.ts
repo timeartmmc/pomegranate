@@ -527,6 +527,20 @@ try {
     const invalidMetadata=structuredClone(document);
     invalidMetadata.info.license.identifier=false;
     await assert.rejects(pom.compile(invalidMetadata,selection),/info.license.identifier/);
+    const invalidSlots = [
+      [d => { d['x-pom-policy'].surfaces.length++; }, 'x-pom-policy.surfaces[2]'],
+      [d => { d.paths['/api/widgets/{widgetId}/preparations'].post.parameters.length++; }, 'paths./api/widgets/{widgetId}/preparations.post.parameters[3]'],
+      [d => { d.components.schemas.MissingBranch={anyOf:[{type:'null'},,]}; }, 'components.schemas.MissingBranch.anyOf[1]'],
+    ];
+    for (const [mutate, location] of invalidSlots) {
+      const invalid=structuredClone(document);
+      mutate(invalid);
+      await assert.rejects(pom.compile(invalid,selection), error => {
+        assert.ok(error instanceof pom.ContractError);
+        assert.equal(error.location,location);
+        return true;
+      });
+    }
     for(const schema of [
       {type:'string',enum:['ab'],pattern:'^x'},
       {type:'string',const:'nope',format:'uuid'},
