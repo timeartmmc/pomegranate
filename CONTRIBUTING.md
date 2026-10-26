@@ -34,6 +34,17 @@ Builds recreate the compiler-owned `dist` directory so removed source modules
 cannot survive into a package. The packed-install check also verifies this
 cleanup and compiles generated clients with `noPropertyAccessFromIndexSignature`.
 
+Query checks exercise generated factories with TanStack Query Core and React
+Query types, including cache identities, scalar normalization, exact response
+statuses, malformed executor evidence, cancellation on observer unsubscription,
+executor errors, JSON hydration, and repeated-fetch map integrity in caches and
+observer selections. The packed check first generates queries
+without TanStack installed, then installs the minimum supported Query Core version
+and runs the generated integration after removing the compiler. Core-only consumers must not
+require the optional query dependency.
+The query typecheck without DOM libraries supplies the platform's `VoidFunction`
+declaration explicitly and keeps dependency declaration checking enabled.
+
 Strict TypeScript checks the compiler, tests, fixture helpers, verification
 scripts, and dependency declarations. The test program uses `noEmit` and
 `erasableSyntaxOnly`; Node runs the TypeScript test sources directly. Oxlint adds

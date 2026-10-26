@@ -50,7 +50,7 @@ export function selectClients(
   descriptor: Descriptor,
   selection: Selection,
 ): readonly Client[] {
-  const { clients: names, targets, transportHeaders } = selection;
+  const { clients: names, targets, transportHeaders, queries } = selection;
   const declared = new Set(
     descriptor.operations.flatMap((operation) =>
       operation.parameters
@@ -86,11 +86,25 @@ export function selectClients(
         `targets.${name}`,
         'multipart clients require an explicit browser or native target',
       );
+    const queryIds = Object.hasOwn(queries, name) ? queries[name]! : [];
+    const selectedQueries = queryIds.map((id) => {
+      const operation = operations.find((candidate) => candidate.id === id);
+      const location = `queries.${name}.${id}`;
+      if (!operation)
+        fail(location, 'query operation must belong to this client');
+      if (
+        (operation.method !== 'GET' && operation.method !== 'HEAD') ||
+        operation.body.kind !== 'none'
+      )
+        fail(location, 'queries support only bodyless GET and HEAD operations');
+      return operation;
+    });
     return {
       name,
       ...(target === undefined ? {} : { target }),
       transportHeaders,
       operations,
+      queries: selectedQueries,
       requestSchemas: closure(
         descriptor,
         operations.flatMap((operation) => roots(operation, 'request')),

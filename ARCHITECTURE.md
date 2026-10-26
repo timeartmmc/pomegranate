@@ -10,12 +10,24 @@ This document owns the boundaries and guarantees that changes must preserve.
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Application    | API schemas, OpenAPI export, operation policy, generated artifacts, transport, authentication, retries, deadlines, error interpretation, platform adapters, and integration tests |
 | Pomegranate    | Supported contract interpretation, one normalized model, generation, diagnostics, drift detection, and generated-output ownership                                                 |
-| Generated code | Types, request validation, URL construction, and exact-status response validation without network I/O                                                                             |
+| Generated code | Types, request validation, URL construction, exact-status response validation, and optional query factories using an application executor                                         |
 
 The compiler is a development dependency. Generated modules use relative imports
 and declared runtime dependencies; applications must not import the compiler at
 runtime. Policy labels describe application choices. They do not implement those
 choices or establish authorization.
+
+Optional query factories derive their keys and requests from one validated input
+snapshot. The context passed to the executor must preserve the identity encoded
+by the key, including after JSON serialization. Applications supply the API
+namespace, nonsecret response-changing cache context, executor, and session-cache
+lifecycle. Generated query functions
+delegate transport work, forward cancellation, and validate raw response evidence
+before returning a success envelope. They do not resolve credentials or add an
+automatic retry budget.
+Query cache integration must preserve all supported response data, including
+dynamic map entries with prototype-related names, across refetches. A failed
+HTTP or protocol result must not become successful query data.
 
 Pomegranate never starts a backend, reads a database, discovers another checkout,
 fetches a remote contract, or selects an authentication provider. Applications

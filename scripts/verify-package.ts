@@ -31,12 +31,14 @@ import {
 } from '../test/multipart-fixture.ts';
 import { schemaFixture, standaloneSelection } from '../test/schema-fixture.ts';
 import { symbolFixture } from '../test/symbol-fixture.ts';
+import { queryFixture, querySelection } from '../test/query-fixture.ts';
 
 const exec = promisify(execFile);
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 // Source tests use pinned development releases; installed consumers exercise the
 // Zod peer minimum with the TypeScript 5.7 compiler line instead.
 const minimumZodVersion = '4.6.6';
+const minimumQueryVersion = '5.90.20';
 const license = await readFile(join(repo, 'LICENSE'), 'utf8');
 const scratch = await mkdtemp(join(await realpath(tmpdir()), 'pom-package-'));
 const consumer = join(scratch, 'isolated consumer');
@@ -137,6 +139,7 @@ try {
     'multipart-fixture.ts',
     'symbol-fixture.ts',
     'deep-fixture.ts',
+    'query-checks.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, 'verification', name));
   await writeFile(
@@ -176,6 +179,10 @@ try {
       ),
     ).version,
     minimumZodVersion,
+  );
+  await assert.rejects(
+    stat(join(consumer, 'node_modules/@tanstack/query-core')),
+    { code: 'ENOENT' },
   );
   const installed = join(consumer, 'node_modules/pomegranate-compiler');
   assert.equal(await readFile(join(installed, 'LICENSE'), 'utf8'), license);
@@ -254,6 +261,7 @@ try {
     'multipart-generated/*.ts',
     'deep-generated/*.ts',
     'symbol-generated/*.ts',
+    'query-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
   for (const name of [
@@ -261,6 +269,7 @@ try {
     'schema-types.ts',
     'multipart-types.ts',
     'symbol-types.ts',
+    'query-types.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, name));
   await writeFile(
@@ -327,6 +336,62 @@ try {
     '.bin',
     process.platform === 'win32' ? 'pom.cmd' : 'pom',
   );
+  await writeFile(
+    join(consumer, 'query-openapi.json'),
+    JSON.stringify(queryFixture()),
+  );
+  await writeFile(
+    join(consumer, 'query-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './query-openapi.json',
+      output: './query-generated',
+      ...querySelection,
+    }),
+  );
+  // The optional integration is generated without loading TanStack or React.
+  // Only consumers that select it need to install its declared dependencies.
+  await run(binary, ['generate', '--config', join(consumer, 'query-pom.json')]);
+  await run(binary, ['check', '--config', join(consumer, 'query-pom.json')]);
+  await run('npm', [
+    'install',
+    '--ignore-scripts',
+    '--engine-strict',
+    '--strict-peer-deps',
+    '--legacy-peer-deps=false',
+    '--no-audit',
+    '--no-fund',
+    '--package-lock=false',
+    '--save-exact',
+    `@tanstack/query-core@${minimumQueryVersion}`,
+    `@tanstack/react-query@${minimumQueryVersion}`,
+    'react@19.2.3',
+    '@types/react@19.2.7',
+  ]);
+  // Query Core's declarations use the standard platform VoidFunction type.
+  // Supply that one native-environment declaration, without loading DOM globals
+  // or hiding dependency errors through skipLibCheck.
+  await writeFile(
+    join(consumer, 'query-native-globals.d.ts'),
+    'interface VoidFunction { (): void; }\n',
+  );
+  await writeFile(
+    join(consumer, 'query-native-tsconfig.json'),
+    JSON.stringify({
+      compilerOptions: {
+        ...record(tsconfig.compilerOptions),
+        lib: ['ES2022'],
+        types: ['node'],
+        noEmit: true,
+      },
+      include: ['query-generated/*.ts', 'query-native-globals.d.ts'],
+    }),
+  );
+  await run(process.execPath, [
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+    '-p',
+    join(consumer, 'query-native-tsconfig.json'),
+  ]);
   await run(binary, ['--help']);
   await run(binary, [
     'generate',
@@ -601,6 +666,7 @@ try {
     'generated/runtime.ts',
     'multipart-generated/runtime.ts',
     'multipart-generated/runtime.browser.ts',
+    'query-generated/query-runtime.ts',
   ])
     assertRuntimeLicense(await readFile(join(consumer, path), 'utf8'));
   await writeFile(
@@ -655,6 +721,9 @@ try {
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
+    import {createQueries, QueryResponseError} from './query-generated/client.consumer.queries.ts';
+    import {verifyQueries} from './verification/query-checks.ts';
+    await verifyQueries(createQueries, QueryResponseError);
     import {operations} from './generated/client.consumer.ts';
     import {operations as schemaOperations, RequestValidationError as SchemaError} from './schema-generated/client.samples.ts';
     import {schema as message} from './schema-generated/standalone.message.ts';
@@ -689,6 +758,9 @@ try {
     '-e',
     `
     import assert from 'node:assert/strict';
+    import {createQueries, QueryResponseError} from './.build/query-generated/client.consumer.queries.js';
+    import {verifyQueries} from './verification/query-checks.ts';
+    await verifyQueries(createQueries, QueryResponseError);
     import {operations, RequestValidationError} from './.build/generated/client.consumer.js';
     import {operations as schemaOperations, RequestValidationError as SchemaError} from './.build/schema-generated/client.samples.js';
     import {verifySchemas,verifyStandalone} from './verification/schema-fixture.ts';
@@ -737,7 +809,7 @@ try {
   `,
   ]);
   console.log(
-    `Packed install passed: ${paths.length} allowed files; Zod ${minimumZodVersion}; npm engine-strict install, CLI, library, drift, strict types, transport and compiler-free Node/Bun source and emitted JavaScript execution`,
+    `Packed install passed: ${paths.length} allowed files; Zod ${minimumZodVersion}; TanStack ${minimumQueryVersion}; npm engine-strict install, CLI, library, drift, strict types, transport, queries and compiler-free Node/Bun source and emitted JavaScript execution`,
   );
 } finally {
   await rm(scratch, { recursive: true, force: true });

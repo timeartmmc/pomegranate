@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compile } from '../dist/index.js';
+import { runtimeInput } from './assertions.ts';
 import { generatedFixture, temporary } from './helpers.ts';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -35,6 +36,131 @@ void test('generated protocol invariants hold across the complete byte and statu
     pathToFileURL(join(root, 'client.consumer.ts')).href
   )) as typeof import('./.generated/runtime/client.consumer.ts');
   const operation = operations.prepareWidget;
+
+  await t.test(
+    'malformed raw evidence cannot become successful typed protocol data',
+    () => {
+      const observed = {
+        status: 202,
+        headers: headers(),
+        body: JSON.stringify(pending),
+      };
+      const malformed: readonly (readonly [unknown, RegExp])[] = [
+        ...[null, undefined, false, 'response'].map(
+          (value) => [value, /response evidence must be an object/] as const,
+        ),
+        ...[
+          '202',
+          null,
+          undefined,
+          true,
+          202n,
+          { [Symbol.toPrimitive]: () => 202 },
+        ].map(
+          (status) =>
+            [
+              { ...observed, status },
+              /response status must be a number/,
+            ] as const,
+        ),
+        ...[
+          5,
+          null,
+          false,
+          true,
+          undefined,
+          pending,
+          {
+            toString: () => JSON.stringify(pending),
+          },
+        ].map(
+          (body) =>
+            [{ ...observed, body }, /response body must be raw text/] as const,
+        ),
+        ...[
+          null,
+          undefined,
+          [],
+          [['X-Key', 'value']],
+          new Headers(headers()),
+        ].map(
+          (value) =>
+            [
+              { ...observed, headers: value },
+              /response headers must be a plain record/,
+            ] as const,
+        ),
+        ...[null, undefined, 5, true, [], {}, { toString: () => 'value' }].map(
+          (value) =>
+            [
+              { ...observed, headers: { ...headers(), 'X-Other': value } },
+              /response header "X-Other" must be a string/,
+            ] as const,
+        ),
+      ];
+      for (const [value, message] of malformed)
+        assert.throws(() => runtimeInput(operation.parseResponse, value), {
+          name: 'TypeError',
+          message,
+        });
+    },
+  );
+
+  await t.test(
+    'response parsing snapshots fields once and accepts null-prototype header maps',
+    () => {
+      const reads = { status: 0, headers: 0, body: 0, value: 0 };
+      const observedHeaders = Object.assign(
+        Object.create(null) as object,
+        headers(),
+      );
+      Object.defineProperty(observedHeaders, 'X-Key', {
+        enumerable: true,
+        get() {
+          reads.value += 1;
+          return reads.value === 1 ? 'original' : 'changed';
+        },
+      });
+      class Evidence {
+        get status() {
+          reads.status += 1;
+          return reads.status === 1 ? 202 : 200;
+        }
+        get headers() {
+          reads.headers += 1;
+          return observedHeaders;
+        }
+        get body() {
+          reads.body += 1;
+          return reads.body === 1 ? JSON.stringify(pending) : '{';
+        }
+      }
+      const result = operation.parseResponse(new Evidence());
+      assert.equal(result.kind, 'success');
+      assert.equal(result.status, 202);
+      assert.deepEqual(result.data, pending);
+      assert.equal(result.headers['x-key'], 'original');
+      assert.equal(result.validatedHeaders['x-key'], 'original');
+      assert.deepEqual(reads, { status: 1, headers: 1, body: 1, value: 1 });
+    },
+  );
+
+  await t.test(
+    'numeric status evidence remains a protocol failure when undeclared',
+    () => {
+      for (const status of [0, -0, -1, 202.5, NaN, Infinity, -Infinity]) {
+        const result = operation.parseResponse({
+          status,
+          headers: headers(),
+          body: JSON.stringify(pending),
+        });
+        assert.equal(result.kind, 'protocol');
+        assert.equal(result.status, status);
+        assert.ok(result.issues.some((issue) => issue.part === 'status'));
+        assert.equal(Object.hasOwn(result, 'data'), false);
+      }
+    },
+  );
 
   await t.test(
     'every HTTP byte has the same acceptance in builder, merged headers and response headers',

@@ -445,10 +445,16 @@ function validHeaderValue(value: string): boolean {
 }
 
 function observedHeaders(input: HeaderContext) {
+  if (!plainRecord(input))
+    throw new TypeError('response headers must be a plain record');
   const context: Record<string, string> = dictionary<string>();
   const issues: ProtocolIssue[] = [];
   const invalidFields = new Set<string>();
   for (const [rawName, value] of Object.entries(input)) {
+    if (typeof value !== 'string')
+      throw new TypeError(
+        `response header ${JSON.stringify(rawName)} must be a string`,
+      );
     const name = rawName.toLowerCase();
     const repeated = Object.hasOwn(context, name);
     context[name] = repeated ? `${context[name]}, ${value}` : value;
@@ -518,11 +524,19 @@ function responseParser<R extends Responses>(
   responses: R,
 ): (observed: ObservedResponse) => ProtocolResult<R> {
   return (observed) => {
-    const { headers, issues, invalidFields } = observedHeaders(
-      observed.headers,
-    );
-    const spec = Object.hasOwn(responses, observed.status)
-      ? responses[observed.status]
+    if (observed === null || typeof observed !== 'object')
+      throw new TypeError('response evidence must be an object');
+    // JavaScript executors can bypass the declared evidence types. Snapshot
+    // fields once and reject coercion before lookup or JSON parsing can turn a
+    // malformed adapter result into successful, incorrectly typed protocol data.
+    const { status, body, headers: rawHeaders } = observed;
+    if (typeof status !== 'number')
+      throw new TypeError('response status must be a number');
+    if (typeof body !== 'string')
+      throw new TypeError('response body must be raw text');
+    const { headers, issues, invalidFields } = observedHeaders(rawHeaders);
+    const spec = Object.hasOwn(responses, status)
+      ? responses[status]
       : undefined;
     if (!spec)
       issues.push({ part: 'status', message: 'undeclared response status' });
@@ -534,7 +548,7 @@ function responseParser<R extends Responses>(
     );
     let data: unknown;
     if (spec?.bodyKind === 'none') {
-      if (observed.body !== '')
+      if (body !== '')
         issues.push({
           part: 'body',
           message: 'expected an empty response body',
@@ -553,7 +567,7 @@ function responseParser<R extends Responses>(
       let decoded: unknown;
       let decodedSuccessfully = false;
       try {
-        decoded = JSON.parse(observed.body) as unknown;
+        decoded = JSON.parse(body) as unknown;
         decodedSuccessfully = true;
       } catch {
         issues.push({ part: 'body', message: 'invalid JSON response body' });
@@ -570,7 +584,7 @@ function responseParser<R extends Responses>(
       return Object.freeze({
         kind: 'protocol',
         operationId,
-        status: observed.status,
+        status,
         headers,
         validatedHeaders,
         issues: Object.freeze(issues),
@@ -579,10 +593,9 @@ function responseParser<R extends Responses>(
     // The only successful path selects an exact declared status and validates its
     // schema. TypeScript cannot express that runtime lookup as the mapped union.
     return Object.freeze({
-      kind:
-        observed.status >= 200 && observed.status < 300 ? 'success' : 'error',
+      kind: status >= 200 && status < 300 ? 'success' : 'error',
       operationId,
-      status: observed.status,
+      status,
       headers,
       validatedHeaders,
       data,

@@ -144,6 +144,7 @@ export type Client = {
   readonly target?: 'browser' | 'native';
   readonly transportHeaders: readonly string[];
   readonly operations: readonly Operation[];
+  readonly queries: readonly Operation[];
   readonly requestSchemas: readonly string[];
   readonly responseSchemas: readonly string[];
 };

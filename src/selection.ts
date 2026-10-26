@@ -13,6 +13,7 @@ export type CompileOptions = Readonly<{
   clients: readonly string[];
   transportHeaders?: readonly string[];
   targets?: Readonly<Record<string, 'browser' | 'native'>>;
+  queries?: Readonly<Record<string, readonly string[]>>;
   standalone?: Readonly<
     Record<string, { readonly schema: string; readonly usage: Direction }>
   >;
@@ -22,6 +23,7 @@ export const selectionKeys = [
   'transportHeaders',
   'standalone',
   'targets',
+  'queries',
 ] as const;
 export type RootSelection = Readonly<{
   name: string;
@@ -32,6 +34,7 @@ export type Selection = Readonly<{
   clients: readonly string[];
   transportHeaders: readonly string[];
   targets: Readonly<Record<string, 'browser' | 'native'>>;
+  queries: Readonly<Record<string, readonly string[]>>;
   standalone: readonly RootSelection[];
 }>;
 
@@ -89,5 +92,21 @@ export function parseSelection(value: Record<string, unknown>): Selection {
       },
     ),
   );
-  return { clients, transportHeaders, targets, standalone };
+  const rawQueries = record(
+    value.queries === undefined ? {} : value.queries,
+    'queries',
+  );
+  const queries = Object.fromEntries(
+    Object.entries(rawQueries).map(([name, operations]) => {
+      const location = `queries.${name}`;
+      if (!clients.includes(name))
+        fail(location, 'queries must name a selected client');
+      if (!stringArray(operations) || operations.length === 0)
+        fail(location, 'expected a nonempty array of operation identifiers');
+      if (new Set(operations).size !== operations.length)
+        fail(location, 'duplicate query operation');
+      return [name, [...operations].sort()];
+    }),
+  );
+  return { clients, transportHeaders, targets, standalone, queries };
 }

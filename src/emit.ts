@@ -309,7 +309,29 @@ function renderClient(
     [`client.${client.name}.schemas.ts`]: emittedSchema,
     [`client.${client.name}.operations.ts`]: emittedOperations,
     [`client.${client.name}.ts`]: index,
+    ...(client.queries.length > 0
+      ? { [`client.${client.name}.queries.ts`]: renderQueries(client) }
+      : {}),
   };
+}
+
+function renderQueries(client: Client): string {
+  const entries = client.queries.map(
+    (operation) =>
+      `${JSON.stringify(operation.id)}: defineQuery(operations[${JSON.stringify(operation.id)}], execute, namespace, ${JSON.stringify(client.name)})`,
+  );
+  return `${banner}
+    import { operations } from './client.${client.name}.operations.ts';
+    import { defineQuery, queryNamespace } from './query-runtime.ts';
+    import type { QueryExecutor } from './query-runtime.ts';
+    export { QueryResponseError } from './query-runtime.ts';
+    export type { CacheContext, QueryExecutor } from './query-runtime.ts';
+    export function createQueries(config: Readonly<{ namespace: string; execute: QueryExecutor }>) {
+      const namespace = queryNamespace(config.namespace);
+      const execute = config.execute;
+      if (typeof execute !== 'function') throw new TypeError('query executor must be a function');
+      return Object.freeze({ ${entries.join(',')} });
+    }`;
 }
 
 function renderStandalone(
@@ -348,6 +370,9 @@ export async function render(
   const outputs: Record<string, string> = {
     'runtime.ts': `${banner}${helper}`,
   };
+  if (clients.some((client) => client.queries.length > 0))
+    outputs['query-runtime.ts'] =
+      `${banner}${(await readFile(new URL('./query-runtime.ts', import.meta.url), 'utf8')).replace("from './runtime.js'", "from './runtime.ts'")}`;
   if (
     clients.some(
       (client) =>

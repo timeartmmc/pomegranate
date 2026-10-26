@@ -15,6 +15,7 @@
     "schema-types.ts",
     "schema-composition-types.ts",
     "multipart-types.ts",
-    "symbol-types.ts"
+    "symbol-types.ts",
+    "query-types.ts"
   ]
 }

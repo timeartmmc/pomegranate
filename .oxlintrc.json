@@ -35,6 +35,7 @@
     "test/schema-types.ts",
     "test/schema-composition-types.ts",
     "test/multipart-types.ts",
-    "test/symbol-types.ts"
+    "test/symbol-types.ts",
+    "test/query-types.ts"
   ]
 }
