@@ -30,6 +30,13 @@ import {
 } from './schemas.js';
 import { normalizeOperationPolicy, normalizeVocabulary } from './policy.js';
 import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
+import {
+  deprecatedAnnotation,
+  exampleAnnotations,
+  exampleComponents,
+  exampleKeys,
+  licenseAnnotation,
+} from './annotations.js';
 
 const methods = [
   'get',
@@ -89,7 +96,11 @@ function optionalBoolean(
   return value[key];
 }
 
-function jsonSchema(input: unknown, location: string): Schema {
+function jsonSchema(
+  input: unknown,
+  location: string,
+  examples: ReadonlySet<string>,
+): Schema {
   const content = record(input, location);
   keys(content, ['application/json'], location);
   if (!Object.hasOwn(content, 'application/json'))
@@ -98,13 +109,15 @@ function jsonSchema(input: unknown, location: string): Schema {
     content['application/json'],
     `${location}.application/json`,
   );
-  keys(media, ['schema'], `${location}.application/json`);
+  keys(media, ['schema', ...exampleKeys], `${location}.application/json`);
+  exampleAnnotations(media, `${location}.application/json`, examples);
   return normalizeSchema(media.schema, `${location}.application/json.schema`);
 }
 
 function normalizeParameter(
   input: unknown,
   schemas: Readonly<Record<string, Schema>>,
+  examples: ReadonlySet<string>,
   location: string,
 ): Parameter {
   const value = record(input, location);
@@ -119,10 +132,14 @@ function normalizeParameter(
       'style',
       'explode',
       'allowReserved',
+      'deprecated',
+      ...exampleKeys,
     ],
     location,
   );
   annotations(value, location);
+  deprecatedAnnotation(value, location);
+  exampleAnnotations(value, location, examples);
   const name = contractField(
     text(value.name, `${location}.name`),
     `${location}.name`,
@@ -220,6 +237,7 @@ function normalizeParameter(
 function normalizeHeaders(
   input: unknown,
   schemas: Readonly<Record<string, Schema>>,
+  examples: ReadonlySet<string>,
   location: string,
 ): readonly ResponseHeader[] {
   const headers = record(input, location);
@@ -251,10 +269,20 @@ function normalizeHeaders(
       const header = record(headers[rawName], headerLocation);
       keys(
         header,
-        ['description', 'required', 'schema', 'style', 'explode'],
+        [
+          'description',
+          'required',
+          'schema',
+          'style',
+          'explode',
+          'deprecated',
+          ...exampleKeys,
+        ],
         headerLocation,
       );
       annotations(header, headerLocation);
+      deprecatedAnnotation(header, headerLocation);
+      exampleAnnotations(header, headerLocation, examples);
       if (Object.hasOwn(header, 'style') && header.style !== 'simple')
         fail(`${headerLocation}.style`, 'only simple headers are supported');
       if (Object.hasOwn(header, 'explode'))
@@ -334,6 +362,7 @@ function multipartFields(
 function operationParameters(
   value: Record<string, unknown>,
   schemas: Readonly<Record<string, Schema>>,
+  examples: ReadonlySet<string>,
   path: string,
   location: string,
 ): readonly Parameter[] {
@@ -343,7 +372,12 @@ function operationParameters(
   if (!Array.isArray(rawParameters))
     fail(`${location}.parameters`, 'expected an array');
   const parameters = rawParameters.map((parameter, index) =>
-    normalizeParameter(parameter, schemas, `${location}.parameters[${index}]`),
+    normalizeParameter(
+      parameter,
+      schemas,
+      examples,
+      `${location}.parameters[${index}]`,
+    ),
   );
   const seenParameters = new Set<string>();
   for (const parameter of parameters) {
@@ -375,6 +409,7 @@ function requestBody(
   value: Record<string, unknown>,
   method: (typeof methods)[number],
   schemas: Readonly<Record<string, Schema>>,
+  examples: ReadonlySet<string>,
   location: string,
 ): Operation['body'] {
   let body: Operation['body'] = { kind: 'none' };
@@ -406,7 +441,8 @@ function requestBody(
         'expected exactly one JSON or multipart media type',
       );
     const media = record(content[mediaType], `${contentLocation}.${mediaType}`);
-    keys(media, ['schema'], `${contentLocation}.${mediaType}`);
+    keys(media, ['schema', ...exampleKeys], `${contentLocation}.${mediaType}`);
+    exampleAnnotations(media, `${contentLocation}.${mediaType}`, examples);
     const schemaLocation = `${contentLocation}.${mediaType}.schema`;
     const schema = normalizeSchema(media.schema, schemaLocation);
     const multipart = mediaType === 'multipart/form-data';
@@ -431,6 +467,7 @@ function operationResponses(
   value: Record<string, unknown>,
   method: (typeof methods)[number],
   schemas: Readonly<Record<string, Schema>>,
+  examples: ReadonlySet<string>,
   location: string,
 ): readonly ContractResponse[] {
   const rawResponses = record(value.responses, `${location}.responses`);
@@ -461,6 +498,7 @@ function operationResponses(
         const schema = jsonSchema(
           response.content,
           `${responseLocation}.content`,
+          examples,
         );
         validateSchema(
           schema,
@@ -474,6 +512,7 @@ function operationResponses(
         ? normalizeHeaders(
             response.headers,
             schemas,
+            examples,
             `${responseLocation}.headers`,
           )
         : [];
@@ -490,6 +529,7 @@ function normalizeOperation(
   path: string,
   vocabulary: PolicyVocabulary,
   schemas: Readonly<Record<string, Schema>>,
+  examples: ReadonlySet<string>,
   bearerSchemes: ReadonlySet<string>,
   inheritedSecurity: AuthTransport,
 ): Operation {
@@ -507,10 +547,12 @@ function normalizeOperation(
       'responses',
       'security',
       'x-pom',
+      'deprecated',
     ],
     location,
   );
   annotations(value, location);
+  deprecatedAnnotation(value, location);
   // Presence matters: [] and [{}] deliberately clear a document bearer
   // requirement; absence inherits it. Do not merge these alternatives.
   const transport = Object.hasOwn(value, 'security')
@@ -537,9 +579,21 @@ function normalizeOperation(
       `${location}.tags`,
       'expected an array of nonempty documentation tags',
     );
-  const parameters = operationParameters(value, schemas, path, location);
-  const body = requestBody(value, method, schemas, location);
-  const responses = operationResponses(value, method, schemas, location);
+  const parameters = operationParameters(
+    value,
+    schemas,
+    examples,
+    path,
+    location,
+  );
+  const body = requestBody(value, method, schemas, examples, location);
+  const responses = operationResponses(
+    value,
+    method,
+    schemas,
+    examples,
+    location,
+  );
   return {
     id,
     method: method.toUpperCase() as Operation['method'],
@@ -575,10 +629,11 @@ export function buildDescriptor(input: unknown): Descriptor {
   )
     fail('openapi', 'expected an OpenAPI 3.1.x version');
   const info = record(value.info, 'info');
-  keys(info, ['title', 'version', 'description', 'summary'], 'info');
+  keys(info, ['title', 'version', 'description', 'summary', 'license'], 'info');
   text(info.title, 'info.title');
   text(info.version, 'info.version');
   annotations(info, 'info');
+  licenseAnnotation(info);
   if (Object.hasOwn(value, 'tags')) {
     if (!Array.isArray(value.tags)) fail('tags', 'expected an array');
     for (const [index, rawTag] of value.tags.entries()) {
@@ -592,7 +647,10 @@ export function buildDescriptor(input: unknown): Descriptor {
   const components = Object.hasOwn(value, 'components')
     ? record(value.components, 'components')
     : {};
-  keys(components, ['schemas', 'securitySchemes'], 'components');
+  keys(components, ['schemas', 'securitySchemes', 'examples'], 'components');
+  const examples = exampleComponents(
+    Object.hasOwn(components, 'examples') ? components.examples : {},
+  );
   const bearerSchemes = normalizeSecuritySchemes(
     Object.hasOwn(components, 'securitySchemes')
       ? components.securitySchemes
@@ -640,6 +698,7 @@ export function buildDescriptor(input: unknown): Descriptor {
             path,
             vocabulary,
             schemas,
+            examples,
             bearerSchemes,
             inheritedSecurity,
           ),

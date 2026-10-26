@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import {
+  nullableTypeCases,
+  nullableTypeSchemas,
+} from './nullable-type-fixture.mjs';
 
 export const standaloneSelection = {
   message: { schema: '#/components/schemas/1.Shape', usage: 'response' },
@@ -16,6 +20,7 @@ const content = (schema) => ({ 'application/json': { schema } });
 
 export function schemaFixture() {
   const schemas = {
+    ...structuredClone(nullableTypeSchemas),
     Empty: { type: 'object', additionalProperties: false },
     EmptyContainers: object({
       child: ref('Empty'),
@@ -134,6 +139,7 @@ export function schemaFixture() {
     components: { schemas },
     paths: Object.fromEntries(
       [
+        ...nullableTypeCases.map(({ name }) => name),
         'NamedComponents',
         'Empty',
         'EmptyContainers',
@@ -254,6 +260,8 @@ export function verifySchemas(operations, RequestValidationError) {
       `${name}: ${JSON.stringify(value)}`,
     );
   };
+  for (const { name, samples } of nullableTypeCases)
+    for (const [value, accepted] of samples) check(name, value, accepted);
   check('Empty', {}, true);
   for (const value of [42, false, 'text', null, []])
     check('Empty', value, false);

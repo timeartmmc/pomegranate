@@ -22,11 +22,13 @@ runtime tests, exercises generated code through Chromium Fetch against a local
 synthetic server, checks and runs the synthetic example, and exercises a packed
 install in an isolated consumer. That consumer installs through npm with strict
 engine and peer checks, using the minimum supported Zod and TypeScript 5.7.3
-with Node 22 types. Source tests use the pinned development releases. After
-removing the compiler and formatter, the
-installed-package check runs generated TypeScript directly on Node and Bun and
-emitted JavaScript on Node. It must not rely on a sibling checkout or a source
-symlink. Keep CI and this command aligned.
+with Node 22 types. It checks equivalent JSON/YAML generation, shared
+YAML policy reuse, BOM-prefixed JSON inputs and configuration, parent-directory
+aliases, scalar contradiction diagnostics, and malformed-input failures.
+Source tests use the pinned development releases. After removing the
+compiler, formatter, and YAML parser, the installed-package check runs generated
+TypeScript directly on Node and Bun and emitted JavaScript on Node. It must not
+rely on a sibling checkout or a source symlink. Keep CI and this command aligned.
 Builds recreate the compiler-owned `dist` directory so removed source modules
 cannot survive into a package. The packed-install check also verifies this
 cleanup and compiles generated clients with `noPropertyAccessFromIndexSignature`.

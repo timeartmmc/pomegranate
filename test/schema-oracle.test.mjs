@@ -11,10 +11,12 @@ import {
   compositionCases,
   compositionSchemas,
 } from './schema-composition-fixture.mjs';
+import { nullableTypeCases } from './nullable-type-fixture.mjs';
 
 const exec = promisify(execFile);
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const cases = [
+  ...nullableTypeCases,
   {
     name: 'NullableInteger',
     schema: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },

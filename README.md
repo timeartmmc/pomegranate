@@ -1,7 +1,8 @@
 # Pomegranate
 
-Pomegranate (POM) compiles a strict subset of OpenAPI 3.1 JSON into TypeScript
-request builders, Zod validators, and response validation keyed by HTTP status.
+Pomegranate (POM) compiles a strict subset of OpenAPI 3.1 documents in JSON or
+YAML into TypeScript request builders, Zod validators, and response validation
+keyed by HTTP status.
 Generated code performs no network I/O. Applications own the transport and the
 meaning of their authentication, retry, and timeout policy.
 
@@ -38,6 +39,10 @@ Create `pom.json` beside your exported `openapi.json`:
 
 Paths resolve from the real configuration file's directory. `clients` selects
 declared surface identities directly. The package installs the `pom` executable.
+A symlinked output parent, such as macOS `/tmp`, is supported. The output
+directory itself and generated target files cannot be symlinks.
+For a YAML export, set `openapi` to a `.yaml` or `.yml` file; configuration stays
+JSON. OpenAPI filenames with other extensions are read as JSON.
 Generate or check the complete output set:
 
 ```sh
@@ -174,7 +179,7 @@ validation, including operations excluded from output.
 For the synthetic contract, generated usage looks like this:
 
 ```ts
-import { operations } from './generated/client.consumer.js';
+import { operations } from './generated/client.consumer.ts';
 
 const request = operations.prepareWidget.build({
   path: { widgetId: 'demo/widget' },
@@ -274,7 +279,7 @@ Bodyless responses require empty text and expose `data: undefined`.
 
 | Surface     | Current support                                                                                                                                                                                                 |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input       | Local OpenAPI 3.1 JSON with any patch version; version 2 JSON configuration and policy                                                                                                                          |
+| Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration and policy                                                                                                      |
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; ASCII operation identifiers; whole-segment path placeholders                                                                                                      |
 | Parameters  | Primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
 | Bodies      | Required JSON or multipart request bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                          |
@@ -282,9 +287,52 @@ Bodyless responses require empty text and expose `data: undefined`.
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                   |
 | Formats     | String `date`, `date-time`, and `uuid`; values remain strings without coercion                                                                                                                                  |
 
+JSON inputs and configuration accept one leading UTF-8 byte-order mark and
+reject duplicate decoded object keys. YAML files use a single YAML 1.2 core
+document with JSON-compatible values. Mapping keys are strings, including
+unquoted numeric response statuses. Scalar values keep their YAML types:
+quote string values such as `version: "1"` and the type name in
+`type: [string, "null"]`.
+
+YAML anchors and aliases support shared values with at most 1,000,000 expanded
+nodes, counting mapping keys, values, and collections. Repeated small anchors
+are allowed within that budget. Cycles, forward aliases, duplicate keys,
+unsupported tags or directives, non-finite numbers, and bare merge keys fail
+with diagnostics. Quote `"<<"` when it is a literal mapping key. YAML collections,
+including through aliases, are limited to 256 nested levels; the existing schema
+nesting limits also apply. YAML input uses the same contract validation and
+generated format as JSON input.
+
+Descriptive metadata is checked for location and structure and does not change
+generated files:
+
+| Location                                                 | Accepted metadata                                                                         |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `info.license`                                           | Required string `name`; optional string `identifier` or `url`, mutually exclusive         |
+| Schemas, including `$ref` siblings                       | `example` as a JSON value; `examples` as an array of JSON values; both may coexist        |
+| Parameters, response headers, JSON/multipart media types | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive |
+| Operations, parameters, response headers, schemas        | Boolean `deprecated`; deprecated declarations remain generated                            |
+
+Example Objects accept string `summary` and `description`, and a JSON `value` or
+string `externalValue`, mutually exclusive. Named examples may reference
+`#/components/examples/<name>`; component examples and aliases are validated,
+including unused entries, with missing targets and cycles rejected. Component
+example names match `[A-Za-z0-9._-]+`. Example references may add string `summary`
+and `description` annotations.
+
+Example values are documentation data, not schema rules, and are not checked
+against their associated schemas. POM checks metadata shapes rather than SPDX
+expressions or URI syntax, and never fetches license URLs or external example
+values. Unknown keywords and unrelated `x-…` extensions remain rejected.
+
 Supported schema composition is deliberately limited:
 
 - `anyOf` has two branches: a schema and `null`, or `string` and `integer`.
+- Nullable schemas accept `"type": ["string", "null"]` with any supported
+  non-null type and `"null"` in either order. Exactly two distinct type names
+  are required. Scalar `enum` and `const` still restrict accepted values,
+  including whether `null` is accepted. Existing parameter and multipart
+  restrictions still apply.
 - `oneOf` uses component references with an explicit discriminator mapping.
   Each branch requires the discriminator field with a distinct string literal;
   the mapping must cover every branch exactly once.
@@ -309,12 +357,21 @@ levels; use component references for deeper structures. Named types and typed
 aggregate validators keep inference from expanding through every level.
 Generated expressions have a separate 128-level complexity limit, including
 constraint wrappers. Excess nesting receives a location-specific diagnostic
-before formatting or writing. Deep default annotations do not count.
+before formatting or writing. Default annotations do not add schema or expression
+levels; YAML document limits still apply to their values.
 
 Numbers use finite JavaScript numeric values. Integer validation checks
 integrality without adding an implicit safe-integer range; declare required
 bounds in the schema. `multipleOf` uses their decimal spelling, including
 scientific notation, without an epsilon tolerance.
+
+Inline scalar `enum` members and `const` values must satisfy applicable bounds,
+patterns, formats, and `multipleOf` rules. Null-only literals remove the non-null
+branch after sibling syntax checks. Other numeric branches reject empty
+finite-number and integer intervals. Reference constraints may narrow an existing
+enum; empty literal intersections and contradictory bounds also fail across
+reference chains. These checks diagnose supported contradictions without
+attempting general schema satisfiability analysis.
 
 `date-time` requires a calendar date, seconds, and a `Z` or `±HH:MM` timezone.
 Fractional seconds and lowercase `t`/`z` are accepted without changing the input
@@ -328,8 +385,8 @@ before their items are validated.
 Path and query names/values must contain well-formed Unicode. Header values use
 HTTP byte characters, permit internal horizontal tabs, and reject other ASCII
 controls or leading/trailing SP/HTAB so transport serialization preserves them.
-Header names must be ASCII HTTP tokens; `__proto__`, `prototype`, and `constructor`
-are reserved regardless of casing. JSON responses require a single
+Header names must be ASCII HTTP tokens. Declarations reserve `__proto__`,
+`prototype`, and `constructor` regardless of casing. JSON responses require a single
 valid `application/json` Content-Type value; quoted parameters are supported.
 
 Fixed schema property and parameter names that belong to `Object.prototype`,
@@ -346,7 +403,7 @@ outputs change. For example, adding `format: "email"` to the example's
 POM: components.schemas.WidgetId.format: unsupported format; expected date, date-time or uuid
 ```
 
-YAML, external or recursive references, general unions and type arrays, objects
+External or recursive references, general unions and other type arrays, objects
 mixing fixed properties with dynamic entries, other formats, response defaults,
 optional request bodies, path-level parameters, status ranges/default responses,
 non-bearer or referenced security schemes

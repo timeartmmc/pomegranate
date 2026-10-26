@@ -8,7 +8,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { fail } from './diagnostics.js';
 import {
   existingFile,
@@ -21,6 +21,7 @@ import {
   journal,
   journalName,
   lockName,
+  outputDirectory,
   readJournal,
   safeDirectory,
   snapshot,
@@ -185,8 +186,7 @@ export async function synchronizeOutputs(
   inputs: readonly string[],
   check: boolean,
 ): Promise<OutputResult> {
-  const root = resolve(output);
-  await safeDirectory(root);
+  const root = await outputDirectory(output);
   filenames(Object.keys(expected));
   const protectedInputs = new Set(
     await Promise.all(inputs.map((input) => realpath(input))),

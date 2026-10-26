@@ -188,7 +188,7 @@ test('active, stale and inventory paths cannot overlap inputs', async (t) => {
 });
 
 test(
-  'symbolic links in output paths or target files are rejected',
+  'symbolic links at the output root or target files are rejected',
   { skip: process.platform === 'win32' },
   async (t) => {
     const root = await temporary(t);
@@ -199,15 +199,15 @@ test(
       synchronizeOutputs(join(root, 'link'), { 'index.ts': 'one' }, [], false),
       /symbolic links/,
     );
-    await assert.rejects(
-      synchronizeOutputs(
-        join(root, 'link', 'nested'),
-        { 'index.ts': 'one' },
-        [],
-        true,
-      ),
-      /symbolic links/,
+    const missing = await synchronizeOutputs(
+      join(root, 'link', 'nested'),
+      { 'index.ts': 'one' },
+      [],
+      true,
     );
+    assert.equal(missing.output, join(referent, 'nested'));
+    assert.equal(missing.clean, false);
+    assert.deepEqual(await readdir(referent), []);
     await writeFile(join(referent, 'user.ts'), 'user code');
     const output = join(root, 'output');
     await mkdir(output);

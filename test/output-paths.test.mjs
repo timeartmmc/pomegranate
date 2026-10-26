@@ -3,14 +3,18 @@ import {
   mkdir,
   readdir,
   readFile,
+  realpath,
+  rm,
   stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { join, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { basename, join, sep } from 'node:path';
 import test from 'node:test';
 import { synchronizeOutputs } from '../dist/outputs.js';
-import { fileSnapshot, temporary } from './helpers.mjs';
+import { runProject } from '../dist/index.js';
+import { fixture, fileSnapshot, temporary } from './helpers.mjs';
 
 for (const check of [true, false]) {
   const mode = check ? 'check' : 'generation';
@@ -110,32 +114,95 @@ test(
 );
 
 for (const check of [true, false]) {
-  for (const nested of [false, true]) {
-    test(
-      `POSIX backslash symlink ${nested ? 'ancestor' : 'output'} is rejected during ${check ? 'check' : 'generation'}`,
-      { skip: sep !== '/' },
-      async (t) => {
-        const root = await temporary(t);
-        const referent = join(root, 'outside');
-        await mkdir(referent);
-        await writeFile(join(referent, 'keep.txt'), 'application-owned\n');
-        const link = join(root, 'out\\link');
-        await symlink(referent, link);
-        const output = nested ? join(link, 'generated') : link;
-        await assert.rejects(
-          synchronizeOutputs(output, { 'index.ts': 'generated\n' }, [], check),
-          /output paths must contain only directories, without symbolic links/,
-        );
-        assert.deepEqual(await readdir(referent), ['keep.txt']);
-        assert.equal(
-          await readFile(join(referent, 'keep.txt'), 'utf8'),
-          'application-owned\n',
-        );
-        assert.deepEqual((await readdir(root)).sort(), [
-          'out\\link',
-          'outside',
-        ]);
-      },
-    );
-  }
+  test(
+    `POSIX backslash symlink output is rejected during ${check ? 'check' : 'generation'}`,
+    { skip: sep !== '/' },
+    async (t) => {
+      const root = await temporary(t);
+      const referent = join(root, 'outside');
+      await mkdir(referent);
+      await writeFile(join(referent, 'keep.txt'), 'application-owned\n');
+      const link = join(root, 'out\\link');
+      await symlink(referent, link);
+      const output = link;
+      await assert.rejects(
+        synchronizeOutputs(output, { 'index.ts': 'generated\n' }, [], check),
+        /output paths must contain only directories, without symbolic links/,
+      );
+      assert.deepEqual(await readdir(referent), ['keep.txt']);
+      assert.equal(
+        await readFile(join(referent, 'keep.txt'), 'utf8'),
+        'application-owned\n',
+      );
+      assert.deepEqual((await readdir(root)).sort(), ['out\\link', 'outside']);
+    },
+  );
 }
+
+test(
+  'parent symlinks resolve once across missing directories, generation, drift and protected inputs',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const root = await temporary(t);
+    const real = join(root, 'actual');
+    await mkdir(real);
+    const alias = join(root, sep === '/' ? 'parent\\alias' : 'parent-alias');
+    await symlink(real, alias);
+    const output = join(alias, 'missing', 'generated');
+    const canonical = join(real, 'missing', 'generated');
+    const expected = { 'index.ts': 'first\n' };
+    const before = await fileSnapshot(real);
+    const missing = await synchronizeOutputs(output, expected, [], true);
+    assert.equal(missing.output, canonical);
+    assert.equal(missing.clean, false);
+    assert.deepEqual(await fileSnapshot(real), before);
+    await assert.rejects(stat(join(real, 'missing')), { code: 'ENOENT' });
+    assert.equal(
+      (await synchronizeOutputs(output, expected, [], false)).output,
+      canonical,
+    );
+    const generated = await fileSnapshot(canonical);
+    assert.equal(
+      (await synchronizeOutputs(output, expected, [], true)).clean,
+      true,
+    );
+    assert.deepEqual(await fileSnapshot(canonical), generated);
+    for (const check of [false, true]) {
+      await assert.rejects(
+        synchronizeOutputs(
+          output,
+          { 'index.ts': 'replacement\n' },
+          [join(alias, 'missing', 'generated', 'index.ts')],
+          check,
+        ),
+        /protected input/,
+      );
+      assert.deepEqual(await fileSnapshot(canonical), generated);
+    }
+  },
+);
+
+test('runProject supports an absolute output under the platform temporary directory alias', async (t) => {
+  const root = await temporary(t);
+  const directory = process.platform === 'darwin' ? '/tmp' : tmpdir();
+  const canonicalTemporary = await realpath(directory);
+  const output = join(directory, 'pom-parent-alias-' + basename(root));
+  const canonical = join(canonicalTemporary, basename(output));
+  t.after(() => rm(canonical, { recursive: true, force: true }));
+  await writeFile(join(root, 'openapi.json'), JSON.stringify(fixture()));
+  const config = join(root, 'pom.json');
+  await writeFile(
+    config,
+    JSON.stringify({
+      version: 2,
+      openapi: './openapi.json',
+      output,
+      clients: ['consumer'],
+    }),
+  );
+  const missing = await runProject(config, { check: true });
+  assert.equal(missing.output, canonical);
+  await assert.rejects(stat(canonical), { code: 'ENOENT' });
+  await runProject(config);
+  assert.equal((await runProject(config, { check: true })).clean, true);
+});

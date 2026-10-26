@@ -9,6 +9,52 @@ import type {
   Output as EmptyOutput,
 } from './schema-generated/standalone.empty.js';
 const emptyInput: EmptyInput = {};
+operations.checkTypeArrayString.build({ body: null });
+operations.checkTypeArrayString.build({ body: 'AB' });
+operations.checkTypeArrayEnum.build({ body: 'ready' });
+operations.checkTypeArrayEnum.build({ body: null });
+operations.checkTypeArrayNonNullEnum.build({ body: 'ready' });
+operations.checkTypeArrayOnlyNull.build({ body: null });
+operations.checkTypeArrayEmptyIntegerBranch.build({ body: null });
+operations.checkTypeArrayEmptyNumberBranch.build({ body: null });
+operations.checkTypeArrayConst.build({ body: false });
+operations.checkTypeArrayNullConst.build({ body: null });
+operations.checkTypeArrayArray.build({ body: [0, null] });
+operations.checkTypeArrayObject.build({ body: { label: null } });
+operations.checkTypeArrayMap.build({ body: { key: null } });
+operations.checkTypeArrayReferences.build({ body: { required: null } });
+operations.checkTypeArrayReferences.build({
+  body: { required: 'done', optional: undefined },
+});
+// @ts-expect-error Nullable string schemas still reject numbers.
+operations.checkTypeArrayString.build({ body: 1 });
+// @ts-expect-error A nullable type does not add null to a non-null enum.
+operations.checkTypeArrayNonNullEnum.build({ body: null });
+// @ts-expect-error A null-only enum removes the non-null type.
+operations.checkTypeArrayOnlyNull.build({ body: 'A' });
+// @ts-expect-error A null-only enum eliminates the impossible integer branch.
+operations.checkTypeArrayEmptyIntegerBranch.build({ body: 1 });
+// @ts-expect-error A null-only const eliminates the impossible numeric branch.
+operations.checkTypeArrayEmptyNumberBranch.build({ body: Number.MAX_VALUE });
+// @ts-expect-error Const remains false despite the nullable type spelling.
+operations.checkTypeArrayConst.build({ body: null });
+// @ts-expect-error A null const removes number from the generated type.
+operations.checkTypeArrayNullConst.build({ body: 0 });
+// @ts-expect-error Nested nullable items still reject strings.
+operations.checkTypeArrayArray.build({ body: ['0'] });
+// @ts-expect-error Nullable does not make a required property optional.
+operations.checkTypeArrayObject.build({ body: {} });
+// @ts-expect-error Required nullable references still require a value.
+operations.checkTypeArrayReferences.build({ body: {} });
+// @ts-expect-error Required nullable fields do not accept undefined.
+operations.checkTypeArrayReferences.build({ body: { required: undefined } });
+const nullableOutput: ResponseTypes['TypeArrayEnum'] = null;
+const nullOnlyOutput: ResponseTypes['TypeArrayNullConst'] = null;
+// @ts-expect-error Response enums exclude null when it was not enumerated.
+const nonNullOutput: ResponseTypes['TypeArrayNonNullEnum'] = null;
+void nullableOutput;
+void nullOnlyOutput;
+void nonNullOutput;
 const emptyOutput: EmptyOutput = {};
 const emptyResponse: ResponseTypes['Empty'] = {};
 operations.checkEmpty.build({ body: emptyInput });

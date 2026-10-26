@@ -1,5 +1,4 @@
 import {
-  annotations,
   contractField,
   fail,
   keys,
@@ -8,7 +7,17 @@ import {
   text,
   stringArray,
 } from './diagnostics.js';
+import {
+  jsonAnnotation,
+  schemaAnnotations,
+  schemaAnnotationKeys,
+} from './annotations.js';
 import type { Constraints, Scalar, Schema } from './model.js';
+import {
+  assertScalarRules,
+  intersectConstraints,
+  literalViolation,
+} from './scalar-rules.js';
 
 const stringConstraints = ['minLength', 'maxLength', 'pattern'];
 const numberConstraints = [
@@ -27,6 +36,14 @@ const constraintKeys = [
 
 const maximumSchemaNesting = 128;
 const maximumInlineSchemaNesting = 32;
+
+function assertInlineSchemaNesting(nesting: number, location: string): void {
+  if (nesting > maximumInlineSchemaNesting)
+    fail(
+      location,
+      `inline schema nesting exceeds the supported limit of ${maximumInlineSchemaNesting} levels; use component references`,
+    );
+}
 
 export function assertSchemaNesting(nesting: number, location: string): void {
   if (nesting > maximumSchemaNesting)
@@ -84,47 +101,6 @@ function constraints(
   };
 }
 
-function validateDefault(input: unknown, location: string): void {
-  const pending = new Set<object>();
-  const checked = new WeakSet<object>();
-  const stack: { source?: object; values: Iterator<unknown> }[] = [
-    { values: [input].values() },
-  ];
-  // Defaults are annotations, not generated values. Validate without copying
-  // or recursion; JSON.parse accepts values deeper than the JS call stack.
-  while (stack.length > 0) {
-    const frame = stack[stack.length - 1]!;
-    const next = frame.values.next();
-    if (next.done) {
-      if (frame.source) {
-        pending.delete(frame.source);
-        checked.add(frame.source);
-      }
-      stack.pop();
-      continue;
-    }
-    const value = next.value;
-    if (
-      value === null ||
-      typeof value === 'string' ||
-      typeof value === 'boolean' ||
-      (typeof value === 'number' && Number.isFinite(value))
-    )
-      continue;
-    const source = Array.isArray(value) ? value : record(value, location);
-    if (pending.has(source))
-      fail(location, 'default must be JSON without cycles');
-    if (checked.has(source)) continue;
-    pending.add(source);
-    stack.push({
-      source,
-      values: Array.isArray(source)
-        ? source.values()
-        : Object.values(source).values(),
-    });
-  }
-}
-
 function bound(
   value: Record<string, unknown>,
   key: string,
@@ -178,6 +154,7 @@ function literals(
   value: Record<string, unknown>,
   kind: string,
   location: string,
+  nullable = false,
 ): readonly Scalar[] | undefined {
   if (Object.hasOwn(value, 'const') && Object.hasOwn(value, 'enum'))
     fail(location, 'const and enum together are unsupported');
@@ -194,7 +171,7 @@ function literals(
         : kind === 'integer'
           ? typeof item === 'number' && Number.isInteger(item)
           : typeof item === kind;
-    if (!matches || !scalarValue(item))
+    if ((!matches && !(nullable && item === null)) || !scalarValue(item))
       fail(location, `literal must match type ${kind}`);
     if (result.includes(item)) fail(location, 'duplicate literal');
     result.push(item);
@@ -209,18 +186,14 @@ export function normalizeSchema(
 ): Schema {
   // Bound schema recursion before entering either JS or the native formatter.
   // Annotation values have their own iterative validation and do not add depth.
-  if (nesting > maximumInlineSchemaNesting)
-    fail(
-      location,
-      `inline schema nesting exceeds the supported limit of ${maximumInlineSchemaNesting} levels; use component references`,
-    );
+  assertInlineSchemaNesting(nesting, location);
   const value = record(input, location);
-  annotations(value, location);
+  schemaAnnotations(value, location);
   const schema = normalizeShape(value, location, nesting);
   // Defaults describe server behavior. Never make an omitted request field
   // present, or let a default rescue a missing required value.
   if (!Object.hasOwn(value, 'default')) return schema;
-  validateDefault(value.default, `${location}.default`);
+  jsonAnnotation(value.default, `${location}.default`);
   return { ...schema, hasDefault: true };
 }
 
@@ -240,7 +213,7 @@ function referenceName(input: unknown, location: string): string {
   return componentName(ref.slice(prefix.length), location);
 }
 
-const annotationKeys = ['title', 'description', 'default'];
+const annotationKeys = schemaAnnotationKeys;
 const typedSchemaKeys = [...annotationKeys, 'type'];
 
 function normalizeUnion(
@@ -355,6 +328,7 @@ function normalizeScalar(
   value: Record<string, unknown>,
   location: string,
   kind: 'string' | 'number' | 'integer' | 'boolean' | 'null',
+  nullable = false,
 ): Schema {
   const allowedConstraints =
     kind === 'string'
@@ -367,7 +341,7 @@ function normalizeScalar(
     [...typedSchemaKeys, 'const', 'enum', ...allowedConstraints],
     location,
   );
-  const allowed = literals(value, kind, location);
+  const allowed = literals(value, kind, location, nullable);
   const limits = constraints(value, location);
   let format: 'date' | 'date-time' | 'uuid' | undefined;
   if (Object.hasOwn(value, 'format')) {
@@ -382,30 +356,81 @@ function normalizeScalar(
       );
     format = value.format;
   }
-  if (allowed) {
-    for (const item of allowed) {
-      // oxlint-disable-next-line typescript/no-misused-spread -- JSON Schema counts code points, not grapheme clusters.
-      const magnitude = typeof item === 'string' ? [...item].length : item;
-      if (
-        typeof magnitude === 'number' &&
-        ((limits.minLength !== undefined && magnitude < limits.minLength) ||
-          (limits.maxLength !== undefined && magnitude > limits.maxLength) ||
-          (limits.minimum !== undefined && magnitude < limits.minimum) ||
-          (limits.maximum !== undefined && magnitude > limits.maximum) ||
-          (limits.exclusiveMinimum !== undefined &&
-            magnitude <= limits.exclusiveMinimum) ||
-          (limits.exclusiveMaximum !== undefined &&
-            magnitude >= limits.exclusiveMaximum))
-      )
-        fail(location, 'literal violates declared bounds');
-    }
-  }
-  return {
+  const nonNull = nullable ? allowed?.filter((item) => item !== null) : allowed;
+  // A null-only literal assertion removes the non-null branch. Sibling syntax
+  // must still be supported, but its numeric interval need not admit a value.
+  if (nullable && nonNull?.length === 0) return { kind: 'null' };
+  assertScalarRules(kind, limits, allowed, location, format);
+  const scalar: Schema = {
     kind,
     ...limits,
     ...(format === undefined ? {} : { format }),
-    ...(allowed ? { literals: allowed } : {}),
+    ...(nonNull ? { literals: nonNull } : {}),
   };
+  if (!nullable) return scalar;
+  // type, enum and const are independent assertions. A nullable type must not
+  // add null to an enum/const that excludes it, or retain non-null values when
+  // the literal assertion permits only null.
+  return allowed === undefined || allowed.includes(null)
+    ? { kind: 'union', branches: [scalar, { kind: 'null' }] }
+    : scalar;
+}
+
+function normalizeNullableType(
+  value: Record<string, unknown>,
+  location: string,
+  nesting: number,
+): Schema {
+  const types = value.type;
+  if (Array.isArray(types) && types.includes(null))
+    fail(
+      `${location}.type`,
+      'type arrays require string type names; use "null" (quote it in YAML) instead of a null value',
+    );
+  if (
+    !stringArray(types) ||
+    types.length !== 2 ||
+    types[0] === types[1] ||
+    !types.includes('null')
+  )
+    fail(
+      `${location}.type`,
+      'type arrays require one supported non-null type and null',
+    );
+  const kind = types[types[0] === 'null' ? 1 : 0];
+  if (
+    !kind ||
+    !['object', 'array', 'string', 'number', 'integer', 'boolean'].includes(
+      kind,
+    )
+  )
+    fail(
+      `${location}.type`,
+      'type arrays require one supported non-null type and null',
+    );
+  let schema: Schema;
+  if (
+    kind === 'number' ||
+    kind === 'integer' ||
+    kind === 'boolean' ||
+    (kind === 'string' &&
+      value.format !== 'binary' &&
+      !Object.hasOwn(value, 'contentMediaType'))
+  ) {
+    schema = normalizeScalar(value, location, kind, true);
+  } else {
+    // The virtual branch counts just like an explicit anyOf branch. Keep the
+    // original location for diagnostics and all semantic siblings for validation.
+    assertInlineSchemaNesting(nesting + 1, location);
+    const branch = normalizeShape(
+      { ...value, type: kind },
+      location,
+      nesting + 1,
+    );
+    schema = { kind: 'union', branches: [branch, { kind: 'null' }] };
+  }
+  if (schema.kind === 'union') assertInlineSchemaNesting(nesting + 1, location);
+  return schema;
 }
 
 function normalizeShape(
@@ -425,6 +450,8 @@ function normalizeShape(
   if (Object.hasOwn(value, 'anyOf') || Object.hasOwn(value, 'oneOf'))
     return normalizeUnion(value, location, nesting);
   const kind = value.type;
+  if (Array.isArray(kind))
+    return normalizeNullableType(value, location, nesting);
   if (
     kind === 'string' &&
     (value.format === 'binary' || Object.hasOwn(value, 'contentMediaType'))
@@ -465,7 +492,7 @@ function normalizeShape(
     return normalizeScalar(value, location, kind);
   fail(
     `${location}.type`,
-    'supported types are object, array, string, number, integer, boolean and null; implicit types and type arrays are unsupported',
+    'supported types are object, array, string, number, integer, boolean and null; type arrays require one supported non-null type and null; implicit types are unsupported',
   );
 }
 
@@ -483,10 +510,15 @@ export function schemaReferences(
 }
 
 type Usage = 'component' | 'request' | 'response' | 'multipart';
+type ReferenceConstraints = {
+  limits: Constraints;
+  literals: readonly Scalar[] | undefined;
+};
 export function schemaValidation() {
   return {
     depths: new Map<Schema, number>(),
     checked: new Map<Usage, Set<Schema>>(),
+    constraints: new Map<Schema, ReferenceConstraints>(),
   };
 }
 
@@ -602,17 +634,56 @@ function validateUnion(
   }
 }
 
+function validateReferenceConstraints(
+  schema: Extract<Schema, { kind: 'ref' }>,
+  resolved: Schema,
+  schemas: Readonly<Record<string, Schema>>,
+  location: string,
+  cache: Map<Schema, ReferenceConstraints>,
+): void {
+  if (
+    resolved.kind !== 'string' &&
+    resolved.kind !== 'number' &&
+    resolved.kind !== 'integer' &&
+    resolved.kind !== 'array'
+  )
+    return;
+  const chain: Extract<Schema, { kind: 'ref' }>[] = [];
+  let target: Schema = schema;
+  while (target.kind === 'ref' && !cache.has(target)) {
+    chain.push(target);
+    target = schemas[target.name]!;
+  }
+  let rules = cache.get(target) ?? {
+    limits: resolved,
+    literals: resolved.kind === 'array' ? undefined : resolved.literals,
+  };
+  for (const reference of chain.reverse()) {
+    const limits = intersectConstraints(rules.limits, reference.constraints);
+    assertScalarRules(resolved.kind, limits, undefined, location);
+    const violation = literalViolation(reference.constraints);
+    const literals = rules.literals?.filter(
+      (item) => violation(item) === undefined,
+    );
+    if (literals?.length === 0)
+      fail(location, 'reference constraints admit no literal value');
+    rules = { limits, literals };
+    cache.set(reference, rules);
+  }
+}
+
 function validateUsage(
   schema: Schema,
   schemas: Readonly<Record<string, Schema>>,
   location: string,
   usage: Usage,
   checked: Set<Schema>,
+  constraintCache: Map<Schema, ReferenceConstraints>,
 ): void {
   if (checked.has(schema)) return;
   checked.add(schema);
   const visit = (value: Schema, path: string) =>
-    validateUsage(value, schemas, path, usage, checked);
+    validateUsage(value, schemas, path, usage, checked, constraintCache);
   if (usage === 'response' && schema.hasDefault)
     fail(`${location}.default`, 'response schemas must not declare defaults');
   if (
@@ -639,7 +710,7 @@ function validateUsage(
     let target: Schema = schema;
     let targetLocation = location;
     while (target.kind === 'ref') {
-      if (target !== schema && checked.has(target)) return;
+      if (target !== schema && checked.has(target)) break;
       checked.add(target);
       if (usage === 'response' && target.hasDefault)
         fail(
@@ -655,6 +726,13 @@ function validateUsage(
       targetLocation += ` -> components.schemas.${target.name}`;
       target = schemas[target.name]!;
     }
+    validateReferenceConstraints(
+      schema,
+      resolved,
+      schemas,
+      location,
+      constraintCache,
+    );
     visit(target, targetLocation);
   } else if (schema.kind === 'array') visit(schema.items, `${location}.items`);
   else if (schema.kind === 'map' && schema.values !== true)
@@ -686,7 +764,7 @@ export function validateSchema(
     checked = new Set();
     cache.checked.set(usage, checked);
   }
-  validateUsage(schema, schemas, location, usage, checked);
+  validateUsage(schema, schemas, location, usage, checked, cache.constraints);
 }
 
 export function orderSchemas(

@@ -91,6 +91,11 @@ host formatter settings. Render and validate the complete output set before
 writing. Identical supported inputs and compiler versions must produce identical
 bytes.
 
+Resolve existing configured output parents to their real location once, retaining
+any missing directory suffix. Use that canonical output root throughout checking,
+locking, generation, and recovery. Parent aliases such as macOS `/tmp` select a
+location; the output directory itself and owned target files must not be symlinks.
+
 The output manifest records the compiler-owned inventory. Generation must detect
 ownership conflicts before replacing files, preserve unrelated files and modified
 generated files, and remove stale files only when their prior ownership and

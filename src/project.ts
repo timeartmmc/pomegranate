@@ -1,23 +1,26 @@
 import { readFile, realpath } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname, extname, resolve } from 'node:path';
 import { buildDescriptor } from './descriptor.js';
 import { fail, keys, record, text } from './diagnostics.js';
 import { render } from './emit.js';
+import { parseJson } from './json.js';
 import { synchronizeOutputs } from './outputs.js';
 import type { OutputResult } from './outputs.js';
 import { selectClients, selectStandalone } from './projection.js';
 import type { Descriptor } from './model.js';
 import { parseSelection, selectionKeys } from './selection.js';
 import type { CompileOptions } from './selection.js';
+import { parseYaml } from './yaml.js';
 export type { CompileOptions } from './selection.js';
 
 async function readJson(path: string): Promise<unknown> {
-  const source = await readFile(path, 'utf8');
-  try {
-    return JSON.parse(source) as unknown;
-  } catch {
-    fail(path, 'invalid JSON');
-  }
+  return parseJson(await readFile(path, 'utf8'), path);
+}
+
+async function readOpenApi(path: string): Promise<unknown> {
+  if (['.yaml', '.yml'].includes(extname(path).toLowerCase()))
+    return parseYaml(await readFile(path, 'utf8'), path);
+  return readJson(path);
 }
 
 function renderSelection(
@@ -64,7 +67,7 @@ export async function runProject(
     dirname(configPath),
     text(config.output, `${configPath}.output`),
   );
-  const document = await readJson(input);
+  const document = await readOpenApi(input);
   const descriptor = buildDescriptor(document);
   const files = await renderSelection(descriptor, config);
   return synchronizeOutputs(output, files, [configPath, input], check);

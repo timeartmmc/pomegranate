@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
-import { join, parse, sep } from 'node:path';
+import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { fail, keys, record } from './diagnostics.js';
 
 export const inventoryName = '.pom-manifest.json';
@@ -68,6 +68,26 @@ export async function safeDirectory(path: string): Promise<void> {
     } catch (error) {
       if (hasCode(error, 'ENOENT')) return;
       throw error;
+    }
+  }
+}
+
+export async function outputDirectory(output: string): Promise<string> {
+  const absolute = resolve(output);
+  const suffix = [basename(absolute)];
+  let parent = dirname(absolute);
+  // A configured parent alias (such as macOS /tmp) selects the output's real
+  // location once. Keep that canonical path for every subsequent operation;
+  // the output directory itself and its owned files must still not be links.
+  while (true) {
+    try {
+      const root = join(await realpath(parent), ...suffix);
+      await safeDirectory(root);
+      return root;
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT') || dirname(parent) === parent) throw error;
+      suffix.unshift(basename(parent));
+      parent = dirname(parent);
     }
   }
 }
