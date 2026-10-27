@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -12,6 +12,7 @@ import type { Browser } from 'playwright';
 import { compile } from '../dist/index.js';
 import type { MountedCase } from './query-react-app.ts';
 import { infiniteFixture, infiniteSelection } from './infinite-fixture.ts';
+import { generatedWorkspace } from './generated-workspace.ts';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const exec = promisify(execFile);
@@ -38,14 +39,10 @@ const server = createServer((request, response) => {
 });
 
 before(async () => {
-  const cache = join(repo, 'node_modules/.cache');
-  await mkdir(cache, { recursive: true });
-  root = await mkdtemp(join(cache, 'pom-react-query-'));
-  await mkdir(join(root, 'query-generated'));
-  for (const [name, source] of Object.entries(
+  root = await generatedWorkspace(
     await compile(infiniteFixture(), infiniteSelection),
-  ))
-    await writeFile(join(root, 'query-generated', name), source);
+    'query-generated',
+  );
   const application = await readFile(
     join(repo, 'test/query-react-app.ts'),
     'utf8',

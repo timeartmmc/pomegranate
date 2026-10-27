@@ -44,6 +44,17 @@ infinite.listItems.options({
     },
   },
 });
+infinite.listItems.options({
+  context: { locale: 'en' },
+  input: {
+    path: { collection: 'widgets' },
+    headers: {
+      'X-View': 'compact',
+      // @ts-expect-error Transport headers are supplied by the executor, not base input.
+      'X-Language': 'en',
+    },
+  },
+});
 // @ts-expect-error Required base path inputs remain required.
 infinite.listItems.options({ context: {} });
 // @ts-expect-error Context is explicit even while skipped.

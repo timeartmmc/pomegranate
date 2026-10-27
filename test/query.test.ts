@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,6 +20,7 @@ import { fileSnapshot, temporary } from './helpers.ts';
 import type { QueryExecutor } from './.generated/queries/client.consumer.queries.ts';
 import { queryFixture, querySelection } from './query-fixture.ts';
 import { verifyQueries } from './query-checks.ts';
+import { generatedWorkspace } from './generated-workspace.ts';
 
 type Module = typeof import('./.generated/queries/client.consumer.queries.ts');
 type Staff = typeof import('./.generated/queries/client.staff.queries.ts');
@@ -52,15 +53,10 @@ function queryClient() {
 }
 
 before(async () => {
-  const cache = join(repo, 'node_modules/.cache');
-  await mkdir(cache, { recursive: true });
-  root = await mkdtemp(join(cache, 'pom-query-'));
-  await mkdir(join(root, 'query-generated'));
-  for (const [name, source] of Object.entries(
+  root = await generatedWorkspace(
     await compile(queryFixture(), querySelection),
-  ))
-    await writeFile(join(root, 'query-generated', name), source);
-  await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    'query-generated',
+  );
   await cp(join(repo, 'test/query-types.ts'), join(root, 'query-types.ts'));
   await writeFile(
     join(root, 'tsconfig.json'),

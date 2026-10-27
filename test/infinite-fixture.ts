@@ -84,6 +84,12 @@ export function infiniteFixture() {
               schema: { type: 'array', items: { type: 'string' } },
             },
             { name: 'X-View', in: 'header', schema: { type: 'string' } },
+            {
+              name: 'X-Language',
+              in: 'header',
+              required: true,
+              schema: { type: 'string', enum: ['en', 'fr'] },
+            },
           ],
           responses: {
             200: { description: 'A page', content },

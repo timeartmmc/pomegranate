@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
@@ -15,6 +15,7 @@ import {
 import { compile } from '../dist/index.js';
 import { runtimeInput } from './assertions.ts';
 import { queryFixture, querySelection } from './query-fixture.ts';
+import { generatedWorkspace } from './generated-workspace.ts';
 
 type Module = typeof import('./.generated/queries/client.consumer.queries.ts');
 type Observed = import('./.generated/queries/runtime.ts').ObservedResponse;
@@ -24,14 +25,9 @@ let root: string;
 let module: Module;
 
 before(async () => {
-  const cache = join(repo, 'node_modules/.cache');
-  await mkdir(cache, { recursive: true });
-  root = await mkdtemp(join(cache, 'pom-query-adversarial-'));
-  await writeFile(join(root, 'package.json'), '{"type":"module"}');
-  for (const [name, source] of Object.entries(
+  root = await generatedWorkspace(
     await compile(queryFixture(), querySelection),
-  ))
-    await writeFile(join(root, name), source);
+  );
   await writeFile(
     join(root, 'tsconfig.json'),
     JSON.stringify({

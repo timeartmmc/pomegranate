@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import {
   QueryClient,
   dehydrate,
@@ -13,6 +12,7 @@ import {
 import { compile } from '../dist/index.js';
 import { runtimeInput } from './assertions.ts';
 import { queryFixture, querySelection } from './query-fixture.ts';
+import { generatedWorkspace } from './generated-workspace.ts';
 import type {
   CacheContext,
   QueryExecutor,
@@ -20,23 +20,14 @@ import type {
 
 type Module = typeof import('./.generated/queries/client.consumer.queries.ts');
 type Staff = typeof import('./.generated/queries/client.staff.queries.ts');
-const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 let root: string;
 let module: Module;
 let staff: Staff;
 
 before(async () => {
-  root = await mkdtemp(join(await realpath(tmpdir()), 'pom-query-ergonomics-'));
-  await symlink(
-    join(repo, 'node_modules'),
-    join(root, 'node_modules'),
-    process.platform === 'win32' ? 'junction' : 'dir',
-  );
-  await writeFile(join(root, 'package.json'), '{"type":"module"}');
-  for (const [name, source] of Object.entries(
+  root = await generatedWorkspace(
     await compile(queryFixture(), querySelection),
-  ))
-    await writeFile(join(root, name), source);
+  );
   module = (await import(
     pathToFileURL(join(root, 'client.consumer.queries.ts')).href
   )) as Module;

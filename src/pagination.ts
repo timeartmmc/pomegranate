@@ -21,7 +21,7 @@ export function validatePagination(
   )
     fail(
       `${location}.cursor`,
-      'cursor must name an optional string query parameter',
+      'cursor must name an optional, nonnullable string query parameter',
     );
   for (const response of operation.responses.filter(
     (response) => response.status < 300,

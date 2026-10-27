@@ -326,8 +326,10 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     .join(' | ');
   const entries = client.queries.map(
     (operation) =>
-      `${JSON.stringify(operation.id)}: defineQuery(operations[${JSON.stringify(operation.id)}], execute, namespace, ${JSON.stringify(client.name)}, ${JSON.stringify(operation.id)})`,
+      `[${JSON.stringify(operation.id)}]: defineQuery({ operation: operations[${JSON.stringify(operation.id)}], execute, namespace, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
   );
+  // Removing cursors and transport headers can remove every schema reference
+  // from base inputs, even when the ordinary client needs those components.
   let usesReferences = false;
   const renderer = schemaRenderer(
     descriptor.schemas,
@@ -366,13 +368,28 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     },
   );
   const infinite = client.infiniteQueries.length > 0;
+  const factories = ['queryConfig'];
+  const types = ['QueryExecutor'];
+  if (client.queries.length > 0) {
+    factories.push('defineQuery');
+    types.push('QueryFactories');
+  }
+  if (infinite) {
+    factories.push('defineInfiniteQuery');
+    types.push('InfiniteQueryFactoryFor');
+  }
+  const imports = [
+    `import { operations } from './client.${client.name}.operations.ts';`,
+    `import { ${factories.join(', ')} } from './query-runtime.ts';`,
+    `import type { ${types.join(', ')} } from './query-runtime.ts';`,
+    ...(infinite ? ["import { z } from 'zod';"] : []),
+    ...(usesReferences
+      ? [`import * as schemas from './client.${client.name}.schemas.ts';`]
+      : []),
+    helperImports(renderer.helpers),
+  ].join('\n');
   return `${banner}
-    import { operations } from './client.${client.name}.operations.ts';
-    import { ${client.queries.length ? 'defineQuery,' : ''} ${infinite ? 'defineInfiniteQuery,' : ''} queryNamespace } from './query-runtime.ts';
-    import type { QueryExecutor, ${client.queries.length ? 'QueryFactories,' : ''} ${infinite ? 'InfiniteQueryFactoryFor' : ''} } from './query-runtime.ts';
-    ${infinite ? `import { z } from 'zod';` : ''}
-    ${usesReferences ? `import * as schemas from './client.${client.name}.schemas.ts';` : ''}
-    ${helperImports(renderer.helpers)}
+    ${imports}
     ${renderer.takeDeclarations()}
     ${inputs.join('\n')}
     export { QueryResponseError } from './query-runtime.ts';
@@ -381,9 +398,7 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
       client.queries.length
         ? `
     export function createQueries(config: Readonly<{ namespace: string; execute: QueryExecutor }>): QueryFactories<Pick<typeof operations, ${selected}>> {
-      const namespace = queryNamespace(config.namespace);
-      const execute = config.execute;
-      if (typeof execute !== 'function') throw new TypeError('query executor must be a function');
+      const { namespace, execute } = queryConfig(config);
       return Object.freeze({ ${entries.join(',')} });
     }`
         : ''
@@ -392,9 +407,7 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
       infinite
         ? `
     export function createInfiniteQueries(config: Readonly<{ namespace: string; execute: QueryExecutor }>): Readonly<{ ${infiniteTypes.join('\n')} }> {
-      const namespace = queryNamespace(config.namespace);
-      const execute = config.execute;
-      if (typeof execute !== 'function') throw new TypeError('query executor must be a function');
+      const { namespace, execute } = queryConfig(config);
       return Object.freeze({ ${infiniteEntries.join(',')} });
     }`
         : ''
@@ -443,7 +456,7 @@ export async function render(
     )
   )
     outputs['query-runtime.ts'] =
-      `${banner}${(await readFile(new URL('./query-runtime.ts', import.meta.url), 'utf8')).replaceAll("from './runtime.js'", "from './runtime.ts'")}`;
+      `${banner}${await readFile(new URL('./query-runtime.ts', import.meta.url), 'utf8')}`;
   if (
     clients.some(
       (client) =>

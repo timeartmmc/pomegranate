@@ -1,35 +1,49 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, writeFile, symlink, readFile } from 'node:fs/promises';
+import { writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import test from 'node:test';
+import { after, before, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compile, ContractError, runProject } from '../dist/index.js';
 import { invalidOptions, runtimeInput } from './assertions.ts';
 import { temporary, fileSnapshot } from './helpers.ts';
 import { infiniteFixture, infiniteSelection } from './infinite-fixture.ts';
-import { verifyInfiniteQueries } from './infinite-checks.ts';
+import { infiniteChecks } from './infinite-checks.ts';
 import { verifyQueryDeclarations } from './query-declarations.ts';
+import { generatedWorkspace } from './generated-workspace.ts';
 
 type Module = typeof import('./.generated/infinite/client.consumer.queries.ts');
 const exec = promisify(execFile);
+let root: string;
+let module: Module;
+
+before(async () => {
+  root = await generatedWorkspace(
+    await compile(infiniteFixture(), infiniteSelection),
+    'query-generated',
+  );
+  module = (await import(
+    pathToFileURL(join(root, 'query-generated/client.consumer.queries.ts')).href
+  )) as Module;
+});
+after(async () => {
+  if (root) await rm(root, { recursive: true, force: true });
+});
+
+for (const [name, check] of Object.entries(infiniteChecks))
+  void test(name, async () => {
+    await check(module);
+  });
 
 async function checkConsumer(
   t: TestContext,
   files: Readonly<Record<string, string>>,
   consumer = '',
 ) {
-  const root = await temporary(t);
-  await symlink(
-    fileURLToPath(new URL('../node_modules', import.meta.url)),
-    join(root, 'node_modules'),
-    process.platform === 'win32' ? 'junction' : 'dir',
-  );
-  await writeFile(join(root, 'package.json'), '{"type":"module"}');
-  for (const [name, source] of Object.entries(files))
-    await writeFile(join(root, name), source);
+  const root = await generatedWorkspace(files);
+  t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, 'consumer.ts'), consumer);
   const config = join(root, 'tsconfig.json');
   await writeFile(
@@ -58,27 +72,7 @@ async function checkConsumer(
   ]);
 }
 
-void test('infinite factories preserve pagination, cache, failure and cancellation guarantees', async (t) => {
-  const root = await temporary(t);
-  await symlink(
-    fileURLToPath(new URL('../node_modules', import.meta.url)),
-    join(root, 'node_modules'),
-    process.platform === 'win32' ? 'junction' : 'dir',
-  );
-  await writeFile(join(root, 'package.json'), '{"type":"module"}');
-  const generated = join(root, 'query-generated');
-  await mkdir(generated);
-  for (const [name, source] of Object.entries(
-    await compile(infiniteFixture(), infiniteSelection),
-  ))
-    await writeFile(join(generated, name), source);
-  const module = (await import(
-    pathToFileURL(join(generated, 'client.consumer.queries.ts')).href
-  )) as Module;
-  await verifyInfiniteQueries(
-    module.createInfiniteQueries,
-    module.QueryResponseError,
-  );
+void test('infinite inputs reject missing, unknown and cursor-owned fields', () => {
   const queries = module.createInfiniteQueries({
     namespace: 'invalid-inputs',
     execute: async () => {
@@ -107,6 +101,9 @@ void test('infinite factories preserve pagination, cache, failure and cancellati
       () => runtimeInput(queries.listItems.options, args),
       TypeError,
     );
+});
+
+void test('infinite declarations preserve factories, options and item types', async () => {
   await verifyQueryDeclarations(
     root,
     fileURLToPath(
@@ -141,17 +138,10 @@ void test('infinite selection is explicit, deterministic and isolated from ordin
       clients: ['consumer'],
     }),
   );
-  const root = await temporary(t);
-  await symlink(
-    fileURLToPath(new URL('../node_modules', import.meta.url)),
-    join(root, 'node_modules'),
-    process.platform === 'win32' ? 'junction' : 'dir',
-  );
-  await writeFile(join(root, 'package.json'), '{"type":"module"}');
-  for (const [name, bytes] of Object.entries(
+  const root = await generatedWorkspace(
     await compile(document, infiniteSelection),
-  ))
-    await writeFile(join(root, name), bytes);
+  );
+  t.after(() => rm(root, { recursive: true, force: true }));
   const module = (await import(
     pathToFileURL(join(root, 'client.consumer.queries.ts')).href
   )) as Module;

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { QueryClient } from '@tanstack/query-core';
 import { compile } from '../dist/index.js';
+import { generatedWorkspace } from './generated-workspace.ts';
 import type {
   QueryExecutor,
   QueryFactory,
@@ -136,18 +136,10 @@ type Module = Readonly<{
   QueryResponseError: typeof QueryResponseError;
 }>;
 
-const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 let root: string;
 let module: Module;
 
 before(async () => {
-  root = await mkdtemp(join(await realpath(tmpdir()), 'pom-query-responses-'));
-  await symlink(
-    join(repo, 'node_modules'),
-    join(root, 'node_modules'),
-    process.platform === 'win32' ? 'junction' : 'dir',
-  );
-  await writeFile(join(root, 'package.json'), '{"type":"module"}');
   const document = queryFixture();
   Object.assign(document.components.schemas, {
     Score: { type: 'number', minimum: -1, maximum: 1 },
@@ -175,8 +167,7 @@ before(async () => {
     transportHeaders: ['X-Language'],
     queries: { consumer: ['readOutcome'] },
   });
-  for (const [name, source] of Object.entries(files))
-    await writeFile(join(root, name), source);
+  root = await generatedWorkspace(files);
   module = (await import(
     pathToFileURL(join(root, 'client.consumer.queries.ts')).href
   )) as Module;

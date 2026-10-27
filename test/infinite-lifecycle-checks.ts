@@ -5,6 +5,7 @@ import {
   dehydrate,
   hydrate,
 } from '@tanstack/query-core';
+import { runtimeInput } from './assertions.ts';
 
 type Module = Pick<
   typeof import('./.generated/infinite/client.consumer.queries.ts'),
@@ -31,6 +32,148 @@ const queryClient = () =>
   });
 
 export const infiniteLifecycleChecks = {
+  'ordinary and infinite factories reject invalid execution bindings': async ({
+    createQueries,
+    createInfiniteQueries,
+  }) => {
+    for (const create of [createQueries, createInfiniteQueries]) {
+      for (const namespace of ['', null, 7])
+        assert.throws(
+          () =>
+            runtimeInput(create, {
+              namespace,
+              execute: async () => page(null, []),
+            }),
+          { name: 'TypeError', message: /namespace/ },
+        );
+      for (const execute of [undefined, null, 'executor'])
+        assert.throws(
+          () => runtimeInput(create, { namespace: 'valid', execute }),
+          { name: 'TypeError', message: /executor/ },
+        );
+    }
+  },
+
+  'cancellation during key inspection prevents ordinary and infinite execution':
+    async ({ createQueries, createInfiniteQueries }) => {
+      const client = queryClient();
+      let calls = 0;
+      const config = {
+        namespace: 'cancel-during-key',
+        execute: async () => {
+          calls++;
+          return page(null, ['item']);
+        },
+      };
+      const options = [
+        createQueries(config).listItems.options(args),
+        createInfiniteQueries(config).listItems.options(args),
+      ];
+      try {
+        for (const option of options) {
+          const controller = new AbortController();
+          const reason = new Error('Cancelled while inspecting the query key');
+          const key = [...option.queryKey];
+          Object.defineProperty(key, 1, {
+            enumerable: true,
+            get() {
+              controller.abort(reason);
+              return config.namespace;
+            },
+          });
+          await assert.rejects(
+            runtimeInput(option.queryFn, {
+              client,
+              queryKey: key,
+              signal: controller.signal,
+              meta: undefined,
+              direction: 'forward',
+              pageParam: null,
+            }),
+            (error) => error === reason,
+          );
+          assert.equal(calls, 0);
+        }
+      } finally {
+        client.clear();
+      }
+    },
+
+  'transport headers stay executor-owned across initial and later pages':
+    async ({ createInfiniteQueries }) => {
+      const client = queryClient();
+      const seen: {
+        cursor: string | null;
+        headers: Record<string, string>;
+      }[] = [];
+      const queries = createInfiniteQueries({
+        namespace: 'transport-headers',
+        execute: async (request, { context }) => {
+          assert.equal(Object.hasOwn(request.headers, 'X-Language'), false);
+          assert.throws(() => request.validateHeaders(request.headers), {
+            name: 'RequestValidationError',
+          });
+          assert.throws(
+            () =>
+              request.validateHeaders({
+                ...request.headers,
+                'X-Language': 'de',
+              }),
+            { name: 'RequestValidationError' },
+          );
+          const headers = request.validateHeaders({
+            ...request.headers,
+            'x-LaNgUaGe': String(context['locale']),
+          });
+          const cursor = cursorOf(request.url);
+          seen.push({ cursor, headers: { ...headers } });
+          return page(cursor === null ? 'next' : null, ['item']);
+        },
+      });
+      const input = {
+        context: { locale: 'en' },
+        input: {
+          path: { collection: 'widgets' },
+          headers: { 'X-View': 'compact' },
+        },
+      };
+      try {
+        const options = queries.listItems.options(input);
+        assert.notDeepEqual(
+          options.queryKey,
+          queries.listItems.key({ ...input, context: { locale: 'fr' } }),
+        );
+        for (const name of ['X-Language', 'x-language'])
+          assert.throws(
+            () =>
+              runtimeInput(queries.listItems.options, {
+                ...input,
+                input: {
+                  ...input.input,
+                  headers: { ...input.input.headers, [name]: 'en' },
+                },
+              }),
+            { name: 'RequestValidationError' },
+          );
+        input.context.locale = 'fr';
+        input.input.headers['X-View'] = 'wide';
+        const data = await client.fetchInfiniteQuery({ ...options, pages: 2 });
+        assert.deepEqual(data.pageParams, [null, 'next']);
+        assert.deepEqual(seen, [
+          {
+            cursor: null,
+            headers: { 'x-view': 'compact', 'x-language': 'en' },
+          },
+          {
+            cursor: 'next',
+            headers: { 'x-view': 'compact', 'x-language': 'en' },
+          },
+        ]);
+      } finally {
+        client.clear();
+      }
+    },
+
   'empty pages and literal cursors continue until an explicit terminal cursor':
     async ({ createInfiniteQueries }) => {
       const client = queryClient();

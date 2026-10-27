@@ -38,8 +38,8 @@ import type {
   ProtocolResult,
   Responses,
   RequestParts,
-} from './runtime.js';
-import { validateOptions } from './runtime.js';
+} from './runtime.ts';
+import { validateOptions } from './runtime.ts';
 import type { z } from 'zod';
 
 export type CacheContext = Readonly<
@@ -70,12 +70,14 @@ export class QueryResponseError extends Error {
   }
 }
 
+function isFailure(result: ProtocolResult<Responses>): result is Failure {
+  return result.kind !== 'success';
+}
+
 function assertSuccess<R extends Responses>(
   result: ProtocolResult<R>,
 ): asserts result is Success<R> {
-  if (result.kind === 'protocol') throw new QueryResponseError(result);
-  if (result.kind === 'error')
-    throw new QueryResponseError(Object.freeze({ ...result, kind: 'error' }));
+  if (isFailure(result)) throw new QueryResponseError(result);
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -135,10 +137,7 @@ export interface QueryOptions<
   ) => Promise<Success<R>>;
 }
 
-export interface OperationFilter {
-  readonly queryKey: readonly ['pom-query-v1', string, string, string];
-  readonly predicate: NonNullable<QueryFilters['predicate']>;
-}
+export interface OperationFilter extends ScopedOperationFilter<'pom-query-v1'> {}
 
 export interface QueryFactory<Input, R extends Responses> {
   readonly key: (args: Arguments<Input>) => QueryKey<R>;
@@ -217,6 +216,24 @@ export function queryNamespace(value: string): string {
   return value;
 }
 
+export function queryConfig(
+  config: Readonly<{ namespace: string; execute: QueryExecutor }>,
+) {
+  const namespace = queryNamespace(config.namespace);
+  const execute = config.execute;
+  if (typeof execute !== 'function')
+    throw new TypeError('query executor must be a function');
+  return { namespace, execute };
+}
+
+type FactoryConfig = Readonly<{
+  execute: QueryExecutor;
+  namespace: string;
+  client: string;
+  // The emitter supplies identity without building a request with fake inputs.
+  operationId: string;
+}>;
+
 interface ScopedOperationFilter<Prefix extends string> {
   readonly queryKey: readonly [Prefix, string, string, string];
   readonly predicate: NonNullable<QueryFilters['predicate']>;
@@ -286,6 +303,32 @@ async function executeRequest<R extends Responses>(
   return result;
 }
 
+function createQueryFunction<
+  R extends Responses,
+  Execution extends Pick<QueryFunctionContext, 'signal' | 'queryKey'>,
+>(
+  queryKey: Execution['queryKey'],
+  request: (execution: Execution) => PreparedRequest<R, 'none'>,
+  execute: QueryExecutor,
+  executionContext: CacheContext,
+): (execution: Execution) => Promise<Success<R>> {
+  const identity = JSON.stringify(queryKey);
+  return async (execution) => {
+    const { signal } = execution;
+    throwIfAborted(signal);
+    if (JSON.stringify(execution.queryKey) !== identity)
+      throw new TypeError('query key does not match the prepared request');
+    // Inspecting the key or assembling a page can synchronously abort. The
+    // executor boundary checks again before invoking application transport.
+    return executeRequest(
+      request(execution),
+      execute,
+      executionContext,
+      signal,
+    );
+  };
+}
+
 function operationFilter<Prefix extends string>(
   prefix: Prefix,
   namespace: string,
@@ -330,13 +373,12 @@ function operationFilter<Prefix extends string>(
 }
 
 export function defineQuery<Input, const R extends Responses>(
-  operation: { build: (input: Input) => PreparedRequest<R, 'none'> },
-  execute: QueryExecutor,
-  namespace: string,
-  client: string,
-  // The emitter supplies identity without building a request with fake inputs.
-  operationId: string,
+  config: FactoryConfig &
+    Readonly<{
+      operation: { build: (input: Input) => PreparedRequest<R, 'none'> };
+    }>,
 ): QueryFactory<Input, R> {
+  const { operation, execute, namespace, client, operationId } = config;
   function prepare(args: Arguments<Input> | SkippedArguments) {
     const { input, context, executionContext } = queryArguments(args);
     // The conditional argument type permits omission only when Input includes
@@ -378,7 +420,6 @@ export function defineQuery<Input, const R extends Responses>(
     args: Arguments<Input> | SkippedArguments,
   ): SkippableQueryOptions<R> {
     const { request, key: queryKey, context: executionContext } = prepare(args);
-    const identity = JSON.stringify(queryKey);
     return Object.freeze({
       queryKey,
       // Executors own retries, deadlines, and authentication recovery. A second
@@ -391,17 +432,12 @@ export function defineQuery<Input, const R extends Responses>(
       queryFn:
         request === undefined
           ? skipToken
-          : async (
-              context: QueryFunctionContext<QueryKey<R>>,
-            ): Promise<Success<R>> => {
-              const { signal } = context;
-              throwIfAborted(signal);
-              if (JSON.stringify(context.queryKey) !== identity)
-                throw new TypeError(
-                  'query key does not match the prepared request',
-                );
-              return executeRequest(request, execute, executionContext, signal);
-            },
+          : createQueryFunction(
+              queryKey,
+              () => request,
+              execute,
+              executionContext,
+            ),
     });
   }
   return Object.freeze({ key, options, filter });
@@ -481,17 +517,14 @@ export function defineInfiniteQuery<
   const R extends Responses,
   Items extends readonly unknown[],
 >(
-  config: Readonly<{
-    operation: { build: (input: never) => PreparedRequest<R, 'none'> };
-    input: O;
-    cursor: string;
-    nextCursor: (page: Success<R>) => Cursor;
-    items: (page: Success<R>) => Items;
-    execute: QueryExecutor;
-    namespace: string;
-    client: string;
-    operationId: string;
-  }>,
+  config: FactoryConfig &
+    Readonly<{
+      operation: { build: (input: never) => PreparedRequest<R, 'none'> };
+      input: O;
+      cursor: string;
+      nextCursor: (page: Success<R>) => Cursor;
+      items: (page: Success<R>) => Items;
+    }>,
 ): InfiniteQueryFactory<z.input<O>, R, Items[number]> {
   // The emitter removes the cursor from base inputs. Each assembled page is
   // still passed through the ordinary builder, the authority for request types
@@ -545,7 +578,6 @@ export function defineInfiniteQuery<
     args: Arguments<z.input<O>> | SkippedArguments,
   ): SkippableInfiniteQueryOptions<R> {
     const { fetchPage, key: queryKey, executionContext } = prepare(args);
-    const identity = JSON.stringify(queryKey);
     // Query Core installs its infinite-query behavior on this object before
     // copying options. Keep the outer container extensible; identities and the
     // captured input/context snapshots remain isolated from caller mutation.
@@ -557,25 +589,16 @@ export function defineInfiniteQuery<
       queryFn:
         fetchPage === undefined
           ? skipToken
-          : async (
-              context: QueryFunctionContext<InfiniteQueryKey<R>, Cursor>,
-            ): Promise<Success<R>> => {
-              const { signal } = context;
-              throwIfAborted(signal);
-              if (JSON.stringify(context.queryKey) !== identity)
-                throw new TypeError(
-                  'query key does not match the prepared request',
-                );
-              if (context.direction === 'backward')
-                throw new TypeError('backward pagination is unsupported');
-              const page = fetchPage(context.pageParam);
-              return executeRequest(
-                page,
-                config.execute,
-                executionContext,
-                signal,
-              );
-            },
+          : createQueryFunction(
+              queryKey,
+              (context: QueryFunctionContext<InfiniteQueryKey<R>, Cursor>) => {
+                if (context.direction === 'backward')
+                  throw new TypeError('backward pagination is unsupported');
+                return fetchPage(context.pageParam);
+              },
+              config.execute,
+              executionContext,
+            ),
       getNextPageParam: (
         lastPage: Success<R>,
         _pages: Success<R>[],
