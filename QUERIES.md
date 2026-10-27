@@ -11,8 +11,9 @@ or `CompileOptions`, for example:
 }
 ```
 
-This adds `client.consumer.queries.ts` and a shared `query-runtime.ts` without
-changing the existing client entries. Query modules import `@tanstack/query-core`
+This adds `client.consumer.queries.ts` and shared `query-runtime.ts` and
+`query-sharing.ts` helpers without changing the existing client entries.
+Query modules import `@tanstack/query-core`
 at runtime; install 5.90.20 or newer within 5.x. React applications can use
 TanStack React Query 5.90.20 or newer within 5.x. Use the same Query Core release
 as your framework adapter. Clients without selected queries need neither TanStack
@@ -42,12 +43,54 @@ const queries = createQueries({
   execute: executeRaw,
 });
 const args = {
-  context: { session: 'synthetic-session-1', locale: 'en' },
+  context: { cacheScope: 'demo-user-revision-1', locale: 'en' },
   input: { path: { widgetId: 'demo/widget' } },
 };
 const options = queries.getWidget.options(args);
 const key = queries.getWidget.key(args);
 ```
+
+For Fetch transports, this single-attempt adapter returns raw response evidence:
+
+```ts
+import type { QueryExecutor } from './generated/client.consumer.queries.ts';
+
+function fetchExecutor(
+  baseUrl: string | URL,
+  headersFor: (
+    ...args: Parameters<QueryExecutor>
+  ) => Promise<Record<string, string>>,
+): QueryExecutor {
+  return async (request, execution) => {
+    const headers = request.validateHeaders({
+      ...request.headers,
+      ...(await headersFor(request, execution)),
+    });
+    const response = await fetch(new URL(request.url, baseUrl), {
+      method: request.method,
+      headers,
+      signal: execution.signal,
+      redirect: 'error',
+    });
+    const observedHeaders: [string, string][] = [];
+    response.headers.forEach((value, name) => {
+      observedHeaders.push([name, value]);
+    });
+    return {
+      status: response.status,
+      headers: Object.fromEntries(observedHeaders),
+      body: await response.text(),
+    };
+  };
+}
+```
+
+Create `executeRaw` with an explicit base URL and an application `headersFor`
+callback. That callback receives the request policy and frozen cache context;
+it must enforce the application's session checks and supply credentials and
+transport headers before sending. For a bearer operation, include `Authorization`.
+The adapter validates the merged headers and forwards cancellation. It sends once;
+implement the application's deadline and retry policy around this attempt.
 
 Pass `options` to `QueryClient.fetchQuery` or a query hook. The key carries result
 types for cache access. Namespace the API origin and contract version explicitly;
@@ -57,6 +100,8 @@ in the required nonsecret `context`. Its values are finite JSON scalars; numeric
 preserves identity. Keys include the validated URL and endpoint headers, so
 supply credentials through the executor rather than endpoint inputs. Treat
 generated keys as opaque.
+`cacheScope` above is a nonsecret cache revision, never a bearer token or session
+credential. Change it when the response's user or session identity changes.
 
 Factories validate real inputs immediately and snapshot inputs and context.
 For a hook waiting on required inputs, pass TanStack's `skipToken` as `input`:
@@ -67,7 +112,7 @@ import { skipToken, useQuery } from '@tanstack/react-query';
 function useWidget(widgetId: string | undefined) {
   return useQuery(
     queries.getWidget.options({
-      context: { session: 'synthetic-session-1', locale: 'en' },
+      context: { cacheScope: 'demo-user-revision-1', locale: 'en' },
       input: widgetId === undefined ? skipToken : { path: { widgetId } },
     }),
   );
@@ -105,11 +150,49 @@ Query functions forward cancellation, reject late results after cancellation,
 and set `retry: false` so the executor owns the retry budget. Success data is the
 validated response envelope, including exact status and bodyless `data: undefined`.
 Declared HTTP errors and protocol failures reject with a `QueryResponseError`
-whose `result` holds the failure envelope. Malformed executor evidence rejects
-with `TypeError`; transport errors propagate. Options
-set `structuralSharing: false` to preserve every legal JSON map entry during
-cache updates; unchanged refetches may produce new object
-identities. Preserve the generated key, query function, retry, and
+whose `result` holds the failure envelope. Narrow an unknown error with the
+operation's `isError` guard to recover its exact status and declared body types:
+
+```ts
+try {
+  await queryClient.fetchQuery(options);
+} catch (error) {
+  if (queries.getWidget.isError(error)) {
+    if (error.result.kind === 'protocol') {
+      console.error(error.result.issues);
+    } else {
+      // Narrow result.status to a declared error status to access its body.
+      console.error(error.result.status, error.result.data);
+    }
+  } else {
+    throw error;
+  }
+}
+```
+
+The guard recognizes failures validated by the same generated operation, client,
+and namespace, including across recreated factories. Ordinary and infinite
+factories for that same operation recognize each other's failures. A manually
+constructed, copied, serialized, or independently generated error does not carry
+this provenance. Transport errors propagate without being classified as response
+failures; malformed executor evidence rejects with `TypeError`. The broad
+`QueryResponseError` class remains available for shared error handling.
+
+Options use POM's `shareQueryData` function for structural sharing. Equal plain
+data trees reuse their previous references; changed trees reuse equal children.
+Sharing preserves every map and header key, including `__proto__` and
+`constructor: null`, plus prototypes, property flags, and key order.
+Deep JSON is processed iteratively without a call-stack depth limit. Comparisons
+take time proportional to the inspected data and cost more than TanStack's default
+sharing. Appending pages can retain existing page references without inspecting
+their contents again. Measure large responses and expensive selections in the
+application.
+
+Selections containing class instances, accessors, sparse arrays, symbol or
+nonenumerable fields, cycles, or repeated object references keep the new value
+when sharing would change it. Inputs are never mutated. Data-only observers can
+avoid redraws on unchanged refetches; observers of loading or timestamp fields
+can still update. Preserve the generated key, query function, retry, and
 structural-sharing settings when adding application options. Applications own
 freshness, enabled conditions, selection, and cancellation or removal of old
 session caches. Mutation and cache-effect bindings are not generated. Forward cursor pagination
@@ -118,10 +201,23 @@ is available through the infinite factories below.
 On TanStack 5.90.20, `useQueries({ combine })` applies its own structural sharing
 and ignores the per-query setting. Keep arbitrary JSON maps out of combined
 results: entries such as `__proto__` or `constructor: null` can be lost or
-rejected. Hydration restores data without generated options. Configure query or
-hydration defaults with `structuralSharing: false` before hydrating entries that
-application code will update with `setQueryData`. Reading fresh cached data with
-`fetchQuery` does not install the generated setting.
+rejected. Hydration restores data without generated options. Configure
+`shareQueryData` as the query default before hydrating entries that application
+code will update with `setQueryData`:
+
+```ts
+import { QueryClient } from '@tanstack/query-core';
+import { shareQueryData } from './generated/client.consumer.queries.ts';
+
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { structuralSharing: shareQueryData } },
+});
+```
+
+Reading fresh cached data with `fetchQuery` does not install the generated
+setting. JSON hydration does not preserve frozen descriptors or null prototypes;
+the first live refetch can replace the envelope and header records to restore
+them while still sharing equal body subtrees.
 
 ## Infinite queries
 
@@ -166,7 +262,7 @@ const infinite = createInfiniteQueries({
 function useItems(collection: string) {
   return useInfiniteQuery({
     ...infinite.listItems.options({
-      context: { session: 'synthetic-session-1' },
+      context: { cacheScope: 'demo-user-revision-1' },
       input: { path: { collection }, query: { limit: 20 } },
     }),
     select: infinite.listItems.items,

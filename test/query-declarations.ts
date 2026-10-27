@@ -33,7 +33,8 @@ export async function verifyQueryDeclarations(
   await writeFile(
     join(directory, 'query-wrapper.ts'),
     `import { skipToken } from '@tanstack/query-core';
-    import { createQueries } from './query-generated/client.consumer.queries.ts';
+    import { createQueries, shareQueryData } from './query-generated/client.consumer.queries.ts';
+    export const sharing = shareQueryData;
     const config = {
       namespace: 'synthetic-published-api',
       execute: async () => ({ status: 204, headers: {}, body: '' }),
@@ -46,6 +47,7 @@ export async function verifyQueryDeclarations(
     export const healthOptions = queries.health.options({ context: {} });
     export const skippedOptions = queries.readItem.options({ context: {}, input: skipToken });
     export const operationFilter = queries.readItem.filter({ context: {} });
+    export const isItemError = queries.readItem.isError;
     export function waitingOptions(id: string | undefined) {
       return queries.readItem.options({ context: {}, input: id === undefined ? skipToken : { path: { id } } });
     }
@@ -61,6 +63,7 @@ export async function verifyQueryDeclarations(
     export const infiniteSkippedOptions = infiniteQueries.listItems.options({ context: {}, input: skipToken });
     export const infiniteFilter = infiniteQueries.listItems.filter({ context: {} });
     export const infiniteItems = infiniteQueries.listItems.items;
+    export const isPageError = infiniteQueries.listItems.isError;
     export function infiniteWaitingOptions(collection: string | undefined) {
       return infiniteQueries.listItems.options({ context: {}, input: collection === undefined ? skipToken : { path: { collection } } });
     }
@@ -99,7 +102,20 @@ export async function verifyQueryDeclarations(
   await writeFile(
     consumer,
     `${(await readFile(fixture, 'utf8')).replaceAll('.queries.ts', '.queries.js')}
-    import { queries as publishedQueries, itemOptions, itemKey, healthOptions, skippedOptions, waitingOptions, operationFilter, createApi } from './query-wrapper.js';
+    import { queries as publishedQueries, itemOptions, itemKey, healthOptions, skippedOptions, waitingOptions, operationFilter, createApi, isItemError, sharing } from './query-wrapper.js';
+    const shared = sharing(undefined, { label: 'typed' });
+    const sharedLabel: string = shared.label;
+    void sharedLabel;
+    // @ts-expect-error Sharing preserves the new value's type.
+    void shared.missing;
+    export function publishedError(error: unknown) {
+      if (isItemError(error) && error.result.kind === 'error' && error.result.status === 404) {
+        const detail: string = error.result.data.detail;
+        void detail;
+        // @ts-expect-error Published guards retain the declared failure body.
+        void error.result.data.label;
+      }
+    }
     const published = client.getQueryData(itemKey);
     const publishedOptions = client.getQueryData(itemOptions.queryKey);
     const health = client.getQueryData(healthOptions.queryKey);
@@ -137,7 +153,15 @@ export async function verifyQueryDeclarations(
       join(publication, 'infinite-consumer.ts'),
       `
       ${(await readFile(infiniteFixture, 'utf8')).replaceAll('.queries.ts', '.queries.js')}
-    import { infiniteKey, infiniteOptions, infiniteSkippedOptions, infiniteFilter, infiniteItems, infiniteWaitingOptions } from './query-wrapper.js';
+    import { infiniteKey, infiniteOptions, infiniteSkippedOptions, infiniteFilter, infiniteItems, infiniteWaitingOptions, isPageError } from './query-wrapper.js';
+    export function publishedPageError(error: unknown) {
+      if (isPageError(error) && error.result.kind === 'error' && error.result.status === 410) {
+        const data: undefined = error.result.data;
+        void data;
+        // @ts-expect-error A bodyless failure cannot expose item data.
+        void error.result.data.results;
+      }
+    }
     infiniteClient.invalidateQueries(infiniteFilter);
     const publishedInfinite = infiniteClient.getQueryData(infiniteKey);
     const publishedSkipped = infiniteClient.getQueryData(infiniteSkippedOptions.queryKey);
@@ -202,6 +226,10 @@ export async function verifyQueryDeclarations(
     const error = client.getQueryState(queries.health.key({ context: {} }))?.error;
     // @ts-expect-error Registered unknown errors need narrowing before access.
     void error?.message;
+    if (queries.readItem.isError(error) && error.result.kind === 'error' && error.result.status === 404) {
+      const detail: string = error.result.data.detail;
+      void detail;
+    }
     const health: 204 | undefined = client.getQueryData(queries.health.key({ context: {} }))?.status;
     void health;
     ${
@@ -212,6 +240,10 @@ export async function verifyQueryDeclarations(
     const infiniteError = client.getQueryState(key)?.error;
     // @ts-expect-error Infinite keys must preserve registered unknown errors too.
     void infiniteError?.message;
+    if (infiniteQueries.listItems.isError(infiniteError) && infiniteError.result.kind === 'error' && infiniteError.result.status === 404) {
+      const detail: string = infiniteError.result.data.detail;
+      void detail;
+    }
     const id: string | undefined = client.getQueryData(key)?.pages[0]?.data.results[0]?.id;
     void id;
     `

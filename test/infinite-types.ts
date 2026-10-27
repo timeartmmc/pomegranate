@@ -97,3 +97,17 @@ export async function fetchSyntheticInfinite() {
     void status;
   }
 }
+
+export function typedInfiniteError(error: unknown) {
+  if (!infinite.listItems.isError(error)) return;
+  if (error.result.kind === 'error' && error.result.status === 404) {
+    const detail: string = error.result.data.detail;
+    void detail;
+    // @ts-expect-error Failed page bodies are not successful page collections.
+    void error.result.data.results;
+  } else if (error.result.kind === 'error') {
+    const status: 410 = error.result.status;
+    const data: undefined = error.result.data;
+    void [status, data];
+  }
+}

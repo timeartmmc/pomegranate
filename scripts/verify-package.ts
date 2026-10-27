@@ -145,6 +145,8 @@ try {
     'symbol-fixture.ts',
     'deep-fixture.ts',
     'query-checks.ts',
+    'query-error-checks.ts',
+    'query-sharing-checks.ts',
     'infinite-checks.ts',
     'infinite-lifecycle-checks.ts',
   ])
@@ -675,6 +677,7 @@ try {
     'multipart-generated/runtime.ts',
     'multipart-generated/runtime.browser.ts',
     'query-generated/query-runtime.ts',
+    'query-generated/query-sharing.ts',
   ])
     assertRuntimeLicense(await readFile(join(consumer, path), 'utf8'));
   await writeFile(
@@ -742,6 +745,11 @@ try {
     import {verifyInfiniteQueries} from './verification/infinite-checks.ts';
     await verifyInfiniteQueries(createInfiniteQueries, QueryResponseError);
     import * as infiniteModule from './query-generated/client.consumer.queries.ts';
+    import * as errorStaff from './query-generated/client.staff.queries.ts';
+    import {verifyQueryErrors} from './verification/query-error-checks.ts';
+    await verifyQueryErrors(infiniteModule, errorStaff);
+    import {verifyQuerySharing} from './verification/query-sharing-checks.ts';
+    await verifyQuerySharing(infiniteModule);
     import {verifyInfiniteLifecycle} from './verification/infinite-lifecycle-checks.ts';
     await verifyInfiniteLifecycle(infiniteModule);
     import {operations} from './generated/client.consumer.ts';
@@ -785,6 +793,11 @@ try {
     import {verifyInfiniteQueries} from './verification/infinite-checks.ts';
     await verifyInfiniteQueries(createInfiniteQueries, QueryResponseError);
     import * as infiniteModule from './.build/query-generated/client.consumer.queries.js';
+    import * as errorStaff from './.build/query-generated/client.staff.queries.js';
+    import {verifyQueryErrors} from './verification/query-error-checks.ts';
+    await verifyQueryErrors(infiniteModule, errorStaff);
+    import {verifyQuerySharing} from './verification/query-sharing-checks.ts';
+    await verifyQuerySharing(infiniteModule);
     import {verifyInfiniteLifecycle} from './verification/infinite-lifecycle-checks.ts';
     await verifyInfiniteLifecycle(infiniteModule);
     import {operations, RequestValidationError} from './.build/generated/client.consumer.js';

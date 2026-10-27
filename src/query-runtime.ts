@@ -41,6 +41,7 @@ import type {
 } from './runtime.ts';
 import { validateOptions } from './runtime.ts';
 import type { z } from 'zod';
+import { shareQueryData } from './query-sharing.ts';
 
 export type CacheContext = Readonly<
   Record<string, string | number | boolean | null>
@@ -56,9 +57,9 @@ export type QueryExecutor = (
 
 type Success<R extends Responses> = DeclaredResponse<R> &
   Readonly<{ kind: 'success' }>;
-type Failure =
+type Failure<R extends Responses = Responses> =
   | ProtocolFailure
-  | (DeclaredResponse<Responses> & { kind: 'error' });
+  | (DeclaredResponse<R> & Readonly<{ kind: 'error' }>);
 
 export class QueryResponseError extends Error {
   readonly result: Failure;
@@ -70,14 +71,60 @@ export class QueryResponseError extends Error {
   }
 }
 
-function isFailure(result: ProtocolResult<Responses>): result is Failure {
+export interface TypedQueryResponseError<
+  R extends Responses,
+> extends QueryResponseError {
+  readonly result: Failure<R>;
+}
+
+type ErrorScope = Readonly<{
+  operation: object;
+  namespace: string;
+  client: string;
+  operationId: string;
+}>;
+const responseErrors = new WeakMap<
+  object,
+  Readonly<{ scope: ErrorScope; result: Failure }>
+>();
+
+function operationErrorGuard<R extends Responses>(scope: ErrorScope) {
+  return (error: unknown): error is TypedQueryResponseError<R> => {
+    if (error === null || typeof error !== 'object') return false;
+    const origin = responseErrors.get(error);
+    if (
+      !origin ||
+      origin.scope.operation !== scope.operation ||
+      origin.scope.namespace !== scope.namespace ||
+      origin.scope.client !== scope.client ||
+      origin.scope.operationId !== scope.operationId
+    )
+      return false;
+    // Only the parser records provenance. A public constructor, copied error,
+    // transport rejection or replaced result cannot mint a typed response.
+    const result: unknown = Object.getOwnPropertyDescriptor(
+      error,
+      'result',
+    )?.value;
+    return result === origin.result;
+  };
+}
+
+function isFailure<R extends Responses>(
+  result: ProtocolResult<R>,
+): result is Failure<R> {
   return result.kind !== 'success';
 }
 
 function assertSuccess<R extends Responses>(
   result: ProtocolResult<R>,
+  scope: ErrorScope,
 ): asserts result is Success<R> {
-  if (isFailure(result)) throw new QueryResponseError(result);
+  if (isFailure(result)) {
+    const error = new QueryResponseError(result);
+    responseErrors.set(error, { scope, result });
+    throw error;
+  }
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -123,7 +170,7 @@ export interface QueryKey<R extends Responses>
 export interface SkippableQueryOptions<R extends Responses> {
   readonly queryKey: QueryKey<R>;
   readonly retry: false;
-  readonly structuralSharing: false;
+  readonly structuralSharing: typeof shareQueryData;
   readonly queryFn:
     | ((context: QueryFunctionContext<QueryKey<R>>) => Promise<Success<R>>)
     | SkipToken;
@@ -140,6 +187,7 @@ export interface QueryOptions<
 export interface OperationFilter extends ScopedOperationFilter<'pom-query-v1'> {}
 
 export interface QueryFactory<Input, R extends Responses> {
+  readonly isError: (error: unknown) => error is TypedQueryResponseError<R>;
   readonly key: (args: Arguments<Input>) => QueryKey<R>;
   readonly options: {
     (args: Arguments<Input>): QueryOptions<R>;
@@ -285,6 +333,7 @@ async function executeRequest<R extends Responses>(
   execute: QueryExecutor,
   context: CacheContext,
   signal: AbortSignal,
+  scope: ErrorScope,
 ): Promise<Success<R>> {
   throwIfAborted(signal);
   let observed: ObservedResponse;
@@ -299,7 +348,7 @@ async function executeRequest<R extends Responses>(
   const result = request.parseResponse(observed);
   // Evidence getters may synchronously cancel while the parser snapshots them.
   throwIfAborted(signal);
-  assertSuccess(result);
+  assertSuccess(result, scope);
   return result;
 }
 
@@ -311,6 +360,7 @@ function createQueryFunction<
   request: (execution: Execution) => PreparedRequest<R, 'none'>,
   execute: QueryExecutor,
   executionContext: CacheContext,
+  scope: ErrorScope,
 ): (execution: Execution) => Promise<Success<R>> {
   const identity = JSON.stringify(queryKey);
   return async (execution) => {
@@ -325,6 +375,7 @@ function createQueryFunction<
       execute,
       executionContext,
       signal,
+      scope,
     );
   };
 }
@@ -379,6 +430,7 @@ export function defineQuery<Input, const R extends Responses>(
     }>,
 ): QueryFactory<Input, R> {
   const { operation, execute, namespace, client, operationId } = config;
+  const scope: ErrorScope = { operation, namespace, client, operationId };
   function prepare(args: Arguments<Input> | SkippedArguments) {
     const { input, context, executionContext } = queryArguments(args);
     // The conditional argument type permits omission only when Input includes
@@ -425,10 +477,7 @@ export function defineQuery<Input, const R extends Responses>(
       // Executors own retries, deadlines, and authentication recovery. A second
       // automatic retry loop would restart their complete attempt budget.
       retry: false as const,
-      // TanStack's default structural sharing rebuilds objects by assignment.
-      // That can drop legal map keys or reject constructor:null on refetch.
-      // Keep the complete value that passed the generated response validator.
-      structuralSharing: false as const,
+      structuralSharing: shareQueryData,
       queryFn:
         request === undefined
           ? skipToken
@@ -437,10 +486,16 @@ export function defineQuery<Input, const R extends Responses>(
               () => request,
               execute,
               executionContext,
+              scope,
             ),
     });
   }
-  return Object.freeze({ key, options, filter });
+  return Object.freeze({
+    key,
+    options,
+    filter,
+    isError: operationErrorGuard<R>(scope),
+  });
 }
 
 type Cursor = string | null;
@@ -456,7 +511,7 @@ export interface SkippableInfiniteQueryOptions<R extends Responses> {
   readonly queryKey: InfiniteQueryKey<R>;
   readonly initialPageParam: null;
   readonly retry: false;
-  readonly structuralSharing: false;
+  readonly structuralSharing: typeof shareQueryData;
   readonly queryFn:
     | ((
         context: QueryFunctionContext<InfiniteQueryKey<R>, Cursor>,
@@ -479,6 +534,7 @@ export interface InfiniteQueryOptions<
 }
 
 export interface InfiniteQueryFactory<Input, R extends Responses, Item> {
+  readonly isError: (error: unknown) => error is TypedQueryResponseError<R>;
   readonly key: (args: Arguments<Input>) => InfiniteQueryKey<R>;
   readonly options: {
     (args: Arguments<Input>): InfiniteQueryOptions<R>;
@@ -526,6 +582,12 @@ export function defineInfiniteQuery<
       items: (page: Success<R>) => Items;
     }>,
 ): InfiniteQueryFactory<z.input<O>, R, Items[number]> {
+  const scope: ErrorScope = {
+    operation: config.operation,
+    namespace: config.namespace,
+    client: config.client,
+    operationId: config.operationId,
+  };
   // The emitter removes the cursor from base inputs. Each assembled page is
   // still passed through the ordinary builder, the authority for request types
   // and constraints (including literal cursor schemas).
@@ -585,7 +647,7 @@ export function defineInfiniteQuery<
       queryKey,
       initialPageParam: null,
       retry: false,
-      structuralSharing: false,
+      structuralSharing: shareQueryData,
       queryFn:
         fetchPage === undefined
           ? skipToken
@@ -598,6 +660,7 @@ export function defineInfiniteQuery<
               },
               config.execute,
               executionContext,
+              scope,
             ),
       getNextPageParam: (
         lastPage: Success<R>,
@@ -615,6 +678,7 @@ export function defineInfiniteQuery<
   return Object.freeze({
     key,
     options,
+    isError: operationErrorGuard<R>(scope),
     filter: (scope: OperationScope) =>
       operationFilter(
         'pom-infinite-v1',

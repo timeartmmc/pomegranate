@@ -36,13 +36,17 @@ cleanup and compiles generated clients with `noPropertyAccessFromIndexSignature`
 
 Query checks exercise generated factories with TanStack Query Core and React
 Query types, including cache identities, scalar normalization, exact response
-statuses, malformed executor evidence, cancellation, executor errors, JSON
-hydration, and repeated-fetch map integrity in caches and observer selections.
+statuses, scoped typed error guards, malformed executor evidence, cancellation,
+and executor errors. Shared acceptance checks cover structural sharing of equal
+and changed data, special map/header keys, deep JSON, property descriptors,
+unsupported selections, graph identities, and JSON hydration. The packed consumer
+repeats those checks against generated TypeScript and emitted JavaScript after
+removing the compiler.
 Mounted integration tests bundle fresh generated modules with React DOM and run
-real `useQuery` and `useInfiniteQuery` hooks in Chromium. Synthetic executors exercise skipped-to-enabled
-transitions, input and context changes, scoped operation invalidation, refetch
-failures, map selections, and unmount cancellation, including ignored cancellation
-and late responses. They need no external application or backend.
+real `useQuery` and `useInfiniteQuery` hooks in Chromium. They check render counts
+for equal and changed selections, skipped-to-enabled transitions, identity
+changes, scoped invalidation, refetch failures, map selections, and cancellation
+with late responses. They need no external application or backend.
 
 Infinite-query checks cover empty and encoded cursors, retained cursor cycles,
 base-input snapshots, exact statuses, failed later pages, direct Query Client
@@ -59,7 +63,8 @@ removing the compiler. Core-only consumers must not require the optional query
 dependency.
 
 Query declaration checks emit generated modules and inferred application exports
-of factories, enabled and skippable options, keys, and operation filters, then
+of factories, enabled and skippable options, keys, operation filters, typed error
+guards, and the sharing helper, then
 typecheck a separate consumer against the emitted `.d.ts` files. They retain
 positive and expected-error type cases and verify that the consumer resolves no
 original generated sources. Source tests

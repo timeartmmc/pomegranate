@@ -42,8 +42,12 @@ Generated query functions delegate transport work, forward cancellation, and
 validate raw response evidence before returning a success envelope. They do not
 resolve credentials or add an automatic retry budget.
 Query cache integration must preserve all supported response data, including
-dynamic map entries with prototype-related names, across refetches. A failed
-HTTP or protocol result must not become successful query data.
+dynamic map entries and raw header names with prototype-related names, across
+refetches. Share equal plain data without changing keys, prototypes, property
+flags, cycles, or repeated references. A failed HTTP or protocol result must not
+become successful query data. Per-operation error guards retain exact declared
+failure types and require validated provenance for the same generated operation,
+client, and namespace.
 
 Pomegranate never starts a backend, reads a database, discovers another checkout,
 fetches a remote contract, or selects an authentication provider. Applications

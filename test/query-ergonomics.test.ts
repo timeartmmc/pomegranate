@@ -57,7 +57,6 @@ void test('skipToken bypasses only request building, retaining validated immutab
   const skipped = queries.readItem.options({ context, input: skipToken });
   assert.equal(skipped.queryFn, skipToken);
   assert.equal(skipped.retry, false);
-  assert.equal(skipped.structuralSharing, false);
   assert.ok(Object.isFrozen(skipped));
   assert.ok(Object.isFrozen(skipped.queryKey));
   const snapshot = JSON.stringify(skipped.queryKey);

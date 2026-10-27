@@ -102,6 +102,7 @@ export function infiniteFixture() {
                 },
               },
             },
+            410: { description: 'Gone without a response body' },
           },
         },
       },

@@ -393,7 +393,8 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     ${renderer.takeDeclarations()}
     ${inputs.join('\n')}
     export { QueryResponseError } from './query-runtime.ts';
-    export type { CacheContext, QueryExecutor } from './query-runtime.ts';
+    export { shareQueryData } from './query-sharing.ts';
+    export type { CacheContext, QueryExecutor, TypedQueryResponseError } from './query-runtime.ts';
     ${
       client.queries.length
         ? `
@@ -454,9 +455,11 @@ export async function render(
     clients.some(
       (client) => client.queries.length + client.infiniteQueries.length > 0,
     )
-  )
-    outputs['query-runtime.ts'] =
-      `${banner}${await readFile(new URL('./query-runtime.ts', import.meta.url), 'utf8')}`;
+  ) {
+    for (const name of ['query-runtime.ts', 'query-sharing.ts'])
+      outputs[name] =
+        `${banner}${await readFile(new URL(name, import.meta.url), 'utf8')}`;
+  }
   if (
     clients.some(
       (client) =>

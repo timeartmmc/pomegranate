@@ -775,7 +775,157 @@ async function infinite() {
   }
 }
 
-const cases = { skip, identity, filters, failures, maps, unmount, infinite };
+async function sharing() {
+  const client = queryClient();
+  let label = 'same';
+  let header = 'original';
+  let calls = 0;
+  let renders = 0;
+  const queries = createQueries({
+    namespace: 'mounted-sharing',
+    execute: async () => {
+      calls++;
+      return {
+        ...item(label),
+        headers: { 'Content-Type': 'application/json', ['__proto__']: header },
+      };
+    },
+  });
+  const options = queries.readItem.options({
+    context: {},
+    input: { path: { id: 'item' } },
+  });
+  const mounted = await mountHook(client, () => {
+    renders++;
+    return useQuery({
+      ...options,
+      notifyOnChangeProps: ['data'],
+      select: (result) => result.data,
+    });
+  });
+  try {
+    await until(() => mounted.result.isSuccess, 'initial shared data');
+    const initial = mounted.result.data;
+    const cached = client.getQueryData(options.queryKey);
+    const before = renders;
+    await act(async () => {
+      await client.refetchQueries({ queryKey: options.queryKey, exact: true });
+    });
+    await flush();
+    same(calls, 2, 'The unchanged background refetch must execute');
+    check(
+      client.getQueryData(options.queryKey) === cached,
+      'Equal envelopes must share',
+    );
+    check(mounted.result.data === initial, 'Equal selected bodies must share');
+    same(renders, before, 'Equal data must not redraw a data-only observer');
+
+    header = 'changed';
+    await act(async () => {
+      await client.refetchQueries({ queryKey: options.queryKey, exact: true });
+    });
+    await flush();
+    check(
+      client.getQueryData(options.queryKey)?.headers['__proto__'] === header,
+      'Raw special header changes must reach the cache',
+    );
+    same(
+      renders,
+      before,
+      'Header-only changes must not redraw a body selection',
+    );
+
+    label = 'updated';
+    await act(async () => {
+      await client.refetchQueries({ queryKey: options.queryKey, exact: true });
+    });
+    await until(
+      () => mounted.result.data?.label === label,
+      'changed shared body',
+    );
+    same(renders, before + 1, 'Changed selected data must redraw once');
+  } finally {
+    await mounted.unmount();
+    client.clear();
+  }
+}
+
+async function infiniteSharing() {
+  const client = queryClient();
+  let label = 'same';
+  let renders = 0;
+  let calls = 0;
+  const queries = createInfiniteQueries({
+    namespace: 'mounted-infinite-sharing',
+    execute: async () => {
+      calls++;
+      return {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          results: [{ id: 'item', label }],
+          continuation: null,
+        }),
+      };
+    },
+  });
+  const options = queries.listItems.options({
+    context: {},
+    input: { path: { collection: 'items' } },
+  });
+  const mounted = await mountHook(client, () => {
+    renders++;
+    return useInfiniteQuery({
+      ...options,
+      notifyOnChangeProps: ['data'],
+      select: queries.listItems.items,
+    });
+  });
+  try {
+    await until(() => mounted.result.isSuccess, 'initial shared items');
+    const initial = mounted.result.data;
+    const cached = client.getQueryData(options.queryKey);
+    const before = renders;
+    await act(async () => {
+      await client.refetchQueries({ queryKey: options.queryKey, exact: true });
+    });
+    await flush();
+    same(calls, 2, 'The infinite background refetch must execute');
+    check(
+      client.getQueryData(options.queryKey) === cached,
+      'Equal page collections must share',
+    );
+    check(
+      mounted.result.data === initial,
+      'Equal selected item arrays must share',
+    );
+    same(renders, before, 'Equal pages must not redraw a data-only observer');
+    label = 'updated';
+    await act(async () => {
+      await client.refetchQueries({ queryKey: options.queryKey, exact: true });
+    });
+    await until(
+      () => mounted.result.data?.[0]?.label === label,
+      'changed shared item',
+    );
+    same(renders, before + 1, 'Changed selected items must redraw once');
+  } finally {
+    await mounted.unmount();
+    client.clear();
+  }
+}
+
+const cases = {
+  skip,
+  identity,
+  filters,
+  failures,
+  maps,
+  unmount,
+  infinite,
+  sharing,
+  infiniteSharing,
+};
 export type MountedCase = keyof typeof cases;
 
 export async function runMountedCase(name: MountedCase): Promise<void> {

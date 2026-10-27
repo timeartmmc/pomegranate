@@ -86,6 +86,14 @@ after(async () => {
 
 const cases: readonly (readonly [MountedCase, string])[] = [
   [
+    'sharing',
+    'mounted queries reuse equal data and render selected body changes',
+  ],
+  [
+    'infiniteSharing',
+    'mounted infinite queries reuse equal items and render changed selections',
+  ],
+  [
     'infinite',
     'mounted infinite queries paginate, retain failed pages, and isolate cancelled session work',
   ],

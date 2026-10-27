@@ -303,7 +303,8 @@ void test('cancelled refetches retain cached success and cannot replace a later 
       assert.equal(client.getQueryData(options.queryKey), previous);
       assert.equal(client.getQueryState(options.queryKey)?.status, 'success');
 
-      const current = await client.fetchQuery(options);
+      await client.fetchQuery(options);
+      const current = client.getQueryData(options.queryKey)!;
       assert.deepEqual(current.data, { id: 'item', label: 'current' });
       if (completion === 'resolve') release(observed('cancelled'));
       else reject(new Error('Cancelled executor failed after replacement'));

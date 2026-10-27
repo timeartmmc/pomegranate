@@ -112,7 +112,11 @@ export function queryFixture() {
               schema: { type: 'string' },
             },
           ],
-          responses: { 200: response('Item'), 404: response('Problem') },
+          responses: {
+            200: response('Item'),
+            404: response('Problem'),
+            410: { description: 'Gone without a response body' },
+          },
         },
       },
       '/outcome': {

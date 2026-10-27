@@ -119,3 +119,22 @@ export async function exactStatus() {
     void errorStatus;
   }
 }
+
+export function typedQueryError(error: unknown) {
+  if (!queries.readItem.isError(error)) return;
+  if (error.result.kind === 'protocol') {
+    const status: number = error.result.status;
+    void status;
+    // @ts-expect-error Protocol failures never expose validated body data.
+    void error.result.data;
+  } else if (error.result.status === 404) {
+    const detail: string = error.result.data.detail;
+    void detail;
+    // @ts-expect-error The declared 404 body is not an item response.
+    void error.result.data.label;
+  } else {
+    const status: 410 = error.result.status;
+    const data: undefined = error.result.data;
+    void [status, data];
+  }
+}

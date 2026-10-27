@@ -239,7 +239,8 @@ export const infiniteLifecycleChecks = {
         assert.deepEqual(seen, [null, 'old']);
         seen.length = 0;
         phase = 'changed';
-        const changed = await client.fetchInfiniteQuery(options);
+        await client.fetchInfiniteQuery(options);
+        const changed = client.getQueryData(options.queryKey)!;
         assert.deepEqual(seen, [null, 'new']);
         assert.deepEqual(changed.pageParams, [null, 'new']);
         assert.deepEqual(
