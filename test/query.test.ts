@@ -10,7 +10,6 @@ import { once } from 'node:events';
 import {
   QueryClient,
   QueryObserver,
-  dehydrate,
   hydrate,
   isCancelledError,
 } from '@tanstack/query-core';
@@ -21,6 +20,7 @@ import type { QueryExecutor } from './.generated/queries/client.consumer.queries
 import { queryFixture, querySelection } from './query-fixture.ts';
 import { verifyQueries } from './query-checks.ts';
 import { generatedWorkspace } from './generated-workspace.ts';
+import { dehydrateJson } from './query-hydration.ts';
 
 type Module = typeof import('./.generated/queries/client.consumer.queries.ts');
 type Staff = typeof import('./.generated/queries/client.staff.queries.ts');
@@ -372,7 +372,7 @@ void test('all context field names survive TanStack hashing and JSON hydration w
       }
     }
     assert.equal(calls, 12);
-    const state: unknown = JSON.parse(JSON.stringify(dehydrate(client)));
+    const state = dehydrateJson(client);
     hydrate(restored, state);
     assert.equal(restored.getQueryCache().getAll().length, 12);
     const context = Object.fromEntries([['__proto__', 'two']]);
@@ -420,7 +420,7 @@ void test('signed zero has one canonical context snapshot before and after cache
     );
     assert.deepEqual(seen, [0]);
 
-    const state: unknown = JSON.parse(JSON.stringify(dehydrate(client)));
+    const state = dehydrateJson(client);
     hydrate(restored, state);
     const hydrated = await restored.fetchQuery({
       ...positive,

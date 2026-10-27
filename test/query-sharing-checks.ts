@@ -3,10 +3,10 @@ import {
   InfiniteQueryObserver,
   QueryClient,
   QueryObserver,
-  dehydrate,
   hydrate,
 } from '@tanstack/query-core';
 import { json, record } from './assertions.ts';
+import { dehydrateJson } from './query-hydration.ts';
 
 type Module = typeof import('./.generated/infinite/client.consumer.queries.ts');
 type Observed = import('./.generated/infinite/runtime.ts').ObservedResponse;
@@ -194,6 +194,10 @@ export const querySharingChecks = {
         const previous = create();
         const next = create();
         assert.equal(share(previous, next), next);
+        const retained = create();
+        const oldWrapper = { retained };
+        const newWrapper = { retained };
+        assert.equal(share(oldWrapper, newWrapper), newWrapper);
       }
       assert.equal(reads, 0);
       const previous: { self?: object } = {};
@@ -227,6 +231,77 @@ export const querySharingChecks = {
       assert.ok(Object.is(share(0, -0), -0));
       assert.ok(Object.is(share(-0, 0), 0));
     },
+
+  'retained selections inspect each field once and appends leave retained branches untouched':
+    async ({ shareQueryData: share }) => {
+      let reads = 0;
+      const retained = new Proxy(
+        { value: 1 },
+        {
+          getOwnPropertyDescriptor(target, key) {
+            if (key === 'value') reads++;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        },
+      );
+      const previous = { rows: [retained] };
+      assert.equal(share(previous, { rows: previous.rows }), previous);
+      assert.equal(reads, 1);
+      reads = 0;
+      const appended = { rows: [...previous.rows, { value: 2 }] };
+      assert.equal(share(previous, appended), appended);
+      assert.equal(reads, 0);
+    },
+
+  'new branches defer reflection only while output stays unchanged': async ({
+    shareQueryData: share,
+  }) => {
+    let inspections = 0;
+    const incoming = new Proxy(
+      { value: 1 },
+      {
+        ownKeys(target) {
+          inspections++;
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+    assert.equal(share(undefined, incoming), incoming);
+    const next = { rows: [incoming] };
+    assert.equal(share({ rows: [] }, next), next);
+    assert.equal(inspections, 0);
+
+    const stable = { value: 1 };
+    const previous = { stable };
+    const changed = { stable: { value: 1 }, rows: [incoming] };
+    const result = share(previous, changed);
+    assert.equal(result.stable, stable);
+    assert.ok(inspections > 0);
+    assert.deepEqual(result, changed);
+
+    for (const candidate of [
+      { stable: { value: 1 }, added: { link: stable } },
+      { added: { link: stable }, stable: { value: 1 } },
+    ]) {
+      const shared = share(previous, candidate);
+      assert.deepEqual(shared, candidate);
+      assert.notEqual(shared.stable, shared.added.link);
+    }
+  },
+
+  'retained branches cannot link back to either outer container': async ({
+    shareQueryData: share,
+  }) => {
+    for (const origin of ['previous', 'next'] as const) {
+      const retained: { link?: object } = {};
+      const previous = { rows: [retained] };
+      const next = { rows: previous.rows };
+      retained.link = origin === 'previous' ? previous : next;
+      assert.equal(share(previous, next), next);
+      assert.equal(next.rows[0], retained);
+      assert.equal(retained.link, origin === 'previous' ? previous : next);
+    }
+  },
 
   'relocated nodes cannot merge independent objects in the next tree': async ({
     shareQueryData: share,
@@ -456,6 +531,65 @@ export const querySharingChecks = {
       }
     },
 
+  'mixed retained graphs preserve aliases, cycles and descriptors without modifying inputs':
+    async ({ shareQueryData: share }) => {
+      function graph(
+        value: unknown,
+        seen = new Map<object, number>(),
+      ): unknown {
+        if (value === null || typeof value !== 'object') return value;
+        const reference = seen.get(value);
+        if (reference !== undefined) return ['reference', reference];
+        const id = seen.size;
+        seen.set(value, id);
+        const prototype: unknown = Object.getPrototypeOf(value);
+        return [
+          id,
+          prototype,
+          Object.isExtensible(value),
+          Reflect.ownKeys(value).map((key) => {
+            const field = Object.getOwnPropertyDescriptor(value, key)!;
+            const child: unknown = field.value;
+            return [
+              key,
+              field.enumerable,
+              field.configurable,
+              field.writable,
+              graph(child, seen),
+            ];
+          }),
+        ];
+      }
+      let seed = 0x706f6d;
+      const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0);
+      type Node = { value: number; link?: object };
+      type Root = { a: unknown; b: unknown; rows: unknown[] };
+      for (let iteration = 0; iteration < 512; iteration++) {
+        const pool: Node[] = Array.from({ length: 5 }, () => ({
+          value: random() % 3,
+        }));
+        const pick = () => pool[random() % pool.length]!;
+        const previous: Root = {
+          a: pick(),
+          b: { leaf: pick() },
+          rows: [pick(), pick()],
+        };
+        if (iteration % 5 === 0) pool[0]!.link = previous;
+        const next: Root = {
+          a: random() % 2 ? pick() : { value: random() % 3 },
+          b: { leaf: pick() },
+          rows: [pick(), { value: random() % 3 }],
+        };
+        if (iteration % 7 === 0) next.rows.push(next);
+        if (iteration % 11 === 0) Object.freeze(pick());
+        const before = graph(next);
+        const beforePrevious = graph(previous);
+        assert.deepEqual(graph(share(previous, next)), before);
+        assert.deepEqual(graph(next), before);
+        assert.deepEqual(graph(previous), beforePrevious);
+      }
+    },
+
   'query caches and selections reuse unchanged data while preserving changed raw headers':
     async (module) => {
       const client = queryClient(module.shareQueryData);
@@ -527,7 +661,7 @@ export const querySharingChecks = {
         const initial = client.getQueryData(options.queryKey)!;
         await client.fetchQuery(options);
         assert.equal(client.getQueryData(options.queryKey), initial);
-        hydrate(restored, json(JSON.stringify(dehydrate(client))));
+        hydrate(restored, dehydrateJson(client));
         const hydrated = restored.getQueryData(options.queryKey)!;
         raw = observed({
           ['__proto__']: { stable: [1], revision: 1 },

@@ -6,16 +6,12 @@ import { after, before, test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import {
-  QueryClient,
-  QueryObserver,
-  dehydrate,
-  hydrate,
-} from '@tanstack/query-core';
+import { QueryClient, QueryObserver, hydrate } from '@tanstack/query-core';
 import { compile } from '../dist/index.js';
 import { runtimeInput } from './assertions.ts';
 import { queryFixture, querySelection } from './query-fixture.ts';
 import { generatedWorkspace } from './generated-workspace.ts';
+import { dehydrateJson } from './query-hydration.ts';
 
 type Module = typeof import('./.generated/queries/client.consumer.queries.ts');
 type Observed = import('./.generated/queries/runtime.ts').ObservedResponse;
@@ -119,7 +115,7 @@ void test('selected observer data and JSON hydration preserve every map entry af
         assert.deepEqual(client.getQueryData(options.queryKey)?.data, expected);
       }
       assert.equal(calls, 2);
-      const snapshot: unknown = JSON.parse(JSON.stringify(dehydrate(client)));
+      const snapshot = dehydrateJson(client);
       hydrate(restored, snapshot);
       const result = await restored.fetchQuery({
         ...options,
@@ -180,7 +176,7 @@ void test('scalar context identities stay distinct through real cache access and
       }
     }
     assert.equal(calls, names.length * values.length);
-    const snapshot: unknown = JSON.parse(JSON.stringify(dehydrate(client)));
+    const snapshot = dehydrateJson(client);
     hydrate(restored, snapshot);
     for (const name of names) {
       for (const value of values) {

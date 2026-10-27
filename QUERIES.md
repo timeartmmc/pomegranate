@@ -14,8 +14,8 @@ or `CompileOptions`, for example:
 This adds `client.consumer.queries.ts` and shared `query-runtime.ts` and
 `query-sharing.ts` helpers without changing the existing client entries.
 Query modules import `@tanstack/query-core`
-at runtime; install 5.90.20 or newer within 5.x. React applications can use
-TanStack React Query 5.90.20 or newer within 5.x. Use the same Query Core release
+at runtime; install 5.104.5 or newer within 5.x. React applications can use
+TanStack React Query 5.104.5 or newer within 5.x. Use the same Query Core release
 as your framework adapter. Clients without selected queries need neither TanStack
 nor React.
 
@@ -198,10 +198,10 @@ freshness, enabled conditions, selection, and cancellation or removal of old
 session caches. Mutation and cache-effect bindings are not generated. Forward cursor pagination
 is available through the infinite factories below.
 
-On TanStack 5.90.20, `useQueries({ combine })` applies its own structural sharing
+On TanStack 5.104.5, `useQueries({ combine })` applies its own structural sharing
 and ignores the per-query setting. Keep arbitrary JSON maps out of combined
-results: entries such as `__proto__` or `constructor: null` can be lost or
-rejected. Hydration restores data without generated options. Configure
+results: entries such as `__proto__` can be lost.
+Hydration restores data without generated options. Configure
 `shareQueryData` as the query default before hydrating entries that application
 code will update with `setQueryData`:
 
@@ -302,7 +302,7 @@ function, initial page parameter, next-page callback, retry, and structural-shar
 settings when adding application options.
 
 Infinite options intentionally keep their outer object extensible: Query Core
-5.90.20 installs its behavior there before copying options. They can be passed
+5.104.5 marks it as an infinite query before copying options. They can be passed
 directly to `fetchInfiniteQuery`, `ensureInfiniteQueryData`, and
 `prefetchInfiniteQuery`. Keys remain frozen, base inputs are copied, and executor
 context is a frozen snapshot. The map-preservation and hydration limits above apply

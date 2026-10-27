@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import {
   InfiniteQueryObserver,
   QueryClient,
-  dehydrate,
   hydrate,
 } from '@tanstack/query-core';
 import { runtimeInput } from './assertions.ts';
+import { dehydrateJson } from './query-hydration.ts';
 
 type Module = Pick<
   typeof import('./.generated/infinite/client.consumer.queries.ts'),
@@ -310,10 +310,7 @@ export const infiniteLifecycleChecks = {
           queries.listItems.items(original).map((item) => item.id),
           ['b', 'c'],
         );
-        hydrate(
-          restored,
-          JSON.parse(JSON.stringify(dehydrate(client))) as unknown,
-        );
+        hydrate(restored, dehydrateJson(client));
         seen.length = 0;
         const fresh = await restored.fetchInfiniteQuery({
           ...options,
@@ -416,10 +413,7 @@ export const infiniteLifecycleChecks = {
           await client.fetchInfiniteQuery(infinite.listItems.options(input));
         await client.fetchQuery(ordinary.listItems.options(args));
         await client.fetchInfiniteQuery(elsewhere.listItems.options(args));
-        hydrate(
-          restored,
-          JSON.parse(JSON.stringify(dehydrate(client))) as unknown,
-        );
+        hydrate(restored, dehydrateJson(client));
         for (const cache of [client, restored]) {
           const filter = infinite.listItems.filter({
             context: { ...args.context },

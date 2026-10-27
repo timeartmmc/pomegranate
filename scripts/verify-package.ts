@@ -42,7 +42,7 @@ const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 // Source tests use pinned development releases; installed consumers exercise the
 // Zod peer minimum with the TypeScript 5.7 compiler line instead.
 const minimumZodVersion = '4.6.6';
-const minimumQueryVersion = '5.90.20';
+const minimumQueryVersion = '5.104.5';
 const license = await readFile(join(repo, 'LICENSE'), 'utf8');
 const scratch = await mkdtemp(join(await realpath(tmpdir()), 'pom-package-'));
 const consumer = join(scratch, 'isolated consumer');
@@ -145,6 +145,7 @@ try {
     'symbol-fixture.ts',
     'deep-fixture.ts',
     'query-checks.ts',
+    'query-hydration.ts',
     'query-error-checks.ts',
     'query-sharing-checks.ts',
     'infinite-checks.ts',

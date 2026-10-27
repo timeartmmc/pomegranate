@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import {
   QueryClient,
   InfiniteQueryObserver,
-  dehydrate,
   hydrate,
   skipToken,
 } from '@tanstack/query-core';
 import { setImmediate } from 'node:timers/promises';
 import { runtimeInput } from './assertions.ts';
+import { dehydrateJson } from './query-hydration.ts';
 
 type Module = Pick<
   typeof import('./.generated/infinite/client.consumer.queries.ts'),
@@ -174,10 +174,7 @@ export const infiniteChecks = {
       });
       try {
         const data = await client.fetchInfiniteQuery({ ...options, pages: 2 });
-        hydrate(
-          restored,
-          JSON.parse(JSON.stringify(dehydrate(client))) as unknown,
-        );
+        hydrate(restored, dehydrateJson(client));
         const hydrated = await restored.fetchInfiniteQuery({
           ...options,
           staleTime: Infinity,

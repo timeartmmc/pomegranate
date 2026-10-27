@@ -142,21 +142,53 @@ function copy(frame: Frame): object | undefined {
   return result;
 }
 
-function share<T>(previous: unknown, next: T, skipIdentical: boolean): T {
+function untouchedTree(
+  roots: object[],
+  seenNext: WeakSet<object>,
+  seenShared: WeakSet<object>,
+): boolean {
+  while (roots.length > 0) {
+    const value = roots.pop()!;
+    if (seenNext.has(value) || seenShared.has(value)) return false;
+    const current = container(value);
+    if (!current) return false;
+    seenNext.add(value);
+    for (const key of current.keys) {
+      let field: PropertyDescriptor | undefined;
+      try {
+        field = Object.getOwnPropertyDescriptor(value, key);
+      } catch {
+        return false;
+      }
+      if (!field?.enumerable || !Object.hasOwn(field, 'value')) return false;
+      const child: unknown = field.value;
+      if (
+        child !== null &&
+        (typeof child === 'object' || typeof child === 'function')
+      )
+        roots.push(child);
+    }
+  }
+  return true;
+}
+
+/**
+ * Reuse equal plain-data trees without interpreting their keys as JS machinery.
+ * Other selected values retain their new identity. Inputs are never modified.
+ */
+export function shareQueryData<T>(previous: unknown, next: T): T {
   if (Object.is(previous, next)) return next;
-  const current = container(next);
   const prior = container(previous);
-  if (!current || !prior) return next;
+  if (!prior) return next;
+  const current = container(next);
+  if (!current) return next;
   const seenNext = new WeakSet<object>([current.value]);
-  const seenPrevious = new WeakSet<object>([prior.value]);
   const seenShared = new WeakSet<object>();
   const stack = [frame(prior, current)];
-  let skipped = false;
-  let replaced = false;
-  // Iteration supports JSON deeper than the JS call stack. Existing page
-  // references need no work if the assembled collection stays exactly next.
-  // If reusing any other subtree would change next, scan identical children too:
-  // they could contain an alias to a reused node. At most one rescan is needed.
+  const untouched: object[] = [];
+  // Compare matching branches once. Scan untouched branches only if the result
+  // replaces next; they need no comparison against themselves or missing data.
+  // Previous aliases are safe unless they become repeated output nodes.
   while (stack.length > 0) {
     const active = stack[stack.length - 1]!;
     if (active.index === active.current.keys.length) {
@@ -170,11 +202,13 @@ function share<T>(previous: unknown, next: T, skipIdentical: boolean): T {
       // Distinct frames must produce distinct objects in the shared tree too.
       if (shared === undefined || seenShared.has(shared)) return next;
       seenShared.add(shared);
-      if (shared !== active.current.value) replaced = true;
-      if (skipped && replaced) return share(previous, next, false);
       stack.pop();
       if (active.parent === undefined) {
-        // Equal subtrees and descriptor-preserving copies have next's shape.
+        if (
+          shared !== current.value &&
+          !untouchedTree(untouched, seenNext, seenShared)
+        )
+          return next;
         return shared as T;
       }
       accept(
@@ -209,38 +243,22 @@ function share<T>(previous: unknown, next: T, skipIdentical: boolean): T {
     const value: unknown = field.value;
     const previousValue: unknown = oldField?.value;
     if (
-      skipIdentical &&
-      value !== null &&
-      typeof value === 'object' &&
-      Object.is(previousValue, value)
-    ) {
-      skipped = true;
-      if (replaced) return share(previous, next, false);
-      accept(active, key, previousValue, value, value);
-      continue;
-    }
-    if (
       value !== null &&
       (typeof value === 'object' || typeof value === 'function')
     ) {
+      const old = Object.is(previousValue, value)
+        ? undefined
+        : container(previousValue);
+      if (!old) {
+        untouched.push(value);
+        accept(active, key, previousValue, value, value);
+        continue;
+      }
       const child = container(value);
       if (!child || seenNext.has(child.value)) return next;
       seenNext.add(child.value);
-      const old = container(previousValue);
-      if (old) {
-        if (seenPrevious.has(old.value)) return next;
-        seenPrevious.add(old.value);
-      }
       stack.push(frame(old, child, { key, previous: previousValue }));
     } else accept(active, key, previousValue, value, value);
   }
   return next;
-}
-
-/**
- * Reuse equal plain-data trees without interpreting their keys as JS machinery.
- * Other selected values retain their new identity. Inputs are never modified.
- */
-export function shareQueryData<T>(previous: unknown, next: T): T {
-  return share(previous, next, true);
 }

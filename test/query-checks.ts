@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
-import {
-  QueryClient,
-  skipToken,
-  dehydrate,
-  hydrate,
-} from '@tanstack/query-core';
+import { QueryClient, skipToken, hydrate } from '@tanstack/query-core';
+import { dehydrateJson } from './query-hydration.ts';
 
 type QueryModule =
   typeof import('./.generated/queries/client.consumer.queries.ts');
@@ -87,10 +83,7 @@ export async function verifyQueries(
     );
     const restored = new QueryClient();
     try {
-      hydrate(
-        restored,
-        JSON.parse(JSON.stringify(dehydrate(client))) as unknown,
-      );
+      hydrate(restored, dehydrateJson(client));
       for (const cache of [client, restored]) {
         const exact = queries.readItem.filter({ context: { ...args.context } });
         assert.equal(cache.getQueryCache().findAll(exact).length, 1);

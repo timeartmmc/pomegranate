@@ -3,16 +3,12 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
-import {
-  QueryClient,
-  dehydrate,
-  hydrate,
-  skipToken,
-} from '@tanstack/query-core';
+import { QueryClient, hydrate, skipToken } from '@tanstack/query-core';
 import { compile } from '../dist/index.js';
 import { runtimeInput } from './assertions.ts';
 import { queryFixture, querySelection } from './query-fixture.ts';
 import { generatedWorkspace } from './generated-workspace.ts';
+import { dehydrateJson } from './query-hydration.ts';
 import type {
   CacheContext,
   QueryExecutor,
@@ -175,7 +171,7 @@ void test('operation filters isolate complete canonical contexts and every other
       await client.fetchQuery(otherClient.readItem.options({ context, input }));
     }
     client.setQueryData(['application-owned'], 'unrelated');
-    hydrate(restored, JSON.parse(JSON.stringify(dehydrate(client))) as unknown);
+    hydrate(restored, dehydrateJson(client));
     for (const cache of [client, restored]) {
       for (const [index, context] of contexts.entries()) {
         // Filter field order and caller mutations cannot change its snapshot.
