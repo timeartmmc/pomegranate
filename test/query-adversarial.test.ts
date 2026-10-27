@@ -263,6 +263,66 @@ void test('failed HTTP and protocol refetches retain previous validated success 
   }
 });
 
+void test('cancelled refetches retain cached success and cannot replace a later result under the same key', async () => {
+  for (const completion of ['resolve', 'reject'] as const) {
+    const client = queryClient();
+    let release!: (value: Observed) => void;
+    let reject!: (error: Error) => void;
+    const late = new Promise<Observed>((yes, no) => {
+      release = yes;
+      reject = no;
+    });
+    const observed = (label: string): Observed => ({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'item', label }),
+    });
+    let calls = 0;
+    let cancelledSignal: AbortSignal | undefined;
+    const queries = module.createQueries({
+      namespace: `cached-cancellation-${completion}`,
+      execute: async (_request, { signal }) => {
+        calls += 1;
+        if (calls === 2) {
+          cancelledSignal = signal;
+          return late;
+        }
+        return observed(calls === 1 ? 'previous' : 'current');
+      },
+    });
+    const options = queries.readItem.options({
+      context: { session: 'one' },
+      input: { path: { id: 'item' } },
+    });
+    try {
+      const previous = await client.fetchQuery(options);
+      const pending = client
+        .fetchQuery(options)
+        .catch((error: unknown) => error);
+      await client.cancelQueries({ queryKey: options.queryKey, exact: true });
+      assert.equal(cancelledSignal?.aborted, true);
+      // TanStack cancellation reverts to existing success data; the cancelled
+      // executor's later result must never replace that data or its successor.
+      assert.equal(await pending, previous);
+      assert.equal(client.getQueryData(options.queryKey), previous);
+      assert.equal(client.getQueryState(options.queryKey)?.status, 'success');
+
+      const current = await client.fetchQuery(options);
+      assert.deepEqual(current.data, { id: 'item', label: 'current' });
+      if (completion === 'resolve') release(observed('cancelled'));
+      else reject(new Error('Cancelled executor failed after replacement'));
+      await late.catch(() => {});
+      await setImmediate();
+      assert.equal(client.getQueryData(options.queryKey), current);
+      assert.equal(client.getQueryState(options.queryKey)?.status, 'success');
+      assert.equal(calls, 3);
+    } finally {
+      release(observed('cleanup'));
+      client.clear();
+    }
+  }
+});
+
 void test('unsubscribing the last observer aborts execution and rejects its late result', async () => {
   const client = queryClient();
   let release!: (value: Observed) => void;

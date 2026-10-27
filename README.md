@@ -60,8 +60,9 @@ They use ES2022 runtime APIs; TypeScript targets must be ES2020 or newer for
 bigint literals. The example uses ES2022 target and library declarations.
 When emitting JavaScript with TypeScript 5.7 or newer, enable
 `rewriteRelativeImportExtensions` to produce `.js` imports. For a bundler-only
-`noEmit` typecheck, use `allowImportingTsExtensions`. Zod is the only external
-runtime dependency; deployed applications do not need the compiler.
+`noEmit` typecheck, use `allowImportingTsExtensions`. Core generated modules need
+only Zod at runtime; optional query modules also need Query Core. Deployed
+applications do not need the compiler.
 
 For programmatic use in development tooling, pass a parsed OpenAPI `document`:
 
@@ -281,78 +282,14 @@ or headers. Other protocol issues may omit `path`.
 A body valid under `200` does not pass under `202` unless both declare it.
 Bodyless responses require empty text and expose `data: undefined`.
 
-## Optional query options
+## Optional query integration
 
-Select bodyless GET or HEAD operations per client with `queries` in configuration
-or `CompileOptions`, for example:
-
-```json
-{
-  "queries": { "consumer": ["getWidget", "checkHealth"] }
-}
-```
-
-This adds `client.consumer.queries.ts` and a shared `query-runtime.ts` without
-changing the existing client entries. Install `@tanstack/query-core` 5.90.20 or
-newer within 5.x for its types and query client. React applications can use
-TanStack React Query 5.90.20 or newer within 5.x. Use the same Query Core release
-as your framework adapter. Clients without selected queries need neither TanStack
-nor React.
-
-TypeScript environments without DOM libraries must supply platform declarations
-for `AbortSignal` and `VoidFunction`. Node types provide `AbortSignal`; if needed,
-add `interface VoidFunction { (): void; }` in a global `.d.ts` file.
-Cancellation also supports native signals without `throwIfAborted` or `reason`;
-it preserves a provided reason and uses an error named `AbortError` when none is
-available.
-
-Supply an application `QueryExecutor` as `executeRaw` below. It receives the
-prepared request and `{ signal, context }`, and returns raw `{ status, headers, body }`
-HTTP evidence with body text. It owns credentials, merged-header validation,
-transport headers, deadlines, and retries. Forward the signal to the transport.
-Use the frozen context snapshot to bind transport values and session checks to
-the same identity as the key, rather than reading changed application state.
-The existing example's `execute` returns an already parsed result and does not
-implement this raw-response interface.
-
-```ts
-import { createQueries } from './generated/client.consumer.queries.ts';
-
-const queries = createQueries({
-  namespace: 'widgets-api-v1',
-  execute: executeRaw,
-});
-const args = {
-  context: { session: 'synthetic-session-1', locale: 'en' },
-  input: { path: { widgetId: 'demo/widget' } },
-};
-const options = queries.getWidget.options(args);
-const key = queries.getWidget.key(args);
-```
-
-Pass `options` to `QueryClient.fetchQuery` or a query hook. The key carries result
-types for cache access. Namespace the API origin and contract version explicitly;
-include every response-changing user/session, tenant, locale, or transport value
-in the required nonsecret `context`. Its values are finite JSON scalars; numeric
-`-0` becomes `0` in both the key and executor snapshot so JSON cache hydration
-preserves identity. Keys include the validated URL and endpoint headers, so
-supply credentials through the executor rather than endpoint inputs. Treat
-generated keys as opaque.
-
-Factories validate immediately and snapshot inputs and context. Create options
-only when required inputs are known; setting a hook's `enabled: false` does not
-skip this validation. Their query functions forward cancellation, reject late
-results after cancellation, and set `retry: false` so the executor owns the retry
-budget. Success data is the validated response
-envelope, including exact status and bodyless `data: undefined`. Declared HTTP
-errors and protocol failures reject with `QueryResponseError.result`. Malformed
-executor evidence rejects with `TypeError`; transport errors propagate. Options
-set `structuralSharing: false` to preserve every legal JSON map entry during
-cache updates; unchanged refetches may produce new object
-identities. Preserve the generated key, query function, retry, and
-structural-sharing settings when adding application options. Applications own
-freshness, enabled conditions, selection, and cancellation or removal of old
-session caches. Pagination, mutations, and cache effects are not generated.
+Select bodyless GET/HEAD operations with `queries`, or forward cursor-paginated
+GET operations with `infiniteQueries`. POM emits factories using an application
+executor, validated cache identities, cancellation, and exact-status response
+validation. These modules also require `@tanstack/query-core` 5.90.20 or newer
+within 5.x. See [query integration](QUERIES.md) for configuration, React examples,
+cache ownership, pagination rules, and TanStack integration limits.
 
 ## Supported vocabulary
 
@@ -412,9 +349,10 @@ Supported schema composition is deliberately limited:
   are required. Scalar `enum` and `const` still restrict accepted values,
   including whether `null` is accepted. Existing parameter and multipart
   restrictions still apply.
-- `oneOf` uses component references with an explicit discriminator mapping.
-  Each branch requires the discriminator field with a distinct string literal;
-  the mapping must cover every branch exactly once.
+- `oneOf` uses component references without sibling constraints or defaults and
+  requires an explicit discriminator mapping. Each branch requires the
+  discriminator field with a distinct string literal; the mapping must cover
+  every branch exactly once.
 - Objects with fixed properties use `additionalProperties: false` or omission.
   Pure maps set `additionalProperties` to a schema or `true` for arbitrary JSON
   values. Mixing fixed properties with dynamic entries is unsupported.

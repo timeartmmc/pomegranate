@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/query-core';
+import { QueryClient, skipToken } from '@tanstack/query-core';
 import { useQuery } from '@tanstack/react-query';
 import { createQueries } from './query-generated/client.consumer.queries.ts';
 import { createQueries as createStaff } from './query-generated/client.staff.queries.ts';
@@ -22,6 +22,30 @@ if (cached) {
 }
 queries.health.options({ context: {} });
 queries.health.options({ context: {}, input: undefined });
+const skipped = queries.readItem.options({ context: {}, input: skipToken });
+const skippedData = client.getQueryData(skipped.queryKey);
+if (skippedData) {
+  const label: string = skippedData.data.label;
+  void label;
+  // @ts-expect-error Skipping retains the operation response, not any data.
+  void skippedData.data.reference;
+}
+client.invalidateQueries(queries.readItem.filter({ context: {} }));
+client.invalidateQueries(queries.readItem.filter({ allContexts: true }));
+// @ts-expect-error Context stays explicit when skipping.
+queries.readItem.options({ input: skipToken });
+// @ts-expect-error Only the actual TanStack skip token bypasses input validation.
+queries.readItem.options({ context: {}, input: Symbol() });
+// @ts-expect-error A key describes a validated real request.
+queries.readItem.key({ context: {}, input: skipToken });
+// @ts-expect-error A filter requires an explicit scope.
+queries.readItem.filter();
+// @ts-expect-error Cross-context matching must be explicit.
+queries.readItem.filter({});
+// @ts-expect-error Exact and cross-context scopes are mutually exclusive.
+queries.readItem.filter({ context: {}, allContexts: true });
+// @ts-expect-error Context values are scalars for filters too.
+queries.readItem.filter({ context: { tenant: [] } });
 // @ts-expect-error Required operation input cannot be omitted.
 queries.readItem.options({ context: {} });
 // @ts-expect-error Cache context must be explicit.
@@ -59,6 +83,20 @@ export function useSyntheticQuery() {
   const label: string | undefined = query.data;
   void label;
   // @ts-expect-error The application select result is inferred.
+  const invalid: number = query.data;
+  void invalid;
+  return query;
+}
+
+export function useWaitingQuery(id: string | undefined) {
+  const options = queries.readItem.options({
+    context: { session: 'public' },
+    input: id === undefined ? skipToken : { path: { id } },
+  });
+  const query = useQuery({ ...options, select: (result) => result.data.label });
+  const label: string | undefined = query.data;
+  void label;
+  // @ts-expect-error Union options still infer the select result.
   const invalid: number = query.data;
   void invalid;
   return query;

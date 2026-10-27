@@ -145,9 +145,21 @@ export type Client = {
   readonly transportHeaders: readonly string[];
   readonly operations: readonly Operation[];
   readonly queries: readonly Operation[];
+  readonly infiniteQueries: readonly InfiniteQuery[];
   readonly requestSchemas: readonly string[];
   readonly responseSchemas: readonly string[];
 };
+
+export type InfiniteQueryBinding = Readonly<{
+  cursor: string;
+  nextCursor: string;
+  items: string;
+}>;
+
+export type InfiniteQuery = Readonly<{
+  operation: Operation;
+  binding: InfiniteQueryBinding;
+}>;
 
 export type Standalone = {
   readonly name: string;

@@ -21,7 +21,15 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-import type { DataTag, QueryFunctionContext } from '@tanstack/query-core';
+import { skipToken } from '@tanstack/query-core';
+import type {
+  DataTag,
+  InfiniteData,
+  Query,
+  QueryFilters,
+  QueryFunctionContext,
+  SkipToken,
+} from '@tanstack/query-core';
 import type {
   DeclaredResponse,
   ObservedResponse,
@@ -29,7 +37,10 @@ import type {
   ProtocolFailure,
   ProtocolResult,
   Responses,
+  RequestParts,
 } from './runtime.js';
+import { validateOptions } from './runtime.js';
+import type { z } from 'zod';
 
 export type CacheContext = Readonly<
   Record<string, string | number | boolean | null>
@@ -64,7 +75,7 @@ function assertSuccess<R extends Responses>(
 ): asserts result is Success<R> {
   if (result.kind === 'protocol') throw new QueryResponseError(result);
   if (result.kind === 'error')
-    throw new QueryResponseError({ ...result, kind: 'error' });
+    throw new QueryResponseError(Object.freeze({ ...result, kind: 'error' }));
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -85,20 +96,72 @@ type Arguments<Input> = Readonly<{ context: CacheContext }> &
   (undefined extends Input
     ? Readonly<{ input?: Input }>
     : Readonly<{ input: Input }>);
+type SkippedArguments = Readonly<{ context: CacheContext; input: SkipToken }>;
 
-type Key<R extends Responses> = DataTag<
-  readonly [
-    'pom-query-v1',
-    string,
-    string,
-    string,
-    ContextEntries,
-    string,
-    readonly (readonly [string, string])[],
-  ],
-  Success<R>,
-  Error
->;
+type OperationScope =
+  | Readonly<{ context: CacheContext; allContexts?: never }>
+  | Readonly<{ allContexts: true; context?: never }>;
+
+type KeyParts<Prefix extends string = 'pom-query-v1'> = readonly [
+  Prefix,
+  string,
+  string,
+  string,
+  ContextEntries,
+  string | null,
+  readonly (readonly [string, string])[],
+];
+
+// Interfaces preserve named boundaries even when an application publishes
+// inferred exports of factories, options or keys. Readonly object aliases can
+// instead inline DataTag's unique symbols without importing them.
+export interface QueryKey<R extends Responses>
+  extends KeyParts, DataTag<unknown, Success<R>> {}
+
+export interface SkippableQueryOptions<R extends Responses> {
+  readonly queryKey: QueryKey<R>;
+  readonly retry: false;
+  readonly structuralSharing: false;
+  readonly queryFn:
+    | ((context: QueryFunctionContext<QueryKey<R>>) => Promise<Success<R>>)
+    | SkipToken;
+}
+
+export interface QueryOptions<
+  R extends Responses,
+> extends SkippableQueryOptions<R> {
+  readonly queryFn: (
+    context: QueryFunctionContext<QueryKey<R>>,
+  ) => Promise<Success<R>>;
+}
+
+export interface OperationFilter {
+  readonly queryKey: readonly ['pom-query-v1', string, string, string];
+  readonly predicate: NonNullable<QueryFilters['predicate']>;
+}
+
+export interface QueryFactory<Input, R extends Responses> {
+  readonly key: (args: Arguments<Input>) => QueryKey<R>;
+  readonly options: {
+    (args: Arguments<Input>): QueryOptions<R>;
+    (args: Arguments<Input> | SkippedArguments): SkippableQueryOptions<R>;
+  };
+  readonly filter: (scope: OperationScope) => OperationFilter;
+}
+
+type QueryOperation = Readonly<{
+  build: (input: never) => PreparedRequest<Responses, 'none'>;
+}>;
+
+export type QueryFactories<
+  Operations extends Readonly<Record<string, QueryOperation>>,
+> = Readonly<{
+  [Name in keyof Operations]: Operations[Name] extends {
+    build: (input: infer Input) => PreparedRequest<infer R, 'none'>;
+  }
+    ? QueryFactory<Input, R>
+    : never;
+}>;
 
 function dataRecord(value: unknown, location: string): Record<string, unknown> {
   if (
@@ -154,49 +217,166 @@ export function queryNamespace(value: string): string {
   return value;
 }
 
+interface ScopedOperationFilter<Prefix extends string> {
+  readonly queryKey: readonly [Prefix, string, string, string];
+  readonly predicate: NonNullable<QueryFilters['predicate']>;
+}
+
+function queryArguments(args: unknown) {
+  const fields = dataRecord(args, 'query arguments');
+  for (const name of Object.keys(fields))
+    if (name !== 'context' && name !== 'input')
+      throw new TypeError(`unknown query argument ${name}`);
+  const context = cacheContext(fields['context']);
+  return {
+    input: fields['input'],
+    context,
+    executionContext: Object.freeze(Object.fromEntries(context)),
+  };
+}
+
+function keyParts<Prefix extends string>(
+  prefix: Prefix,
+  namespace: string,
+  client: string,
+  operationId: string,
+  context: ContextEntries,
+  request: PreparedRequest<Responses, 'none'> | undefined,
+): KeyParts<Prefix> {
+  const headers = Object.freeze(
+    Object.entries(request?.headers ?? {})
+      .map(([name, value]) =>
+        Object.freeze([name.toLowerCase(), value] as const),
+      )
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+  );
+  // Both URL and endpoint headers come from the validated initial request.
+  // Transport state belongs in the explicit nonsecret context.
+  return Object.freeze([
+    prefix,
+    namespace,
+    client,
+    operationId,
+    context,
+    request?.url ?? null,
+    headers,
+  ] as const);
+}
+
+async function executeRequest<R extends Responses>(
+  request: PreparedRequest<R, 'none'>,
+  execute: QueryExecutor,
+  context: CacheContext,
+  signal: AbortSignal,
+): Promise<Success<R>> {
+  throwIfAborted(signal);
+  let observed: ObservedResponse;
+  try {
+    observed = await execute(request, Object.freeze({ signal, context }));
+  } catch (error) {
+    throwIfAborted(signal);
+    throw error;
+  }
+  // Executors may ignore cancellation; never deliver their late result.
+  throwIfAborted(signal);
+  const result = request.parseResponse(observed);
+  // Evidence getters may synchronously cancel while the parser snapshots them.
+  throwIfAborted(signal);
+  assertSuccess(result);
+  return result;
+}
+
+function operationFilter<Prefix extends string>(
+  prefix: Prefix,
+  namespace: string,
+  client: string,
+  operationId: string,
+  scope: OperationScope,
+): ScopedOperationFilter<Prefix> {
+  const fields = dataRecord(scope, 'query filter');
+  const names = Object.keys(fields);
+  if (
+    names.length !== 1 ||
+    (names[0] !== 'context' && names[0] !== 'allContexts') ||
+    (names[0] === 'allContexts' && fields['allContexts'] !== true)
+  )
+    throw new TypeError(
+      'query filter must specify context or allContexts: true',
+    );
+  const context =
+    names[0] === 'context' ? cacheContext(fields['context']) : undefined;
+  return Object.freeze({
+    queryKey: Object.freeze([prefix, namespace, client, operationId] as const),
+    // TanStack's partial key matching accepts context prefixes (including an
+    // empty context). Compare complete canonical entries to avoid widening a
+    // scope to extra fields; entry arrays also retain special property names.
+    predicate: (query: Query) => {
+      if (context === undefined) return true;
+      const candidate: unknown = query.queryKey[4];
+      if (!Array.isArray(candidate) || candidate.length !== context.length)
+        return false;
+      const entries: readonly unknown[] = candidate;
+      return context.every(([name, value], index) => {
+        const entry = entries[index];
+        return (
+          Array.isArray(entry) &&
+          entry.length === 2 &&
+          entry[0] === name &&
+          entry[1] === value
+        );
+      });
+    },
+  });
+}
+
 export function defineQuery<Input, const R extends Responses>(
   operation: { build: (input: Input) => PreparedRequest<R, 'none'> },
   execute: QueryExecutor,
   namespace: string,
   client: string,
-) {
-  function prepare(args: Arguments<Input>) {
-    const fields = dataRecord(args, 'query arguments');
-    for (const name of Object.keys(fields))
-      if (name !== 'context' && name !== 'input')
-        throw new TypeError(`unknown query argument ${name}`);
-    const context = cacheContext(fields['context']);
-    const executionContext = Object.freeze(Object.fromEntries(context));
+  // The emitter supplies identity without building a request with fake inputs.
+  operationId: string,
+): QueryFactory<Input, R> {
+  function prepare(args: Arguments<Input> | SkippedArguments) {
+    const { input, context, executionContext } = queryArguments(args);
     // The conditional argument type permits omission only when Input includes
     // undefined. The operation builder validates JavaScript callers as well.
-    const request = operation.build(fields['input'] as Input);
-    const headers = Object.freeze(
-      Object.entries(request.headers)
-        .map(([name, value]) =>
-          Object.freeze([name.toLowerCase(), value] as const),
-        )
-        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
-    );
-    // URL and endpoint headers come from this same validated request snapshot.
-    // Transport headers are deliberately absent; applications must represent all
-    // response-changing transport state with explicit, nonsecret cache context.
-    const key = Object.freeze([
+    const request =
+      input === skipToken ? undefined : operation.build(input as Input);
+    const key = keyParts(
       'pom-query-v1',
       namespace,
       client,
-      request.operationId,
+      operationId,
       context,
-      request.url,
-      headers,
-    ] as const) as Key<R>;
+      request,
+    ) as QueryKey<R>;
     return { request, key, context: executionContext };
   }
 
-  function key(args: Arguments<Input>): Key<R> {
-    return prepare(args).key;
+  function key(args: Arguments<Input>): QueryKey<R> {
+    const prepared = prepare(args);
+    if (!prepared.request) throw new TypeError('query keys require real input');
+    return prepared.key;
   }
 
-  function options(args: Arguments<Input>) {
+  function filter(scope: OperationScope): OperationFilter {
+    return operationFilter(
+      'pom-query-v1',
+      namespace,
+      client,
+      operationId,
+      scope,
+    );
+  }
+
+  function options(args: Arguments<Input>): QueryOptions<R>;
+  function options(
+    args: Arguments<Input> | SkippedArguments,
+  ): SkippableQueryOptions<R>;
+  function options(
+    args: Arguments<Input> | SkippedArguments,
+  ): SkippableQueryOptions<R> {
     const { request, key: queryKey, context: executionContext } = prepare(args);
     const identity = JSON.stringify(queryKey);
     return Object.freeze({
@@ -208,32 +388,225 @@ export function defineQuery<Input, const R extends Responses>(
       // That can drop legal map keys or reject constructor:null on refetch.
       // Keep the complete value that passed the generated response validator.
       structuralSharing: false as const,
-      queryFn: async (
-        context: QueryFunctionContext<Key<R>>,
-      ): Promise<Success<R>> => {
-        const { signal } = context;
-        throwIfAborted(signal);
-        if (JSON.stringify(context.queryKey) !== identity)
-          throw new TypeError('query key does not match the prepared request');
-        let observed: ObservedResponse;
-        try {
-          observed = await execute(
-            request,
-            Object.freeze({ signal, context: executionContext }),
-          );
-        } catch (error) {
-          throwIfAborted(signal);
-          throw error;
-        }
-        // Executors can ignore cancellation. Never deliver their late result.
-        throwIfAborted(signal);
-        const result = request.parseResponse(observed);
-        assertSuccess(result);
-        // Returning the envelope also represents bodyless success without the
-        // undefined query data forbidden by TanStack. Status narrowing survives.
-        return result;
+      queryFn:
+        request === undefined
+          ? skipToken
+          : async (
+              context: QueryFunctionContext<QueryKey<R>>,
+            ): Promise<Success<R>> => {
+              const { signal } = context;
+              throwIfAborted(signal);
+              if (JSON.stringify(context.queryKey) !== identity)
+                throw new TypeError(
+                  'query key does not match the prepared request',
+                );
+              return executeRequest(request, execute, executionContext, signal);
+            },
+    });
+  }
+  return Object.freeze({ key, options, filter });
+}
+
+type Cursor = string | null;
+
+export interface InfiniteQueryKey<R extends Responses>
+  extends
+    KeyParts<'pom-infinite-v1'>,
+    DataTag<unknown, InfiniteData<Success<R>, Cursor>> {}
+
+export interface InfiniteOperationFilter extends ScopedOperationFilter<'pom-infinite-v1'> {}
+
+export interface SkippableInfiniteQueryOptions<R extends Responses> {
+  readonly queryKey: InfiniteQueryKey<R>;
+  readonly initialPageParam: null;
+  readonly retry: false;
+  readonly structuralSharing: false;
+  readonly queryFn:
+    | ((
+        context: QueryFunctionContext<InfiniteQueryKey<R>, Cursor>,
+      ) => Promise<Success<R>>)
+    | SkipToken;
+  readonly getNextPageParam: (
+    lastPage: Success<R>,
+    pages: Success<R>[],
+    lastPageParam: Cursor,
+    pageParams: Cursor[],
+  ) => string | undefined;
+}
+
+export interface InfiniteQueryOptions<
+  R extends Responses,
+> extends SkippableInfiniteQueryOptions<R> {
+  readonly queryFn: (
+    context: QueryFunctionContext<InfiniteQueryKey<R>, Cursor>,
+  ) => Promise<Success<R>>;
+}
+
+export interface InfiniteQueryFactory<Input, R extends Responses, Item> {
+  readonly key: (args: Arguments<Input>) => InfiniteQueryKey<R>;
+  readonly options: {
+    (args: Arguments<Input>): InfiniteQueryOptions<R>;
+    (
+      args: Arguments<Input> | SkippedArguments,
+    ): SkippableInfiniteQueryOptions<R>;
+  };
+  readonly filter: (scope: OperationScope) => InfiniteOperationFilter;
+  readonly items: (
+    data: InfiniteData<Success<R>, Cursor> | undefined,
+  ) => Item[];
+}
+
+type OperationResponses<Operation> = Operation extends {
+  build: (input: never) => PreparedRequest<infer R, 'none'>;
+}
+  ? R
+  : never;
+type PageItem<Page, Field extends string> = Page extends {
+  data: Readonly<Record<Field, readonly (infer Item)[]>>;
+}
+  ? Item
+  : never;
+export type InfiniteQueryFactoryFor<
+  Operation extends QueryOperation,
+  Input,
+  Field extends string,
+> = InfiniteQueryFactory<
+  Input,
+  OperationResponses<Operation>,
+  PageItem<Success<OperationResponses<Operation>>, Field>
+>;
+
+export function defineInfiniteQuery<
+  O extends z.ZodType<RequestParts | undefined>,
+  const R extends Responses,
+  Items extends readonly unknown[],
+>(
+  config: Readonly<{
+    operation: { build: (input: never) => PreparedRequest<R, 'none'> };
+    input: O;
+    cursor: string;
+    nextCursor: (page: Success<R>) => Cursor;
+    items: (page: Success<R>) => Items;
+    execute: QueryExecutor;
+    namespace: string;
+    client: string;
+    operationId: string;
+  }>,
+): InfiniteQueryFactory<z.input<O>, R, Items[number]> {
+  // The emitter removes the cursor from base inputs. Each assembled page is
+  // still passed through the ordinary builder, the authority for request types
+  // and constraints (including literal cursor schemas).
+  const build = config.operation.build as (
+    input: unknown,
+  ) => PreparedRequest<R, 'none'>;
+  function pageRequest(input: z.output<O>, cursor: Cursor) {
+    if (cursor !== null && typeof cursor !== 'string')
+      throw new TypeError('page cursor must be a string or null');
+    return build({
+      ...input,
+      query: {
+        ...input?.query,
+        ...(cursor === null ? {} : { [config.cursor]: cursor }),
       },
     });
   }
-  return Object.freeze({ key, options });
+  function prepare(args: Arguments<z.input<O>> | SkippedArguments) {
+    const { input, context, executionContext } = queryArguments(args);
+    let request: PreparedRequest<R, 'none'> | undefined;
+    let fetchPage: ((cursor: Cursor) => PreparedRequest<R, 'none'>) | undefined;
+    if (input !== skipToken) {
+      const snapshot = validateOptions(config.input, input, config.operationId);
+      const initial = pageRequest(snapshot, null);
+      request = initial;
+      fetchPage = (cursor) =>
+        cursor === null ? initial : pageRequest(snapshot, cursor);
+    }
+    const key = keyParts(
+      'pom-infinite-v1',
+      config.namespace,
+      config.client,
+      config.operationId,
+      context,
+      request,
+    ) as InfiniteQueryKey<R>;
+    return { fetchPage, key, executionContext };
+  }
+  function key(args: Arguments<z.input<O>>): InfiniteQueryKey<R> {
+    const prepared = prepare(args);
+    if (!prepared.fetchPage)
+      throw new TypeError('query keys require real input');
+    return prepared.key;
+  }
+  function options(args: Arguments<z.input<O>>): InfiniteQueryOptions<R>;
+  function options(
+    args: Arguments<z.input<O>> | SkippedArguments,
+  ): SkippableInfiniteQueryOptions<R>;
+  function options(
+    args: Arguments<z.input<O>> | SkippedArguments,
+  ): SkippableInfiniteQueryOptions<R> {
+    const { fetchPage, key: queryKey, executionContext } = prepare(args);
+    const identity = JSON.stringify(queryKey);
+    // Query Core installs its infinite-query behavior on this object before
+    // copying options. Keep the outer container extensible; identities and the
+    // captured input/context snapshots remain isolated from caller mutation.
+    return {
+      queryKey,
+      initialPageParam: null,
+      retry: false,
+      structuralSharing: false,
+      queryFn:
+        fetchPage === undefined
+          ? skipToken
+          : async (
+              context: QueryFunctionContext<InfiniteQueryKey<R>, Cursor>,
+            ): Promise<Success<R>> => {
+              const { signal } = context;
+              throwIfAborted(signal);
+              if (JSON.stringify(context.queryKey) !== identity)
+                throw new TypeError(
+                  'query key does not match the prepared request',
+                );
+              if (context.direction === 'backward')
+                throw new TypeError('backward pagination is unsupported');
+              const page = fetchPage(context.pageParam);
+              return executeRequest(
+                page,
+                config.execute,
+                executionContext,
+                signal,
+              );
+            },
+      getNextPageParam: (
+        lastPage: Success<R>,
+        _pages: Success<R>[],
+        _lastPageParam: Cursor,
+        pageParams: Cursor[],
+      ) => {
+        const next = config.nextCursor(lastPage);
+        // Empty strings are real cursors. Repeated retained cursors stop a
+        // broken endpoint from appending the same page indefinitely.
+        return next === null || pageParams.includes(next) ? undefined : next;
+      },
+    };
+  }
+  return Object.freeze({
+    key,
+    options,
+    filter: (scope: OperationScope) =>
+      operationFilter(
+        'pom-infinite-v1',
+        config.namespace,
+        config.client,
+        config.operationId,
+        scope,
+      ),
+    items: (
+      data: InfiniteData<Success<R>, Cursor> | undefined,
+    ): Items[number][] => {
+      const items: Items[number][] = [];
+      for (const page of data?.pages ?? [])
+        for (const item of config.items(page)) items.push(item);
+      return items;
+    },
+  });
 }

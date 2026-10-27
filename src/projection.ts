@@ -7,6 +7,7 @@ import type {
   Standalone,
 } from './model.js';
 import type { RootSelection, Selection } from './selection.js';
+import { validatePagination } from './pagination.js';
 import {
   normalizeSchema,
   schemaReferences,
@@ -50,7 +51,13 @@ export function selectClients(
   descriptor: Descriptor,
   selection: Selection,
 ): readonly Client[] {
-  const { clients: names, targets, transportHeaders, queries } = selection;
+  const {
+    clients: names,
+    targets,
+    transportHeaders,
+    queries,
+    infiniteQueries,
+  } = selection;
   const declared = new Set(
     descriptor.operations.flatMap((operation) =>
       operation.parameters
@@ -99,12 +106,23 @@ export function selectClients(
         fail(location, 'queries support only bodyless GET and HEAD operations');
       return operation;
     });
+    const selectedInfinite = Object.entries(
+      Object.hasOwn(infiniteQueries, name) ? infiniteQueries[name]! : {},
+    ).map(([id, binding]) => {
+      const location = `infiniteQueries.${name}.${id}`;
+      const operation = operations.find((candidate) => candidate.id === id);
+      if (!operation)
+        fail(location, 'infinite query operation must belong to this client');
+      validatePagination(operation, binding, descriptor, location);
+      return { operation, binding };
+    });
     return {
       name,
       ...(target === undefined ? {} : { target }),
       transportHeaders,
       operations,
       queries: selectedQueries,
+      infiniteQueries: selectedInfinite,
       requestSchemas: closure(
         descriptor,
         operations.flatMap((operation) => roots(operation, 'request')),

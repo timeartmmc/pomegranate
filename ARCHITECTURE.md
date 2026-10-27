@@ -21,10 +21,26 @@ Optional query factories derive their keys and requests from one validated input
 snapshot. The context passed to the executor must preserve the identity encoded
 by the key, including after JSON serialization. Applications supply the API
 namespace, nonsecret response-changing cache context, executor, and session-cache
-lifecycle. Generated query functions
-delegate transport work, forward cancellation, and validate raw response evidence
-before returning a success envelope. They do not resolve credentials or add an
-automatic retry budget.
+lifecycle. Query options can wait for required inputs using TanStack's skip token
+while retaining explicit, validated context. A skipped query must not execute on
+mount, invalidation, or manual refetch. Real inputs still validate immediately.
+Public operation filters match every parameter variant within one namespace,
+client, operation, and complete canonical context; matching across contexts must
+be explicit. These identities must survive JSON hydration. Applications own
+invalidation policy.
+
+Infinite-query bindings explicitly select an optional string request cursor and
+required response cursor/item fields across every success status. Validate the
+complete binding before emission. Infinite factories use a cache family separate
+from ordinary queries, preserve one base-input/context snapshot across pages,
+and validate each assembled page request and its exact-status response. Initial
+requests omit the cursor; a null response cursor or a repeated retained cursor
+ends pagination. Empty strings remain real cursors. Item selection preserves
+page order and duplicates. Applications own eviction, deduplication, and rendering.
+
+Generated query functions delegate transport work, forward cancellation, and
+validate raw response evidence before returning a success envelope. They do not
+resolve credentials or add an automatic retry budget.
 Query cache integration must preserve all supported response data, including
 dynamic map entries with prototype-related names, across refetches. A failed
 HTTP or protocol result must not become successful query data.

@@ -309,28 +309,95 @@ function renderClient(
     [`client.${client.name}.schemas.ts`]: emittedSchema,
     [`client.${client.name}.operations.ts`]: emittedOperations,
     [`client.${client.name}.ts`]: index,
-    ...(client.queries.length > 0
-      ? { [`client.${client.name}.queries.ts`]: renderQueries(client) }
+    ...(client.queries.length + client.infiniteQueries.length > 0
+      ? {
+          [`client.${client.name}.queries.ts`]: renderQueries(
+            descriptor,
+            client,
+          ),
+        }
       : {}),
   };
 }
 
-function renderQueries(client: Client): string {
+function renderQueries(descriptor: Descriptor, client: Client): string {
+  const selected = client.queries
+    .map((operation) => JSON.stringify(operation.id))
+    .join(' | ');
   const entries = client.queries.map(
     (operation) =>
-      `${JSON.stringify(operation.id)}: defineQuery(operations[${JSON.stringify(operation.id)}], execute, namespace, ${JSON.stringify(client.name)})`,
+      `${JSON.stringify(operation.id)}: defineQuery(operations[${JSON.stringify(operation.id)}], execute, namespace, ${JSON.stringify(client.name)}, ${JSON.stringify(operation.id)})`,
   );
+  let usesReferences = false;
+  const renderer = schemaRenderer(
+    descriptor.schemas,
+    (name, direction) => {
+      usesReferences = true;
+      return member(
+        member(identifier('schemas'), `${direction}Schemas`),
+        literal(name),
+      );
+    },
+    (name, direction) =>
+      `schemas.${direction === 'request' ? 'Request' : 'Response'}Types[${JSON.stringify(name)}]`,
+    client.target,
+  );
+  const inputs: string[] = [];
+  const infiniteTypes: string[] = [];
+  const infiniteEntries = client.infiniteQueries.map(
+    ({ operation, binding }) => {
+      const name = `infinite_${operationScope(operation.id)}_input`;
+      const parameters = operation.parameters.filter(
+        (parameter) =>
+          !(parameter.in === 'query' && parameter.name === binding.cursor) &&
+          !(
+            parameter.in === 'header' &&
+            client.transportHeaders.includes(parameter.name.toLowerCase())
+          ),
+      );
+      inputs.push(
+        `const ${name} = ${source(parameterOptions(operation, parameters, renderer), `infiniteQueries.${client.name}.${operation.id}`)};`,
+      );
+      const op = `operations[${JSON.stringify(operation.id)}]`;
+      infiniteTypes.push(
+        `[${JSON.stringify(operation.id)}]: InfiniteQueryFactoryFor<typeof ${op}, z.input<typeof ${name}>, ${JSON.stringify(binding.items)}>;`,
+      );
+      return `[${JSON.stringify(operation.id)}]: defineInfiniteQuery({ operation: ${op}, input: ${name}, cursor: ${JSON.stringify(binding.cursor)}, nextCursor: page => page.data[${JSON.stringify(binding.nextCursor)}], items: page => page.data[${JSON.stringify(binding.items)}], execute, namespace, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
+    },
+  );
+  const infinite = client.infiniteQueries.length > 0;
   return `${banner}
     import { operations } from './client.${client.name}.operations.ts';
-    import { defineQuery, queryNamespace } from './query-runtime.ts';
-    import type { QueryExecutor } from './query-runtime.ts';
+    import { ${client.queries.length ? 'defineQuery,' : ''} ${infinite ? 'defineInfiniteQuery,' : ''} queryNamespace } from './query-runtime.ts';
+    import type { QueryExecutor, ${client.queries.length ? 'QueryFactories,' : ''} ${infinite ? 'InfiniteQueryFactoryFor' : ''} } from './query-runtime.ts';
+    ${infinite ? `import { z } from 'zod';` : ''}
+    ${usesReferences ? `import * as schemas from './client.${client.name}.schemas.ts';` : ''}
+    ${helperImports(renderer.helpers)}
+    ${renderer.takeDeclarations()}
+    ${inputs.join('\n')}
     export { QueryResponseError } from './query-runtime.ts';
     export type { CacheContext, QueryExecutor } from './query-runtime.ts';
-    export function createQueries(config: Readonly<{ namespace: string; execute: QueryExecutor }>) {
+    ${
+      client.queries.length
+        ? `
+    export function createQueries(config: Readonly<{ namespace: string; execute: QueryExecutor }>): QueryFactories<Pick<typeof operations, ${selected}>> {
       const namespace = queryNamespace(config.namespace);
       const execute = config.execute;
       if (typeof execute !== 'function') throw new TypeError('query executor must be a function');
       return Object.freeze({ ${entries.join(',')} });
+    }`
+        : ''
+    }
+    ${
+      infinite
+        ? `
+    export function createInfiniteQueries(config: Readonly<{ namespace: string; execute: QueryExecutor }>): Readonly<{ ${infiniteTypes.join('\n')} }> {
+      const namespace = queryNamespace(config.namespace);
+      const execute = config.execute;
+      if (typeof execute !== 'function') throw new TypeError('query executor must be a function');
+      return Object.freeze({ ${infiniteEntries.join(',')} });
+    }`
+        : ''
     }`;
 }
 
@@ -370,9 +437,13 @@ export async function render(
   const outputs: Record<string, string> = {
     'runtime.ts': `${banner}${helper}`,
   };
-  if (clients.some((client) => client.queries.length > 0))
+  if (
+    clients.some(
+      (client) => client.queries.length + client.infiniteQueries.length > 0,
+    )
+  )
     outputs['query-runtime.ts'] =
-      `${banner}${(await readFile(new URL('./query-runtime.ts', import.meta.url), 'utf8')).replace("from './runtime.js'", "from './runtime.ts'")}`;
+      `${banner}${(await readFile(new URL('./query-runtime.ts', import.meta.url), 'utf8')).replaceAll("from './runtime.js'", "from './runtime.ts'")}`;
   if (
     clients.some(
       (client) =>

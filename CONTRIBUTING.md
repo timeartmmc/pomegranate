@@ -14,8 +14,8 @@ Bun owns repository dependency installation, script dispatch, and tarball
 packaging; `bun.lock` is the sole lockfile. Keep development Node types on the
 Node 26 major. CI runs the complete verification command on Node 26 and on the
 advertised Node 22.18.0 and 24.0.0 minimums. Use `bun run test` to invoke the
-declared Node test command. Consumer requirements belong in the
-[README](README.md#use-pom-in-a-project).
+declared Node test command with a 30-second default timeout. Consumer
+requirements belong in the [README](README.md#use-pom-in-a-project).
 
 `verify` checks formatting, builds the package, prepares generated test signatures,
 and runs strict typechecking and type-aware lint before the compiler and runtime
@@ -36,12 +36,35 @@ cleanup and compiles generated clients with `noPropertyAccessFromIndexSignature`
 
 Query checks exercise generated factories with TanStack Query Core and React
 Query types, including cache identities, scalar normalization, exact response
-statuses, malformed executor evidence, cancellation on observer unsubscription,
-executor errors, JSON hydration, and repeated-fetch map integrity in caches and
-observer selections. The packed check first generates queries
-without TanStack installed, then installs the minimum supported Query Core version
-and runs the generated integration after removing the compiler. Core-only consumers must not
-require the optional query dependency.
+statuses, malformed executor evidence, cancellation, executor errors, JSON
+hydration, and repeated-fetch map integrity in caches and observer selections.
+Mounted integration tests bundle fresh generated modules with React DOM and run
+real `useQuery` and `useInfiniteQuery` hooks in Chromium. Synthetic executors exercise skipped-to-enabled
+transitions, input and context changes, scoped operation invalidation, refetch
+failures, map selections, and unmount cancellation, including ignored cancellation
+and late responses. They need no external application or backend.
+
+Infinite-query checks cover empty and encoded cursors, retained cursor cycles,
+base-input snapshots, exact statuses, failed later pages, direct Query Client
+fetch/ensure/prefetch calls, cancellation, JSON hydration, cache-family isolation,
+whole-list refetches, page eviction, concurrent next-page calls, scoped
+invalidation, and unsupported binding shapes. The packed consumer repeats the shared
+acceptance checks after removing the compiler. Declaration checks include
+infinite factories, page collections, item selectors, and an application's
+registered `unknown` error type.
+
+The packed check first generates queries without TanStack installed, then installs
+the minimum supported Query Core version and runs the generated integration after
+removing the compiler. Core-only consumers must not require the optional query
+dependency.
+
+Query declaration checks emit generated modules and inferred application exports
+of factories, enabled and skippable options, keys, and operation filters, then
+typecheck a separate consumer against the emitted `.d.ts` files. They retain
+positive and expected-error type cases and verify that the consumer resolves no
+original generated sources. Source tests
+use the pinned TypeScript release; the packed check repeats this with TypeScript
+5.7.3 after removing the compiler.
 The query typecheck without DOM libraries supplies the platform's `VoidFunction`
 declaration explicitly and keeps dependency declaration checking enabled.
 

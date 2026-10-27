@@ -31,7 +31,11 @@ import {
 } from '../test/multipart-fixture.ts';
 import { schemaFixture, standaloneSelection } from '../test/schema-fixture.ts';
 import { symbolFixture } from '../test/symbol-fixture.ts';
-import { queryFixture, querySelection } from '../test/query-fixture.ts';
+import {
+  infiniteFixture,
+  infiniteSelection,
+} from '../test/infinite-fixture.ts';
+import { verifyQueryDeclarations } from '../test/query-declarations.ts';
 
 const exec = promisify(execFile);
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -122,6 +126,7 @@ try {
           'package.json',
           'LICENSE',
           'README.md',
+          'QUERIES.md',
           'ARCHITECTURE.md',
           'CONTRIBUTING.md',
         ].includes(path),
@@ -140,6 +145,8 @@ try {
     'symbol-fixture.ts',
     'deep-fixture.ts',
     'query-checks.ts',
+    'infinite-checks.ts',
+    'infinite-lifecycle-checks.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, 'verification', name));
   await writeFile(
@@ -270,6 +277,7 @@ try {
     'multipart-types.ts',
     'symbol-types.ts',
     'query-types.ts',
+    'infinite-types.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, name));
   await writeFile(
@@ -338,7 +346,7 @@ try {
   );
   await writeFile(
     join(consumer, 'query-openapi.json'),
-    JSON.stringify(queryFixture()),
+    JSON.stringify(infiniteFixture()),
   );
   await writeFile(
     join(consumer, 'query-pom.json'),
@@ -346,7 +354,7 @@ try {
       version: 2,
       openapi: './query-openapi.json',
       output: './query-generated',
-      ...querySelection,
+      ...infiniteSelection,
     }),
   );
   // The optional integration is generated without loading TanStack or React.
@@ -718,12 +726,24 @@ try {
     await assert.rejects(import('yaml'), {code:'ERR_MODULE_NOT_FOUND'});
   `,
   ]);
+  await verifyQueryDeclarations(
+    consumer,
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+    join(repo, 'test/query-types.ts'),
+    join(repo, 'test/infinite-types.ts'),
+  );
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
     import {createQueries, QueryResponseError} from './query-generated/client.consumer.queries.ts';
     import {verifyQueries} from './verification/query-checks.ts';
     await verifyQueries(createQueries, QueryResponseError);
+    import {createInfiniteQueries} from './query-generated/client.consumer.queries.ts';
+    import {verifyInfiniteQueries} from './verification/infinite-checks.ts';
+    await verifyInfiniteQueries(createInfiniteQueries, QueryResponseError);
+    import * as infiniteModule from './query-generated/client.consumer.queries.ts';
+    import {verifyInfiniteLifecycle} from './verification/infinite-lifecycle-checks.ts';
+    await verifyInfiniteLifecycle(infiniteModule);
     import {operations} from './generated/client.consumer.ts';
     import {operations as schemaOperations, RequestValidationError as SchemaError} from './schema-generated/client.samples.ts';
     import {schema as message} from './schema-generated/standalone.message.ts';
@@ -761,6 +781,12 @@ try {
     import {createQueries, QueryResponseError} from './.build/query-generated/client.consumer.queries.js';
     import {verifyQueries} from './verification/query-checks.ts';
     await verifyQueries(createQueries, QueryResponseError);
+    import {createInfiniteQueries} from './.build/query-generated/client.consumer.queries.js';
+    import {verifyInfiniteQueries} from './verification/infinite-checks.ts';
+    await verifyInfiniteQueries(createInfiniteQueries, QueryResponseError);
+    import * as infiniteModule from './.build/query-generated/client.consumer.queries.js';
+    import {verifyInfiniteLifecycle} from './verification/infinite-lifecycle-checks.ts';
+    await verifyInfiniteLifecycle(infiniteModule);
     import {operations, RequestValidationError} from './.build/generated/client.consumer.js';
     import {operations as schemaOperations, RequestValidationError as SchemaError} from './.build/schema-generated/client.samples.js';
     import {verifySchemas,verifyStandalone} from './verification/schema-fixture.ts';

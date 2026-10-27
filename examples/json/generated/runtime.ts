@@ -310,7 +310,7 @@ export type MultipartField = Readonly<{
   required: boolean;
 }>;
 type Primitive = string | number | boolean;
-type RequestParts = {
+export type RequestParts = {
   path?: Readonly<Record<string, Primitive>> | undefined;
   query?:
     | Readonly<
@@ -737,6 +737,20 @@ function headerValidator(
   };
 }
 
+export function validateOptions<O extends z.ZodType>(
+  schema: O,
+  input: unknown,
+  operationId: string,
+): z.output<O> {
+  const parsed = schema.safeParse(input);
+  if (!parsed.success)
+    throw new RequestValidationError(
+      operationId,
+      validationIssues(parsed.error.issues),
+    );
+  return parsed.data;
+}
+
 export function defineOperation<
   const O extends z.ZodType<RequestParts | undefined>,
   const R extends Responses,
@@ -768,14 +782,9 @@ export function defineOperation<
       throw new RequestValidationError(definition.operationId, [
         { path: [], message: 'expected at most one options argument' },
       ]);
-    const parsed = definition.options.safeParse(args[0]);
-    if (!parsed.success) {
-      throw new RequestValidationError(
-        definition.operationId,
-        validationIssues(parsed.error.issues),
-      );
-    }
-    const options: RequestParts = parsed.data ?? {};
+    const options: RequestParts =
+      validateOptions(definition.options, args[0], definition.operationId) ??
+      {};
     if (definition.bodyKind === 'multipart')
       validateMultipart(options.body, multipart, definition.operationId);
     const serialized = serializeParameters(

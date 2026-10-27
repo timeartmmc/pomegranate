@@ -271,6 +271,7 @@ void test('wire escaping and cache identities remain distinct over a synthetic U
       context: {},
       input: { path: { id: 'a/b' }, query: { filter } },
     });
+    assert.ok(key[5] !== null);
     assert.equal(
       new URL(key[5], 'https://synthetic.invalid').searchParams.get('filter'),
       filter,
@@ -282,6 +283,67 @@ void test('wire escaping and cache identities remain distinct over a synthetic U
       `distinct filter ${JSON.stringify(filter)}`,
     );
     seen.add(encoded);
+  }
+});
+
+void test('finite numeric boundaries, booleans and repeated queries agree between wire requests and cache identities', async () => {
+  const client = queryClient();
+  const sent: string[] = [];
+  const queries = module.createQueries({
+    namespace: 'wire-scalars',
+    execute: async (request) => {
+      sent.push(request.url);
+      return item(request.url);
+    },
+  });
+  const numbers: readonly (readonly [number, string])[] = [
+    [-0, '0'],
+    [0, '0'],
+    [Number.MIN_VALUE, '5e-324'],
+    [-Number.MIN_VALUE, '-5e-324'],
+    [Number.MAX_VALUE, '1.7976931348623157e+308'],
+    [0.1, '0.1'],
+    [1e-7, '1e-7'],
+    [1e21, '1e+21'],
+  ];
+  const keys = new Map<string, string>();
+  try {
+    for (const [count, serialized] of numbers) {
+      for (const active of [false, true]) {
+        for (const tags of [[], ['', 'a&b', '🔥']]) {
+          const options = queries.readItem.options({
+            context: {},
+            input: {
+              path: { id: 'edge/🔥' },
+              query: { count, active, tags },
+            },
+          });
+          const result = await client.fetchQuery({
+            ...options,
+            staleTime: Infinity,
+          });
+          const wire = new URL(result.data.label, 'https://synthetic.invalid');
+          assert.equal(wire.pathname, '/items/edge%2F%F0%9F%94%A5');
+          assert.deepEqual(wire.searchParams.getAll('count'), [serialized]);
+          assert.deepEqual(wire.searchParams.getAll('active'), [
+            active ? 'true' : 'false',
+          ]);
+          assert.deepEqual(wire.searchParams.getAll('tags'), tags);
+          assert.equal([...wire.searchParams].length, 2 + tags.length);
+          const key = JSON.stringify(options.queryKey);
+          const previous = keys.get(result.data.label);
+          if (previous === undefined) {
+            assert.ok(![...keys.values()].includes(key));
+            keys.set(result.data.label, key);
+          } else assert.equal(key, previous);
+        }
+      }
+    }
+    // Signed-zero inputs have the same wire request and share its cache entry.
+    assert.equal(keys.size, (numbers.length - 1) * 4);
+    assert.equal(sent.length, keys.size);
+  } finally {
+    client.clear();
   }
 });
 
@@ -567,6 +629,47 @@ void test('context and argument validation rejects ambiguous or mutable identity
   ]);
 });
 
+void test('query arguments reject accessors and hidden fields without evaluating them', () => {
+  let calls = 0;
+  let reads = 0;
+  const queries = module.createQueries({
+    namespace: 'argument-descriptors',
+    execute: async () => {
+      calls += 1;
+      return { status: 204, headers: {}, body: '' };
+    },
+  });
+  const invalid = [
+    Object.defineProperty({ context: {} }, 'input', {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return undefined;
+      },
+    }),
+    Object.defineProperty({}, 'context', {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return {};
+      },
+    }),
+    Object.defineProperty({ context: {} }, 'input', {
+      value: undefined,
+    }),
+    { context: {}, [Symbol('input')]: undefined },
+  ];
+  for (const value of invalid) {
+    for (const build of [queries.health.key, queries.health.options])
+      assert.throws(() => runtimeInput(build, value), {
+        name: 'TypeError',
+        message: /query arguments must contain enumerable data fields/,
+      });
+  }
+  assert.equal(reads, 0);
+  assert.equal(calls, 0);
+});
+
 void test('exact statuses, response headers, and failures retain protocol evidence', async () => {
   const client = queryClient();
   try {
@@ -632,23 +735,43 @@ void test('exact statuses, response headers, and failures retain protocol eviden
       });
       assert.equal(client.getQueryData(options.queryKey), undefined);
     }
+    const observed = {
+      status: 202,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Request-ID': 'request',
+        'X-Unmodeled': 'retained',
+        'X-Trace': 'first',
+        'x-trace': 'second',
+      },
+      body: '{"state":"pending","reference":"reference","extra":true}',
+    };
     const queries = module.createQueries({
       namespace: 'pending',
-      execute: async () => ({
-        status: 202,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Request-ID': 'request',
-        },
-        body: '{"state":"pending","reference":"reference","extra":true}',
-      }),
+      execute: async () => observed,
     });
-    const result = await client.fetchQuery(
-      queries.readOutcome.options({ context: {} }),
-    );
+    const options = queries.readOutcome.options({ context: {} });
+    const result = await client.fetchQuery(options);
     assert.equal(result.status, 202);
     assert.deepEqual(result.data, { state: 'pending', reference: 'reference' });
+    const expectedHeaders = {
+      'content-type': 'application/json',
+      'x-request-id': 'request',
+      'x-unmodeled': 'retained',
+      'x-trace': 'first, second',
+    };
+    assert.deepEqual({ ...result.headers }, expectedHeaders);
+    assert.deepEqual(
+      { ...result.validatedHeaders },
+      {
+        'x-request-id': 'request',
+      },
+    );
+    observed.headers['X-Request-ID'] = 'changed';
+    observed.headers['X-Unmodeled'] = 'changed';
+    assert.deepEqual({ ...result.headers }, expectedHeaders);
     assert.equal(result.validatedHeaders['x-request-id'], 'request');
+    assert.equal(client.getQueryData(options.queryKey), result);
   } finally {
     client.clear();
   }

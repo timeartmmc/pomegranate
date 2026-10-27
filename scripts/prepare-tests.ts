@@ -10,6 +10,10 @@ import {
 import { schemaFixture, standaloneSelection } from '../test/schema-fixture.ts';
 import { symbolFixture } from '../test/symbol-fixture.ts';
 import { queryFixture, querySelection } from '../test/query-fixture.ts';
+import {
+  infiniteFixture,
+  infiniteSelection,
+} from '../test/infinite-fixture.ts';
 
 // Give the test program the real generated signatures. Runtime tests still
 // compile into fresh temporary directories, and independent consumer fixtures
@@ -30,6 +34,7 @@ const fixtures: [string, unknown, CompileOptions][] = [
   ['deep', deepFixture(), { clients: ['deep'] }],
   ['symbols', symbolFixture(), { clients: ['symbols', 'other'] }],
   ['queries', queryFixture(), querySelection],
+  ['infinite', infiniteFixture(), infiniteSelection],
 ];
 // Keep cleanup unsuffixed: a final slash would follow a directory symlink.
 const root = new URL('../test/.generated', import.meta.url);

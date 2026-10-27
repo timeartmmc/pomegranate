@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { QueryClient } from '@tanstack/query-core';
+import {
+  QueryClient,
+  skipToken,
+  dehydrate,
+  hydrate,
+} from '@tanstack/query-core';
 
 type QueryModule =
   typeof import('./.generated/queries/client.consumer.queries.ts');
@@ -67,6 +72,56 @@ export async function verifyQueries(
     assert.equal(bodyless.status, 204);
     assert.equal(bodyless.data, undefined);
     assert.equal(bodyless.kind, 'success');
+
+    // Run these against source AND emitted JavaScript from the packed install.
+    const skipped = queries.readItem.options({
+      context: args.context,
+      input: skipToken,
+    });
+    assert.equal(skipped.queryFn, skipToken);
+    assert.notDeepEqual(skipped.queryKey, options.queryKey);
+    assert.throws(
+      () =>
+        queries.readItem.options({ context: {}, input: { path: { id: '' } } }),
+      { name: 'RequestValidationError' },
+    );
+    const restored = new QueryClient();
+    try {
+      hydrate(
+        restored,
+        JSON.parse(JSON.stringify(dehydrate(client))) as unknown,
+      );
+      for (const cache of [client, restored]) {
+        const exact = queries.readItem.filter({ context: { ...args.context } });
+        assert.equal(cache.getQueryCache().findAll(exact).length, 1);
+        assert.equal(
+          cache.getQueryCache().findAll(
+            queries.readItem.filter({
+              context: { session: 'synthetic-session-1' },
+            }),
+          ).length,
+          0,
+        );
+        assert.equal(
+          cache
+            .getQueryCache()
+            .findAll(queries.readItem.filter({ allContexts: true })).length,
+          1,
+        );
+        await cache.invalidateQueries({ ...exact, refetchType: 'none' });
+        assert.equal(
+          cache.getQueryState(options.queryKey)?.isInvalidated,
+          true,
+        );
+        assert.equal(
+          cache.getQueryState(queries.health.key({ context: {} }))
+            ?.isInvalidated,
+          false,
+        );
+      }
+    } finally {
+      restored.clear();
+    }
 
     let zeroCalls = 0;
     const zeros = createQueries({

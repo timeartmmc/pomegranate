@@ -36,6 +36,7 @@
     "test/schema-composition-types.ts",
     "test/multipart-types.ts",
     "test/symbol-types.ts",
-    "test/query-types.ts"
+    "test/query-types.ts",
+    "test/infinite-types.ts"
   ]
 }

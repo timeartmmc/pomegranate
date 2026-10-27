@@ -6,7 +6,7 @@ import {
   text,
   validHeaderName,
 } from './diagnostics.js';
-import type { Direction } from './model.js';
+import type { Direction, InfiniteQueryBinding } from './model.js';
 import { surfaceNames } from './policy.js';
 
 export type CompileOptions = Readonly<{
@@ -14,6 +14,9 @@ export type CompileOptions = Readonly<{
   transportHeaders?: readonly string[];
   targets?: Readonly<Record<string, 'browser' | 'native'>>;
   queries?: Readonly<Record<string, readonly string[]>>;
+  infiniteQueries?: Readonly<
+    Record<string, Readonly<Record<string, InfiniteQueryBinding>>>
+  >;
   standalone?: Readonly<
     Record<string, { readonly schema: string; readonly usage: Direction }>
   >;
@@ -24,6 +27,7 @@ export const selectionKeys = [
   'standalone',
   'targets',
   'queries',
+  'infiniteQueries',
 ] as const;
 export type RootSelection = Readonly<{
   name: string;
@@ -35,6 +39,9 @@ export type Selection = Readonly<{
   transportHeaders: readonly string[];
   targets: Readonly<Record<string, 'browser' | 'native'>>;
   queries: Readonly<Record<string, readonly string[]>>;
+  infiniteQueries: Readonly<
+    Record<string, Readonly<Record<string, InfiniteQueryBinding>>>
+  >;
   standalone: readonly RootSelection[];
 }>;
 
@@ -108,5 +115,48 @@ export function parseSelection(value: Record<string, unknown>): Selection {
       return [name, [...operations].sort()];
     }),
   );
-  return { clients, transportHeaders, targets, standalone, queries };
+  const rawInfinite = record(
+    value.infiniteQueries === undefined ? {} : value.infiniteQueries,
+    'infiniteQueries',
+  );
+  const infiniteQueries = Object.fromEntries(
+    Object.keys(rawInfinite)
+      .sort()
+      .map((name) => {
+        const location = `infiniteQueries.${name}`;
+        if (!clients.includes(name))
+          fail(location, 'infinite queries must name a selected client');
+        const operations = record(rawInfinite[name], location);
+        if (Object.keys(operations).length === 0)
+          fail(location, 'expected at least one infinite query');
+        return [
+          name,
+          Object.fromEntries(
+            Object.keys(operations)
+              .sort()
+              .map((id) => {
+                const path = `${location}.${id}`;
+                const binding = record(operations[id], path);
+                keys(binding, ['cursor', 'nextCursor', 'items'], path);
+                return [
+                  id,
+                  {
+                    cursor: text(binding.cursor, `${path}.cursor`),
+                    nextCursor: text(binding.nextCursor, `${path}.nextCursor`),
+                    items: text(binding.items, `${path}.items`),
+                  },
+                ];
+              }),
+          ),
+        ];
+      }),
+  );
+  return {
+    clients,
+    transportHeaders,
+    targets,
+    standalone,
+    queries,
+    infiniteQueries,
+  };
 }
