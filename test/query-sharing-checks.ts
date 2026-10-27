@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  InfiniteQueryObserver,
   QueryClient,
   QueryObserver,
   dehydrate,
@@ -225,6 +226,184 @@ export const querySharingChecks = {
       assert.notEqual(hiddenOldAlias.same.leaf, hiddenOldAlias.other);
       assert.ok(Object.is(share(0, -0), -0));
       assert.ok(Object.is(share(-0, 0), 0));
+    },
+
+  'relocated nodes cannot merge independent objects in the next tree': async ({
+    shareQueryData: share,
+  }) => {
+    const retained = { value: 1 };
+    for (const next of [
+      { a: { value: 1 }, b: retained },
+      { b: retained, a: { value: 1 } },
+    ]) {
+      const result = share({ a: retained }, next);
+      assert.deepEqual(result, next);
+      assert.notEqual(result.a, result.b);
+      assert.notEqual(next.a, next.b);
+    }
+
+    const previous = [
+      { id: 'a', attributes: { value: 0 } },
+      { id: 'b', attributes: { value: 1 } },
+      { id: 'c', attributes: { value: 1 } },
+    ];
+    for (const next of [
+      [{ id: 'new', attributes: { value: 0 } }, ...previous],
+      previous.slice(1),
+      [previous[2]!, previous[0]!, previous[1]!],
+    ]) {
+      const before = JSON.stringify(next);
+      const result = share(previous, next);
+      assert.deepEqual(result, next);
+      assert.equal(
+        new Set(result.map((item) => item.attributes)).size,
+        next.length,
+      );
+      assert.equal(JSON.stringify(next), before);
+    }
+  },
+
+  'cache updates preserve distinct fresh and relocated objects': async (
+    module,
+  ) => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { gcTime: Infinity } },
+    });
+    const queries = module.createQueries({
+      namespace: 'relocated-cache-data',
+      execute: async () => observed({ a: { value: 1 } }),
+    });
+    const options = queries.readMap.options({ context: {} });
+    try {
+      await client.fetchQuery(options);
+      client.setQueryData(options.queryKey, (previous) => {
+        if (previous?.status !== 200) return previous;
+        const retained = previous.data['a'];
+        assert.ok(retained !== undefined);
+        return { ...previous, data: { a: { value: 1 }, b: retained } };
+      });
+      const data = record(client.getQueryData(options.queryKey)!.data);
+      assert.deepEqual(data, { a: { value: 1 }, b: { value: 1 } });
+      assert.notEqual(data['a'], data['b']);
+    } finally {
+      client.clear();
+    }
+  },
+
+  'filtered selections preserve independent objects from retained items':
+    async (module) => {
+      const client = new QueryClient({
+        defaultOptions: { queries: { gcTime: Infinity } },
+      });
+      const queries = module.createInfiniteQueries({
+        namespace: 'filtered-shared-items',
+        execute: async () =>
+          observed({
+            results: [
+              { id: 'a', label: 'a', attributes: { value: 0 } },
+              { id: 'b', label: 'b', attributes: { value: 1 } },
+              { id: 'c', label: 'c', attributes: { value: 1 } },
+            ],
+            continuation: null,
+          }),
+      });
+      const options = queries.listItems.options({
+        context: {},
+        input: { path: { collection: 'items' } },
+      });
+      const observer = new InfiniteQueryObserver(client, {
+        ...options,
+        enabled: false,
+        select: queries.listItems.items,
+      });
+      const unsubscribe = observer.subscribe(() => {});
+      try {
+        await client.fetchInfiniteQuery(options);
+        observer.setOptions({
+          ...options,
+          enabled: false,
+          select: (data) => queries.listItems.items(data).slice(1),
+        });
+        const items = observer.getCurrentResult().data!;
+        assert.deepEqual(
+          items.map((item) => item.id),
+          ['b', 'c'],
+        );
+        assert.notEqual(items[0]!.attributes, items[1]!.attributes);
+      } finally {
+        unsubscribe();
+        client.clear();
+      }
+    },
+
+  'page eviction preserves independent nested objects in caches and selections':
+    async (module) => {
+      const client = new QueryClient({
+        defaultOptions: { queries: { gcTime: Infinity } },
+      });
+      let calls = 0;
+      const queries = module.createInfiniteQueries({
+        namespace: 'evicted-shared-items',
+        execute: async (request) => {
+          calls++;
+          const cursor = new URL(
+            request.url,
+            'https://synthetic.invalid',
+          ).searchParams.get('after');
+          const index = cursor === null ? 0 : Number(cursor);
+          return observed({
+            results: [
+              {
+                id: String(index),
+                label: 'item',
+                attributes: { first: index === 0 },
+              },
+            ],
+            continuation: index < 3 ? String(index + 1) : null,
+          });
+        },
+      });
+      const options = {
+        ...queries.listItems.options({
+          context: {},
+          input: { path: { collection: 'items' } },
+        }),
+        maxPages: 2,
+      };
+      const observer = new InfiniteQueryObserver(client, {
+        ...options,
+        enabled: false,
+        select: queries.listItems.items,
+      });
+      const unsubscribe = observer.subscribe(() => {});
+      try {
+        await client.fetchInfiniteQuery({ ...options, pages: 2 });
+        for (const index of [2, 3]) {
+          const selected = await observer.fetchNextPage();
+          assert.equal(selected.status, 'success');
+          const cached = client.getQueryData(options.queryKey)!;
+          assert.deepEqual(cached.pageParams, [
+            String(index - 1),
+            String(index),
+          ]);
+          const items = queries.listItems.items(cached);
+          assert.deepEqual(
+            items.map((item) => item.id),
+            [String(index - 1), String(index)],
+          );
+          assert.notEqual(items[0]!.attributes, items[1]!.attributes);
+          assert.notEqual(
+            selected.data[0]!.attributes,
+            selected.data[1]!.attributes,
+          );
+          assert.ok(Object.isFrozen(cached.pages[0]));
+          assert.equal(cached.pages[0]!.headers['__proto__'], 'original');
+        }
+        assert.equal(calls, 4);
+      } finally {
+        unsubscribe();
+        client.clear();
+      }
     },
 
   'deep JSON trees share without recursion or truncating changed leaves':

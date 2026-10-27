@@ -149,6 +149,7 @@ function share<T>(previous: unknown, next: T, skipIdentical: boolean): T {
   if (!current || !prior) return next;
   const seenNext = new WeakSet<object>([current.value]);
   const seenPrevious = new WeakSet<object>([prior.value]);
+  const seenShared = new WeakSet<object>();
   const stack = [frame(prior, current)];
   let skipped = false;
   let replaced = false;
@@ -165,7 +166,10 @@ function share<T>(previous: unknown, next: T, skipIdentical: boolean): T {
           : active.replacements === undefined
             ? active.current.value
             : copy(active);
-      if (shared === undefined) return next;
+      // Separate input trees can still merge nodes when old references move.
+      // Distinct frames must produce distinct objects in the shared tree too.
+      if (shared === undefined || seenShared.has(shared)) return next;
+      seenShared.add(shared);
       if (shared !== active.current.value) replaced = true;
       if (skipped && replaced) return share(previous, next, false);
       stack.pop();
