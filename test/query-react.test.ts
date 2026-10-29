@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -13,6 +13,7 @@ import { compile } from '../dist/index.js';
 import type { MountedCase } from './query-react-app.ts';
 import { infiniteFixture, infiniteSelection } from './infinite-fixture.ts';
 import { generatedWorkspace } from './generated-workspace.ts';
+import { offsetFixture, offsetSelection } from './offset-fixture.ts';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const exec = promisify(execFile);
@@ -43,6 +44,11 @@ before(async () => {
     await compile(infiniteFixture(), infiniteSelection),
     'query-generated',
   );
+  await mkdir(join(root, 'offset-generated'));
+  for (const [name, source] of Object.entries(
+    await compile(offsetFixture(), offsetSelection),
+  ))
+    await writeFile(join(root, 'offset-generated', name), source);
   const application = await readFile(
     join(repo, 'test/query-react-app.ts'),
     'utf8',
@@ -51,7 +57,8 @@ before(async () => {
     join(root, 'query-react-app.ts'),
     application
       .replaceAll('./.generated/queries/', './query-generated/')
-      .replaceAll('./.generated/infinite/', './query-generated/'),
+      .replaceAll('./.generated/infinite/', './query-generated/')
+      .replaceAll('./.generated/offset/', './offset-generated/'),
   );
   // Bun is the repository's pinned bundler; the tested hooks run in Chromium
   // with React DOM, independently of Node's browser-global emulation.
@@ -85,6 +92,10 @@ after(async () => {
 });
 
 const cases: readonly (readonly [MountedCase, string])[] = [
+  [
+    'offset',
+    'mounted numeric offset queries skip, select short pages, retain failures and recover',
+  ],
   [
     'sharing',
     'mounted queries reuse equal data and render selected body changes',

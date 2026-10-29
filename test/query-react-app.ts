@@ -14,6 +14,7 @@ import {
 } from './.generated/queries/client.consumer.queries.ts';
 import { createQueries as createStaffQueries } from './.generated/queries/client.staff.queries.ts';
 import { createInfiniteQueries } from './.generated/infinite/client.consumer.queries.ts';
+import { createInfiniteQueries as createOffsetQueries } from './.generated/offset/client.consumer.queries.ts';
 import type {
   CacheContext,
   QueryExecutor,
@@ -915,7 +916,98 @@ async function infiniteSharing() {
   }
 }
 
+async function offset() {
+  const client = queryClient();
+  const seen: number[] = [];
+  let mismatch = true;
+  const queries = createOffsetQueries({
+    namespace: 'mounted-offset',
+    execute: async (request) => {
+      const start = Number(
+        new URL(request.url, 'https://synthetic.invalid').searchParams.get(
+          'start',
+        ),
+      );
+      seen.push(start);
+      const ids =
+        start === 0 ? ['first', 'second'] : start === 2 ? ['short'] : ['last'];
+      return {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          start: start === 3 && mismatch ? 0 : start,
+          count: 4,
+          size: 2,
+          next: null,
+          entries: ids.map((id) => ({ id })),
+        }),
+      };
+    },
+  });
+  let input: { path: { category: string } } | typeof skipToken = skipToken;
+  const mounted = await mountHook(client, () =>
+    useInfiniteQuery({
+      ...queries.listRecords.options({ context: {}, input }),
+      select: queries.listRecords.items,
+    }),
+  );
+  try {
+    same(seen, [], 'Skipped numeric pagination must remain inert');
+    input = { path: { category: 'records' } };
+    await mounted.update();
+    await until(() => mounted.result.isSuccess, 'initial offset page');
+    same(
+      mounted.result.data?.map((item) => item.id),
+      ['first', 'second'],
+      'Offset selections retain typed items',
+    );
+    await act(async () => {
+      await mounted.result.fetchNextPage();
+    });
+    await until(() => mounted.result.data?.length === 3, 'short offset page');
+    const previous = mounted.result.data;
+    await act(async () => {
+      await mounted.result.fetchNextPage();
+    });
+    check(
+      mounted.result.isFetchNextPageError &&
+        queries.listRecords.isError(mounted.result.error),
+      'An offset mismatch must surface as scoped page failure',
+    );
+    check(
+      mounted.result.data === previous,
+      'Offset failures must retain the previous selection',
+    );
+    mismatch = false;
+    await act(async () => {
+      await mounted.result.fetchNextPage();
+    });
+    await until(() => mounted.result.data?.length === 4, 'offset recovery');
+    same(
+      seen,
+      [0, 2, 3, 3],
+      'Numeric traversal advances by actual returned count',
+    );
+    check(
+      !mounted.result.hasNextPage,
+      'The response total must terminate traversal',
+    );
+    const cached = client.getQueryData(
+      queries.listRecords.key({ context: {}, input }),
+    );
+    same(
+      cached?.pageParams,
+      [0, 2, 3],
+      'Mounted cache identity must retain numeric parameters',
+    );
+  } finally {
+    await mounted.unmount();
+    client.clear();
+  }
+}
+
 const cases = {
+  offset,
   skip,
   identity,
   filters,

@@ -37,6 +37,7 @@
     "test/multipart-types.ts",
     "test/symbol-types.ts",
     "test/query-types.ts",
-    "test/infinite-types.ts"
+    "test/infinite-types.ts",
+    "test/offset-types.ts"
   ]
 }

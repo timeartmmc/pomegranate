@@ -35,6 +35,7 @@ import {
   infiniteFixture,
   infiniteSelection,
 } from '../test/infinite-fixture.ts';
+import { offsetFixture, offsetSelection } from '../test/offset-fixture.ts';
 import { verifyQueryDeclarations } from '../test/query-declarations.ts';
 
 const exec = promisify(execFile);
@@ -150,6 +151,7 @@ try {
     'query-sharing-checks.ts',
     'infinite-checks.ts',
     'infinite-lifecycle-checks.ts',
+    'offset-checks.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, 'verification', name));
   await writeFile(
@@ -272,6 +274,7 @@ try {
     'deep-generated/*.ts',
     'symbol-generated/*.ts',
     'query-generated/*.ts',
+    'offset-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
   for (const name of [
@@ -281,6 +284,7 @@ try {
     'symbol-types.ts',
     'query-types.ts',
     'infinite-types.ts',
+    'offset-types.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, name));
   await writeFile(
@@ -364,6 +368,25 @@ try {
   // Only consumers that select it need to install its declared dependencies.
   await run(binary, ['generate', '--config', join(consumer, 'query-pom.json')]);
   await run(binary, ['check', '--config', join(consumer, 'query-pom.json')]);
+  await writeFile(
+    join(consumer, 'offset-openapi.json'),
+    JSON.stringify(offsetFixture()),
+  );
+  await writeFile(
+    join(consumer, 'offset-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './offset-openapi.json',
+      output: './offset-generated',
+      ...offsetSelection,
+    }),
+  );
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'offset-pom.json'),
+  ]);
+  await run(binary, ['check', '--config', join(consumer, 'offset-pom.json')]);
   await run('npm', [
     'install',
     '--ignore-scripts',
@@ -395,7 +418,11 @@ try {
         types: ['node'],
         noEmit: true,
       },
-      include: ['query-generated/*.ts', 'query-native-globals.d.ts'],
+      include: [
+        'query-generated/*.ts',
+        'offset-generated/*.ts',
+        'query-native-globals.d.ts',
+      ],
     }),
   );
   await run(process.execPath, [
@@ -735,6 +762,7 @@ try {
     join(consumer, 'node_modules/typescript/bin/tsc'),
     join(repo, 'test/query-types.ts'),
     join(repo, 'test/infinite-types.ts'),
+    join(repo, 'test/offset-types.ts'),
   );
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
@@ -753,6 +781,9 @@ try {
     await verifyQuerySharing(infiniteModule);
     import {verifyInfiniteLifecycle} from './verification/infinite-lifecycle-checks.ts';
     await verifyInfiniteLifecycle(infiniteModule);
+    import * as offsetModule from './offset-generated/client.consumer.queries.ts';
+    import {verifyOffsets} from './verification/offset-checks.ts';
+    await verifyOffsets(offsetModule);
     import {operations} from './generated/client.consumer.ts';
     import {operations as schemaOperations, RequestValidationError as SchemaError} from './schema-generated/client.samples.ts';
     import {schema as message} from './schema-generated/standalone.message.ts';
@@ -801,6 +832,9 @@ try {
     await verifyQuerySharing(infiniteModule);
     import {verifyInfiniteLifecycle} from './verification/infinite-lifecycle-checks.ts';
     await verifyInfiniteLifecycle(infiniteModule);
+    import * as offsetModule from './.build/offset-generated/client.consumer.queries.js';
+    import {verifyOffsets} from './verification/offset-checks.ts';
+    await verifyOffsets(offsetModule);
     import {operations, RequestValidationError} from './.build/generated/client.consumer.js';
     import {operations as schemaOperations, RequestValidationError as SchemaError} from './.build/schema-generated/client.samples.js';
     import {verifySchemas,verifyStandalone} from './verification/schema-fixture.ts';

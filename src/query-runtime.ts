@@ -38,6 +38,7 @@ import type {
   ProtocolResult,
   Responses,
   RequestParts,
+  ProtocolIssue,
 } from './runtime.ts';
 import { validateOptions } from './runtime.ts';
 import type { z } from 'zod';
@@ -499,52 +500,72 @@ export function defineQuery<Input, const R extends Responses>(
 }
 
 type Cursor = string | null;
+type Pagination = string | number;
+type PageParameter<P extends Pagination> = P extends number ? number : Cursor;
+type InitialPageParameter<P extends Pagination> = P extends number ? 0 : null;
+type InfinitePrefix<P extends Pagination> = P extends number
+  ? 'pom-offset-v1'
+  : 'pom-infinite-v1';
 
-export interface InfiniteQueryKey<R extends Responses>
+export interface InfiniteQueryKey<
+  R extends Responses,
+  P extends Pagination = string,
+>
   extends
-    KeyParts<'pom-infinite-v1'>,
-    DataTag<unknown, InfiniteData<Success<R>, Cursor>> {}
+    KeyParts<InfinitePrefix<P>>,
+    DataTag<unknown, InfiniteData<Success<R>, PageParameter<P>>> {}
 
-export interface InfiniteOperationFilter extends ScopedOperationFilter<'pom-infinite-v1'> {}
+export interface InfiniteOperationFilter<
+  P extends Pagination = string,
+> extends ScopedOperationFilter<InfinitePrefix<P>> {}
 
-export interface SkippableInfiniteQueryOptions<R extends Responses> {
-  readonly queryKey: InfiniteQueryKey<R>;
-  readonly initialPageParam: null;
+export interface SkippableInfiniteQueryOptions<
+  R extends Responses,
+  P extends Pagination = string,
+> {
+  readonly queryKey: InfiniteQueryKey<R, P>;
+  readonly initialPageParam: InitialPageParameter<P>;
   readonly retry: false;
   readonly structuralSharing: typeof shareQueryData;
   readonly queryFn:
     | ((
-        context: QueryFunctionContext<InfiniteQueryKey<R>, Cursor>,
+        context: QueryFunctionContext<InfiniteQueryKey<R, P>, PageParameter<P>>,
       ) => Promise<Success<R>>)
     | SkipToken;
   readonly getNextPageParam: (
     lastPage: Success<R>,
     pages: Success<R>[],
-    lastPageParam: Cursor,
-    pageParams: Cursor[],
-  ) => string | undefined;
+    lastPageParam: PageParameter<P>,
+    pageParams: PageParameter<P>[],
+  ) => Exclude<PageParameter<P>, null> | undefined;
 }
 
 export interface InfiniteQueryOptions<
   R extends Responses,
-> extends SkippableInfiniteQueryOptions<R> {
+  P extends Pagination = string,
+> extends SkippableInfiniteQueryOptions<R, P> {
   readonly queryFn: (
-    context: QueryFunctionContext<InfiniteQueryKey<R>, Cursor>,
+    context: QueryFunctionContext<InfiniteQueryKey<R, P>, PageParameter<P>>,
   ) => Promise<Success<R>>;
 }
 
-export interface InfiniteQueryFactory<Input, R extends Responses, Item> {
+export interface InfiniteQueryFactory<
+  Input,
+  R extends Responses,
+  Item,
+  P extends Pagination = string,
+> {
   readonly isError: (error: unknown) => error is TypedQueryResponseError<R>;
-  readonly key: (args: Arguments<Input>) => InfiniteQueryKey<R>;
+  readonly key: (args: Arguments<Input>) => InfiniteQueryKey<R, P>;
   readonly options: {
-    (args: Arguments<Input>): InfiniteQueryOptions<R>;
+    (args: Arguments<Input>): InfiniteQueryOptions<R, P>;
     (
       args: Arguments<Input> | SkippedArguments,
-    ): SkippableInfiniteQueryOptions<R>;
+    ): SkippableInfiniteQueryOptions<R, P>;
   };
-  readonly filter: (scope: OperationScope) => InfiniteOperationFilter;
+  readonly filter: (scope: OperationScope) => InfiniteOperationFilter<P>;
   readonly items: (
-    data: InfiniteData<Success<R>, Cursor> | undefined,
+    data: InfiniteData<Success<R>, PageParameter<P>> | undefined,
   ) => Item[];
 }
 
@@ -562,10 +583,12 @@ export type InfiniteQueryFactoryFor<
   Operation extends QueryOperation,
   Input,
   Field extends string,
+  P extends Pagination = string,
 > = InfiniteQueryFactory<
   Input,
   OperationResponses<Operation>,
-  PageItem<Success<OperationResponses<Operation>>, Field>
+  PageItem<Success<OperationResponses<Operation>>, Field>,
+  P
 >;
 
 export function defineInfiniteQuery<
@@ -582,70 +605,217 @@ export function defineInfiniteQuery<
       items: (page: Success<R>) => Items;
     }>,
 ): InfiniteQueryFactory<z.input<O>, R, Items[number]> {
+  return infiniteFactory<O, R, Items, string>({
+    ...config,
+    parameter: config.cursor,
+    prefix: 'pom-infinite-v1',
+    initialPageParam: null,
+    parsePageParam: (value) => {
+      if (value !== null && typeof value !== 'string')
+        throw new TypeError('page cursor must be a string or null');
+      return value;
+    },
+    nextPageParam: (page) => config.nextCursor(page) ?? undefined,
+  });
+}
+
+type OffsetPage<Items extends readonly unknown[]> = Readonly<{
+  offset: number;
+  limit: number;
+  total: number;
+  items: Items;
+}>;
+type OffsetFields = Readonly<
+  Record<'offset' | 'limit' | 'total' | 'items', string>
+>;
+
+function offsetIssues(
+  page: OffsetPage<readonly unknown[]>,
+  expected: number,
+  fields: OffsetFields,
+): ProtocolIssue[] {
+  const issues: ProtocolIssue[] = [];
+  const issue = (field: keyof OffsetFields, message: string) => {
+    issues.push({ part: 'body', path: [fields[field]], message });
+  };
+  for (const field of ['offset', 'limit', 'total'] as const)
+    if (
+      !Number.isSafeInteger(page[field]) ||
+      page[field] < (field === 'limit' ? 1 : 0)
+    )
+      issue(
+        field,
+        `expected a ${field === 'limit' ? 'positive' : 'nonnegative'} safe integer`,
+      );
+  if (issues.length) return issues;
+  if (page.offset !== expected)
+    issue('offset', 'response offset does not match the requested page');
+  if (page.items.length > page.limit)
+    issue('items', 'returned item count exceeds the response limit');
+  if (!Number.isSafeInteger(page.offset + page.items.length))
+    issue('offset', 'next offset exceeds the safe integer range');
+  return issues;
+}
+
+export function defineOffsetQuery<
+  O extends z.ZodType<RequestParts | undefined>,
+  const R extends Responses,
+  Items extends readonly unknown[],
+>(
+  config: FactoryConfig &
+    Readonly<{
+      operation: { build: (input: never) => PreparedRequest<R, 'none'> };
+      input: O;
+      offset: string;
+      fields: OffsetFields;
+      page: (page: Success<R>) => OffsetPage<Items>;
+    }>,
+): InfiniteQueryFactory<z.input<O>, R, Items[number], number> {
+  return infiniteFactory<O, R, Items, number>({
+    ...config,
+    parameter: config.offset,
+    prefix: 'pom-offset-v1',
+    initialPageParam: 0,
+    parsePageParam: (value) => {
+      if (
+        typeof value !== 'number' ||
+        !Number.isSafeInteger(value) ||
+        value < 0
+      )
+        throw new TypeError('page offset must be a nonnegative safe integer');
+      return value === 0 ? 0 : value;
+    },
+    items: (page) => config.page(page).items,
+    responseIssues: (page, offset) =>
+      offsetIssues(config.page(page), offset, config.fields),
+    nextPageParam: (page, offset) => {
+      const data = config.page(page);
+      // Metadata can also come from application cache updates. Recheck before
+      // arithmetic; advancing from the response survives retained-page eviction.
+      const issues = offsetIssues(data, offset, config.fields);
+      if (issues.length)
+        throw new TypeError(
+          `invalid offset pagination metadata: ${issues.map((issue) => issue.message).join('; ')}`,
+        );
+      const next = data.offset + data.items.length;
+      return data.items.length > 0 && next < data.total ? next : undefined;
+    },
+  });
+}
+
+function infiniteFactory<
+  O extends z.ZodType<RequestParts | undefined>,
+  const R extends Responses,
+  Items extends readonly unknown[],
+  P extends Pagination,
+>(
+  config: FactoryConfig &
+    Readonly<{
+      operation: { build: (input: never) => PreparedRequest<R, 'none'> };
+      input: O;
+      parameter: string;
+      prefix: InfinitePrefix<P>;
+      initialPageParam: InitialPageParameter<P>;
+      parsePageParam: (value: unknown) => PageParameter<P>;
+      nextPageParam: (
+        page: Success<R>,
+        parameter: PageParameter<P>,
+      ) => Exclude<PageParameter<P>, null> | undefined;
+      items: (page: Success<R>) => Items;
+      responseIssues?: (
+        page: Success<R>,
+        parameter: PageParameter<P>,
+      ) => readonly ProtocolIssue[];
+    }>,
+): InfiniteQueryFactory<z.input<O>, R, Items[number], P> {
   const scope: ErrorScope = {
     operation: config.operation,
     namespace: config.namespace,
     client: config.client,
     operationId: config.operationId,
   };
-  // The emitter removes the cursor from base inputs. Each assembled page is
+  // The emitter removes the pagination parameter from base inputs. Each page is
   // still passed through the ordinary builder, the authority for request types
-  // and constraints (including literal cursor schemas).
+  // and constraints (including literal parameter schemas).
   const build = config.operation.build as (
     input: unknown,
   ) => PreparedRequest<R, 'none'>;
-  function pageRequest(input: z.output<O>, cursor: Cursor) {
-    if (cursor !== null && typeof cursor !== 'string')
-      throw new TypeError('page cursor must be a string or null');
-    return build({
+  const responseIssues = config.responseIssues;
+  function pageRequest(input: z.output<O>, parameter: unknown) {
+    const value = config.parsePageParam(parameter);
+    const request = build({
       ...input,
       query: {
         ...input?.query,
-        ...(cursor === null ? {} : { [config.cursor]: cursor }),
+        ...(value === null ? {} : { [config.parameter]: value }),
+      },
+    });
+    if (!responseIssues) return request;
+    return Object.freeze({
+      ...request,
+      parseResponse: (observed: ObservedResponse): ProtocolResult<R> => {
+        const result = request.parseResponse(observed);
+        if (result.kind !== 'success') return result;
+        // Responses is a generic status map; the discriminant proves success
+        // even though TypeScript cannot reduce its conditional mapped union.
+        const issues = responseIssues(result as Success<R>, value);
+        if (!issues.length) return result;
+        return Object.freeze({
+          kind: 'protocol',
+          operationId: result.operationId,
+          status: result.status,
+          headers: result.headers,
+          validatedHeaders: result.validatedHeaders,
+          issues: Object.freeze([...issues]),
+        });
       },
     });
   }
   function prepare(args: Arguments<z.input<O>> | SkippedArguments) {
     const { input, context, executionContext } = queryArguments(args);
     let request: PreparedRequest<R, 'none'> | undefined;
-    let fetchPage: ((cursor: Cursor) => PreparedRequest<R, 'none'>) | undefined;
+    let fetchPage:
+      | ((parameter: unknown) => PreparedRequest<R, 'none'>)
+      | undefined;
     if (input !== skipToken) {
       const snapshot = validateOptions(config.input, input, config.operationId);
-      const initial = pageRequest(snapshot, null);
+      const initial = pageRequest(snapshot, config.initialPageParam);
       request = initial;
-      fetchPage = (cursor) =>
-        cursor === null ? initial : pageRequest(snapshot, cursor);
+      fetchPage = (parameter) =>
+        Object.is(parameter, config.initialPageParam)
+          ? initial
+          : pageRequest(snapshot, parameter);
     }
     const key = keyParts(
-      'pom-infinite-v1',
+      config.prefix,
       config.namespace,
       config.client,
       config.operationId,
       context,
       request,
-    ) as InfiniteQueryKey<R>;
+    ) as InfiniteQueryKey<R, P>;
     return { fetchPage, key, executionContext };
   }
-  function key(args: Arguments<z.input<O>>): InfiniteQueryKey<R> {
+  function key(args: Arguments<z.input<O>>): InfiniteQueryKey<R, P> {
     const prepared = prepare(args);
     if (!prepared.fetchPage)
       throw new TypeError('query keys require real input');
     return prepared.key;
   }
-  function options(args: Arguments<z.input<O>>): InfiniteQueryOptions<R>;
+  function options(args: Arguments<z.input<O>>): InfiniteQueryOptions<R, P>;
   function options(
     args: Arguments<z.input<O>> | SkippedArguments,
-  ): SkippableInfiniteQueryOptions<R>;
+  ): SkippableInfiniteQueryOptions<R, P>;
   function options(
     args: Arguments<z.input<O>> | SkippedArguments,
-  ): SkippableInfiniteQueryOptions<R> {
+  ): SkippableInfiniteQueryOptions<R, P> {
     const { fetchPage, key: queryKey, executionContext } = prepare(args);
     // Query Core installs its infinite-query behavior on this object before
     // copying options. Keep the outer container extensible; identities and the
     // captured input/context snapshots remain isolated from caller mutation.
     return {
       queryKey,
-      initialPageParam: null,
+      initialPageParam: config.initialPageParam,
       retry: false,
       structuralSharing: shareQueryData,
       queryFn:
@@ -653,7 +823,12 @@ export function defineInfiniteQuery<
           ? skipToken
           : createQueryFunction(
               queryKey,
-              (context: QueryFunctionContext<InfiniteQueryKey<R>, Cursor>) => {
+              (
+                context: QueryFunctionContext<
+                  InfiniteQueryKey<R, P>,
+                  PageParameter<P>
+                >,
+              ) => {
                 if (context.direction === 'backward')
                   throw new TypeError('backward pagination is unsupported');
                 return fetchPage(context.pageParam);
@@ -665,13 +840,15 @@ export function defineInfiniteQuery<
       getNextPageParam: (
         lastPage: Success<R>,
         _pages: Success<R>[],
-        _lastPageParam: Cursor,
-        pageParams: Cursor[],
+        lastPageParam: PageParameter<P>,
+        pageParams: PageParameter<P>[],
       ) => {
-        const next = config.nextCursor(lastPage);
+        const next = config.nextPageParam(lastPage, lastPageParam);
         // Empty strings are real cursors. Repeated retained cursors stop a
         // broken endpoint from appending the same page indefinitely.
-        return next === null || pageParams.includes(next) ? undefined : next;
+        return next === undefined || pageParams.includes(next)
+          ? undefined
+          : next;
       },
     };
   }
@@ -681,14 +858,14 @@ export function defineInfiniteQuery<
     isError: operationErrorGuard<R>(scope),
     filter: (scope: OperationScope) =>
       operationFilter(
-        'pom-infinite-v1',
+        config.prefix,
         config.namespace,
         config.client,
         config.operationId,
         scope,
       ),
     items: (
-      data: InfiniteData<Success<R>, Cursor> | undefined,
+      data: InfiniteData<Success<R>, PageParameter<P>> | undefined,
     ): Items[number][] => {
       const items: Items[number][] = [];
       for (const page of data?.pages ?? [])

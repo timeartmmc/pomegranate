@@ -69,6 +69,7 @@ void test('preparing test signatures replaces a symlink while preserving its tar
     'symbol-fixture.ts',
     'query-fixture.ts',
     'infinite-fixture.ts',
+    'offset-fixture.ts',
   ])
     await copyFile(
       new URL(name, import.meta.url),

@@ -15,6 +15,7 @@ export async function verifyQueryDeclarations(
   compiler: string,
   fixture: string,
   infiniteFixture?: string,
+  offsetFixture?: string,
 ): Promise<void> {
   const compilerOptions = {
     target: 'ES2022',
@@ -69,6 +70,19 @@ export async function verifyQueryDeclarations(
     }
     `
     }
+    ${
+      offsetFixture === undefined
+        ? ''
+        : `
+    import { createInfiniteQueries as createOffsets } from './offset-generated/client.consumer.queries.ts';
+    export const offsets = createOffsets(config);
+    export const offsetOptions = offsets.listRecords.options({context: {}, input: {path: {category: 'records'}}});
+    export const offsetKey = offsetOptions.queryKey;
+    export const offsetSkipped = offsets.listRecords.options({context: {}, input: skipToken});
+    export const offsetFilter = offsets.listRecords.filter({context: {}});
+    export const offsetItems = offsets.listRecords.items;
+    `
+    }
     `,
   );
   await writeFile(
@@ -81,7 +95,11 @@ export async function verifyQueryDeclarations(
         rootDir: '.',
         outDir: 'query-publication',
       },
-      include: ['query-generated/*.ts', 'query-wrapper.ts'],
+      include: [
+        'query-generated/*.ts',
+        'query-wrapper.ts',
+        ...(offsetFixture === undefined ? [] : ['offset-generated/*.ts']),
+      ],
     }),
   );
   async function typecheck(config: string, listFiles = false) {
@@ -177,6 +195,27 @@ export async function verifyQueryDeclarations(
     `,
     );
   }
+  if (offsetFixture !== undefined) {
+    await writeFile(
+      join(publication, 'offset-consumer.ts'),
+      `
+    ${(await readFile(offsetFixture, 'utf8')).replaceAll('.queries.ts', '.queries.js')}
+    import {offsetKey, offsetOptions as publishedOptions, offsetSkipped, offsetFilter, offsetItems} from './query-wrapper.js';
+    const zero: 0 = publishedOptions.initialPageParam;
+    const data = offsetClient.getQueryData(offsetKey);
+    const skipped = offsetClient.getQueryData(offsetSkipped.queryKey);
+    const page: number | undefined = data?.pageParams[0];
+    const skippedPage: number | undefined = skipped?.pageParams[0];
+    const id: string | undefined = offsetItems(data)[0]?.id;
+    void [zero, page, skippedPage, id];
+    offsetClient.invalidateQueries(offsetFilter);
+    offsetClient.fetchInfiniteQuery(publishedOptions);
+    // @ts-expect-error Published numeric page parameters never widen to strings.
+    const cursor: string = data!.pageParams[0];
+    void cursor;
+    `,
+    );
+  }
   const consumeConfig = join(publication, 'tsconfig.json');
   await writeFile(
     consumeConfig,
@@ -189,6 +228,7 @@ export async function verifyQueryDeclarations(
       include: [
         'consumer.ts',
         ...(infiniteFixture === undefined ? [] : ['infinite-consumer.ts']),
+        ...(offsetFixture === undefined ? [] : ['offset-consumer.ts']),
       ],
     }),
   );
@@ -210,7 +250,10 @@ export async function verifyQueryDeclarations(
   );
   assert.ok(
     files.every(
-      (file) => !file.startsWith(`${join(directory, 'query-generated')}${sep}`),
+      (file) =>
+        !['query-generated', 'offset-generated'].some((name) =>
+          file.startsWith(`${join(directory, name)}${sep}`),
+        ),
     ),
     'declaration checks must not resolve original generated sources',
   );
@@ -220,7 +263,7 @@ export async function verifyQueryDeclarations(
     join(publication, 'registered-errors.ts'),
     `
     import { QueryClient } from '@tanstack/query-core';
-    import { queries ${infiniteFixture === undefined ? '' : ', infiniteQueries'} } from './query-wrapper.js';
+    import { queries ${infiniteFixture === undefined ? '' : ', infiniteQueries'} ${offsetFixture === undefined ? '' : ', offsets'} } from './query-wrapper.js';
     declare module '@tanstack/query-core' { interface Register { defaultError: unknown; } }
     const client = new QueryClient();
     const error = client.getQueryState(queries.health.key({ context: {} }))?.error;
@@ -246,6 +289,20 @@ export async function verifyQueryDeclarations(
     }
     const id: string | undefined = client.getQueryData(key)?.pages[0]?.data.results[0]?.id;
     void id;
+    `
+    }
+    ${
+      offsetFixture === undefined
+        ? ''
+        : `
+    const offsetKey = offsets.listRecords.key({context: {}, input: {path: {category: 'records'}}});
+    const offsetError = client.getQueryState(offsetKey)?.error;
+    // @ts-expect-error Offset keys retain registered unknown errors.
+    void offsetError?.message;
+    if (offsets.listRecords.isError(offsetError) && offsetError.result.kind === 'error' && offsetError.result.status === 404) {
+      const detail: string = offsetError.result.data.detail;
+      void detail;
+    }
     `
     }
   `,

@@ -348,10 +348,14 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
   const infiniteTypes: string[] = [];
   const infiniteEntries = client.infiniteQueries.map(
     ({ operation, binding }) => {
+      const offset = 'offset' in binding;
       const name = `infinite_${operationScope(operation.id)}_input`;
       const parameters = operation.parameters.filter(
         (parameter) =>
-          !(parameter.in === 'query' && parameter.name === binding.cursor) &&
+          !(
+            parameter.in === 'query' &&
+            parameter.name === (offset ? binding.offset : binding.cursor)
+          ) &&
           !(
             parameter.in === 'header' &&
             client.transportHeaders.includes(parameter.name.toLowerCase())
@@ -362,8 +366,10 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
       );
       const op = `operations[${JSON.stringify(operation.id)}]`;
       infiniteTypes.push(
-        `[${JSON.stringify(operation.id)}]: InfiniteQueryFactoryFor<typeof ${op}, z.input<typeof ${name}>, ${JSON.stringify(binding.items)}>;`,
+        `[${JSON.stringify(operation.id)}]: InfiniteQueryFactoryFor<typeof ${op}, z.input<typeof ${name}>, ${JSON.stringify(binding.items)}${offset ? ', number' : ''}>;`,
       );
+      if (offset)
+        return `[${JSON.stringify(operation.id)}]: defineOffsetQuery({ operation: ${op}, input: ${name}, offset: ${JSON.stringify(binding.offset)}, fields: ${JSON.stringify({ offset: binding.responseOffset, limit: binding.responseLimit, total: binding.total, items: binding.items })}, page: page => ({ offset: page.data[${JSON.stringify(binding.responseOffset)}], limit: page.data[${JSON.stringify(binding.responseLimit)}], total: page.data[${JSON.stringify(binding.total)}], items: page.data[${JSON.stringify(binding.items)}] }), execute, namespace, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
       return `[${JSON.stringify(operation.id)}]: defineInfiniteQuery({ operation: ${op}, input: ${name}, cursor: ${JSON.stringify(binding.cursor)}, nextCursor: page => page.data[${JSON.stringify(binding.nextCursor)}], items: page => page.data[${JSON.stringify(binding.items)}], execute, namespace, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
     },
   );
@@ -375,7 +381,10 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     types.push('QueryFactories');
   }
   if (infinite) {
-    factories.push('defineInfiniteQuery');
+    if (client.infiniteQueries.some(({ binding }) => 'cursor' in binding))
+      factories.push('defineInfiniteQuery');
+    if (client.infiniteQueries.some(({ binding }) => 'offset' in binding))
+      factories.push('defineOffsetQuery');
     types.push('InfiniteQueryFactoryFor');
   }
   const imports = [

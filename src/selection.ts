@@ -137,6 +137,35 @@ export function parseSelection(value: Record<string, unknown>): Selection {
               .map((id) => {
                 const path = `${location}.${id}`;
                 const binding = record(operations[id], path);
+                if (Object.hasOwn(binding, 'offset')) {
+                  keys(
+                    binding,
+                    [
+                      'offset',
+                      'responseOffset',
+                      'responseLimit',
+                      'total',
+                      'items',
+                    ],
+                    path,
+                  );
+                  return [
+                    id,
+                    {
+                      offset: text(binding.offset, `${path}.offset`),
+                      responseOffset: text(
+                        binding.responseOffset,
+                        `${path}.responseOffset`,
+                      ),
+                      responseLimit: text(
+                        binding.responseLimit,
+                        `${path}.responseLimit`,
+                      ),
+                      total: text(binding.total, `${path}.total`),
+                      items: text(binding.items, `${path}.items`),
+                    },
+                  ];
+                }
                 keys(binding, ['cursor', 'nextCursor', 'items'], path);
                 return [
                   id,

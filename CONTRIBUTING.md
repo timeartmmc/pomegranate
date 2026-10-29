@@ -57,6 +57,11 @@ acceptance checks after removing the compiler. Declaration checks include
 infinite factories, page collections, item selectors, and an application's
 registered `unknown` error type.
 
+Offset checks additionally cover a zero origin, numeric page parameters, short
+pages, empty and shrinking totals, malformed metadata, response/request mismatch,
+safe integer overflow, and continuation after retained-page eviction. Chromium
+hooks and compiler-free installed consumers exercise both pagination profiles.
+
 The packed check first generates queries without TanStack installed, then installs
 the minimum supported Query Core version and runs the generated integration after
 removing the compiler. Core-only consumers must not require the optional query
@@ -183,6 +188,6 @@ as behavioral references; its source modules are newly authored. Preserve
 accurate source provenance and any required notices when publishing.
 
 Inspect the actual `bun pm pack` inventory before publication. Keep application
-contracts, private repository history, credentials, environment files, local
-paths, and coordination state out of the public repository and distribution.
+contracts, private repository history, credentials, environment files, and local
+paths out of the public repository and distribution.
 If reusable source is adapted, preserve the notices its license requires.

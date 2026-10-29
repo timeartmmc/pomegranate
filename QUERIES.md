@@ -195,7 +195,7 @@ avoid redraws on unchanged refetches; observers of loading or timestamp fields
 can still update. Preserve the generated key, query function, retry, and
 structural-sharing settings when adding application options. Applications own
 freshness, enabled conditions, selection, and cancellation or removal of old
-session caches. Mutation and cache-effect bindings are not generated. Forward cursor pagination
+session caches. Mutation and cache-effect bindings are not generated. Forward cursor and offset pagination
 is available through the infinite factories below.
 
 On TanStack 5.104.5, `useQueries({ combine })` applies its own structural sharing
@@ -242,7 +242,7 @@ must name an optional, nonnullable string query parameter. Every declared 2xx
 response must have a fixed JSON object body with a required nullable string
 `continuation` field and a required array `results` field. Component references
 are supported. Bindings name top-level fields; nested paths, tagged-union page
-objects, numeric cursors, offset pagination, backward pagination, and bodyless
+objects, numeric cursors, backward pagination, and bodyless
 success responses receive diagnostics or remain outside this profile.
 
 This selection adds `createInfiniteQueries` to `client.consumer.queries.ts` and
@@ -275,7 +275,7 @@ state. The optional `items` selector flattens the declared arrays into a fresh,
 typed array in page order. It preserves duplicates and item values. Applications
 own rendering, deduplication policy, and mutation/invalidation bindings.
 
-Base inputs exclude the bound cursor; supplying it fails validation. Factories
+Base inputs exclude the bound pagination parameter; supplying it fails validation. Factories
 validate and copy base inputs immediately, including arrays and structural
 fields, so later pages do not reread caller state. The first page omits the
 cursor with `initialPageParam: null`. Later pages validate the server's cursor
@@ -307,3 +307,55 @@ directly to `fetchInfiniteQuery`, `ensureInfiniteQueryData`, and
 `prefetchInfiniteQuery`. Keys remain frozen, base inputs are copied, and executor
 context is a frozen snapshot. The map-preservation and hydration limits above apply
 to infinite caches too.
+
+### Numeric offsets
+
+For a response shaped like `{ items, total, limit, offset }`, select an offset
+binding instead of a cursor binding:
+
+```json
+{
+  "infiniteQueries": {
+    "consumer": {
+      "listRecords": {
+        "offset": "offset",
+        "responseOffset": "offset",
+        "responseLimit": "limit",
+        "total": "total",
+        "items": "items"
+      }
+    }
+  }
+}
+```
+
+The binding names the request query parameter and four distinct top-level response
+fields; names need not follow this example. The request offset must be a
+nonnullable integer parameter whose constraints accept `0`; it may be required.
+Every declared 2xx response must have a fixed JSON object body with the bound
+fields required: integer offset, limit and total, and an array of items.
+Component references are supported. Nested fields and mixed cursor/offset
+bindings receive diagnostics.
+
+Use the same `createInfiniteQueries`, `options`, `items`, `key`, and `filter`
+methods as for cursors. Base inputs exclude the request offset. The first request
+explicitly sends `0` with `initialPageParam: 0`; all cached `pageParams` remain
+numbers, including through declaration emission and JSON hydration. Supply page
+size and other query parameters as ordinary base inputs when needed. OpenAPI
+default annotations do not insert request values.
+
+The next offset is the last response's offset plus its returned item count.
+A short page can continue; an empty page or reaching the latest response's total
+ends traversal. Advancing from the response preserves progress when `maxPages`
+evicts earlier pages. A shrinking total can end traversal without discarding
+already returned items. Applications own consistency when records change
+between requests; the helper does not deduplicate or provide a snapshot.
+
+Before caching success, the helper requires a nonnegative safe integer offset
+and total, a positive safe integer limit, a response offset matching the request,
+and at most `limit` returned items. Offset arithmetic must stay within the safe
+integer range. Violations reject with a scoped protocol error, retaining response
+status and headers; previous successful pages remain available. Each subsequent
+request also passes the ordinary request schema's constraints. Invalid numeric
+page parameters fail before transport. Offset, cursor, and ordinary query filters
+address separate cache families, even for the same initial URL.

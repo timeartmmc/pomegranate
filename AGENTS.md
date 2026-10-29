@@ -12,10 +12,7 @@ Read [README.md](README.md) for current usage and limitations,
 
 - Prefer a complete, carefully verified milestone over broad unfinished work.
   Report the behavior delivered, evidence, and remaining scope accurately.
-- Use the installed implementer, checker, librarian, and agent-coordination
-  skills for their respective work. Keep coordination state in Git metadata.
-- Preserve concurrent work. Coordinate intersecting behavior and file edits;
-  coordinate shared generation, validation, and Git operations through the board.
+- Preserve concurrent work and avoid overwriting unrelated changes.
 - Start additional agents only when the user requests them. Do not commit,
   publish, or deploy without an explicit request.
 
@@ -47,10 +44,8 @@ Read [README.md](README.md) for current usage and limitations,
   types and tests for routine facts; keep necessary lint exceptions local and
   explain the behavior they preserve.
 - Keep public fixtures synthetic and exclude consumer contracts, private history,
-  credentials, environment files, and local coordination data from distribution.
+  credentials, and environment files from distribution.
 - Document current behavior separately from intended behavior and dated evidence.
   Give each topic one owner. Keep local implementation rationale beside its code.
 - Maintain a concise README and only the supporting documents needed to explain
   architecture, contribution checks, limitations, and unfinished decisions.
-- The active librarian owns human-authored documentation. Implementers communicate
-  behavior changes to the librarian and avoid simultaneous documentation edits.

@@ -29,14 +29,21 @@ client, operation, and complete canonical context; matching across contexts must
 be explicit. These identities must survive JSON hydration. Applications own
 invalidation policy.
 
-Infinite-query bindings explicitly select an optional string request cursor and
-required response cursor/item fields across every success status. Validate the
+Infinite-query bindings explicitly select a cursor or offset profile and required
+response fields across every success status. Validate the
 complete binding before emission. Infinite factories use a cache family separate
 from ordinary queries, preserve one base-input/context snapshot across pages,
 and validate each assembled page request and its exact-status response. Initial
-requests omit the cursor; a null response cursor or a repeated retained cursor
+cursor requests omit the cursor; a null response cursor or a repeated retained cursor
 ends pagination. Empty strings remain real cursors. Item selection preserves
-page order and duplicates. Applications own eviction, deduplication, and rendering.
+page order and duplicates. Offset requests start at integer zero and advance by
+the last response's offset plus its actual item count, preserving progress after
+page eviction. Empty pages or reaching the reported total end offset traversal.
+Validate safe integer metadata, matching response offsets, item counts and
+arithmetic before caching success. Offset and cursor caches have distinct
+families and retain numeric and string/null page parameters respectively.
+Applications own eviction, deduplication, rendering, and consistency while records
+change between requests.
 
 Generated query functions delegate transport work, forward cancellation, and
 validate raw response evidence before returning a success envelope. They do not

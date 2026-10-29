@@ -284,7 +284,7 @@ Bodyless responses require empty text and expose `data: undefined`.
 
 ## Optional query integration
 
-Select bodyless GET/HEAD operations with `queries`, or forward cursor-paginated
+Select bodyless GET/HEAD operations with `queries`, or forward cursor- or offset-paginated
 GET operations with `infiniteQueries`. POM emits factories using an application
 executor, validated cache identities, cancellation, and exact-status response
 validation. These modules also require `@tanstack/query-core` 5.104.5 or newer
