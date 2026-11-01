@@ -67,6 +67,66 @@ the minimum supported Query Core version and runs the generated integration afte
 removing the compiler. Core-only consumers must not require the optional query
 dependency.
 
+Executable-client checks cover every supported method, JSON writes, exact success
+and failure statuses, scoped cross-API guards, snapshots, cancellation reasons,
+application-owned recovery, retries and session fencing, and complete browser/native
+multipart inputs. Chromium runs direct calls and mounted query, infinite query and
+mutation hooks against one local synthetic server and shared raw executor. Parse
+instrumentation checks one body read, JSON parse and schema pass per final response.
+Declaration consumers retain positive and expected-error call cases independently
+of generated sources. The packed consumer generates, compiles and executes
+execution-only output before installing TanStack, compiles native output without
+DOM libraries, and repeats shared execution checks after removing the compiler.
+An additional query-only check excludes both Node and DOM types, supplying only
+the existing platform signal, callback and URL declarations. This prevents an
+unused direct-call helper from expanding the query dependency boundary.
+`node scripts/benchmark-execution.ts [baseline-ref]` records a synthetic handwritten-binding
+comparison, generated size, typecheck cost and runtime timing, including queries
+against the selected Git revision (default `HEAD`); timings are evidence,
+not machine-dependent CI thresholds. Dated milestone evidence belongs in
+the source checkout's
+[dated executable-client record](md/history/2026-10-29-executable-clients.txt),
+and [execution/query integration record](md/history/2026-11-01-execution-integration.txt),
+separate from current API documentation.
+
+Execution/cache changes must additionally exercise raw and scoped executors with
+ordinary, cursor, and offset factories in envelope and body modes. Cover complete
+validation inside attempt and total budgets using controlled clocks, without
+claiming a speedup for status-only recovery. Check one parse per inspected
+response, frozen inspection isolation with mutable returned bodies, single-use
+evidence, rejected foreign/copied handles, callback expiry, parser/context capture,
+and cleanup after every outcome. Cancellation coverage includes pre-abort, late
+success/rejection, falsy reasons, undefined rejection, mapper failure, and the
+distinction between a mapped query-function error and Query Core cancellation.
+
+Body-cache checks include every declared success status, bodyless exclusion,
+JSON null, bound pagination failures, typed cold writers, immutable updates,
+hydration, failed-refresh retention, and central structural sharing before options
+exist. Exercise exact-family isolation and operation-wide invalidation across
+all six known families and complete contexts. Prove that coexisting representations
+make independent requests and do not synchronize direct writes. Mounted hooks and
+compiler-free packed consumers must run the new ordinary/cursor/offset combinations;
+older envelope-only browser success is insufficient. Type and declaration checks
+include explicitly annotated raw/bodyless `Execution` adapters, reusable scoped
+adapters across generated outputs, readonly inspection edits, and body cache APIs.
+
+Keep implementation verification separate from application adoption. Record
+handwritten integration LOC against the existing approach and a shared-helper
+baseline, counting added bridges, configuration, cache writers, and remaining
+wrappers. A scoped-validation improvement need not reduce LOC in a status-only
+transport. Measure generated/retained bundle size, typecheck cost, parsing,
+copying/freezing, sharing latency, and allocations as evidence. Do not invent
+machine-dependent pass thresholds. An adopting application supplies its own
+performance and memory ceilings before comparison and runs its complete parity
+and integration checks. Without that evidence, report adoption as unassessed;
+compiler verification alone establishes no application savings or budget pass.
+Consumer experiments should exercise the existing transport through one shared
+adapter before proposing transport changes. Keep real contracts, application
+patches, and detailed consumer reports outside the public POM checkout. Select
+query factories separately from direct calls; selecting no queries imposes no
+TanStack dependency. When queries are selected, verify one compatible Query Core
+resolution across framework and persistence adapters in the consumer's lockfile.
+
 Query declaration checks emit generated modules and inferred application exports
 of factories, enabled and skippable options, keys, operation filters, typed error
 guards, and the sharing helper, then
@@ -168,9 +228,10 @@ release commit with the complete canonical checks and required consumer checks.
 Then inspect and publish the same packed artifact:
 
 ```sh
-bun pm pack --filename /tmp/pomegranate-compiler-0.1.1.tgz
-bun publish --dry-run --access public /tmp/pomegranate-compiler-0.1.1.tgz
-bun publish --access public /tmp/pomegranate-compiler-0.1.1.tgz
+bun pm pack --filename /tmp/pomegranate-compiler-0.3.0.tgz
+node scripts/verify-package.ts /tmp/pomegranate-compiler-0.3.0.tgz
+bun publish --dry-run --access public /tmp/pomegranate-compiler-0.3.0.tgz
+bun publish --access public /tmp/pomegranate-compiler-0.3.0.tgz
 ```
 
 Use the selected version in the filename. Confirm the registry's version and

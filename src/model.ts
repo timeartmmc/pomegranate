@@ -141,6 +141,7 @@ export type Descriptor = {
 
 export type Client = {
   readonly name: string;
+  readonly execution: boolean;
   readonly target?: 'browser' | 'native';
   readonly transportHeaders: readonly string[];
   readonly operations: readonly Operation[];

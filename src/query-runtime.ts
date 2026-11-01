@@ -31,10 +31,8 @@ import type {
   SkipToken,
 } from '@tanstack/query-core';
 import type {
-  DeclaredResponse,
   ObservedResponse,
   PreparedRequest,
-  ProtocolFailure,
   ProtocolResult,
   Responses,
   RequestParts,
@@ -44,113 +42,72 @@ import { validateOptions } from './runtime.ts';
 import type { z } from 'zod';
 import { shareQueryData } from './query-sharing.ts';
 
-export type CacheContext = Readonly<
-  Record<string, string | number | boolean | null>
->;
-type ContextEntries = readonly (readonly [string, CacheContext[string]])[];
+import {
+  contextEntries,
+  dataRecord,
+  executionConfig,
+  executeRequest,
+  operationErrorGuard,
+  prepareExecution,
+} from './execution-runtime.ts';
+import type {
+  ContextEntries,
+  CancellationMapper,
+  ErrorScope,
+  Execution,
+  ExecutionContext,
+  ResponseInspection,
+  InputArguments,
+  Success,
+  TypedQueryResponseError,
+} from './execution-runtime.ts';
+export { QueryResponseError } from './execution-runtime.ts';
+export type { TypedQueryResponseError } from './execution-runtime.ts';
 
-// Return raw HTTP evidence so the generated parser remains the authority for
-// status/body/header agreement. Credentials and network policy stay in execute.
-export type QueryExecutor = (
-  request: PreparedRequest<Responses, 'none'>,
-  execution: Readonly<{ signal: AbortSignal; context: CacheContext }>,
-) => Promise<ObservedResponse>;
-
-type Success<R extends Responses> = DeclaredResponse<R> &
-  Readonly<{ kind: 'success' }>;
-type Failure<R extends Responses = Responses> =
-  | ProtocolFailure
-  | (DeclaredResponse<R> & Readonly<{ kind: 'error' }>);
-
-export class QueryResponseError extends Error {
-  readonly result: Failure;
-
-  constructor(result: Failure) {
-    super(`${result.operationId}: ${result.kind} response (${result.status})`);
-    this.name = 'QueryResponseError';
-    this.result = result;
-  }
-}
-
-export interface TypedQueryResponseError<
+export type CacheContext = ExecutionContext;
+export type {
+  CancellationEvent,
+  CancellationMapper,
+  Execution,
+  ResponseInspection,
+  ValidatedResponse,
+} from './execution-runtime.ts';
+// The bodyless contract remains assignable from an executor supporting all body
+// kinds; existing bodyless-only query executors need no change.
+export type QueryExecutor = <
   R extends Responses,
-> extends QueryResponseError {
-  readonly result: Failure<R>;
-}
+  V extends ResponseInspection<R>,
+>(
+  request: PreparedRequest<R, 'none'>,
+  execution: Execution<R, V>,
+) => Promise<ObservedResponse | V>;
 
-type ErrorScope = Readonly<{
-  operation: object;
+export type QueryConfig = Readonly<{
   namespace: string;
-  client: string;
-  operationId: string;
+  execute: QueryExecutor;
+  mapCancellation?: CancellationMapper;
 }>;
-const responseErrors = new WeakMap<
-  object,
-  Readonly<{ scope: ErrorScope; result: Failure }>
->();
 
-function operationErrorGuard<R extends Responses>(scope: ErrorScope) {
-  return (error: unknown): error is TypedQueryResponseError<R> => {
-    if (error === null || typeof error !== 'object') return false;
-    const origin = responseErrors.get(error);
-    if (
-      !origin ||
-      origin.scope.operation !== scope.operation ||
-      origin.scope.namespace !== scope.namespace ||
-      origin.scope.client !== scope.client ||
-      origin.scope.operationId !== scope.operationId
-    )
-      return false;
-    // Only the parser records provenance. A public constructor, copied error,
-    // transport rejection or replaced result cannot mint a typed response.
-    const result: unknown = Object.getOwnPropertyDescriptor(
-      error,
-      'result',
-    )?.value;
-    return result === origin.result;
-  };
-}
-
-function isFailure<R extends Responses>(
-  result: ProtocolResult<R>,
-): result is Failure<R> {
-  return result.kind !== 'success';
-}
-
-function assertSuccess<R extends Responses>(
-  result: ProtocolResult<R>,
-  scope: ErrorScope,
-): asserts result is Success<R> {
-  if (isFailure(result)) {
-    const error = new QueryResponseError(result);
-    responseErrors.set(error, { scope, result });
-    throw error;
-  }
-}
-
-function throwIfAborted(signal: AbortSignal): void {
-  if (!signal.aborted) return;
-  // Native polyfills may lack throwIfAborted and reason. Keep a defined
-  // cancellation reason verbatim and supply a portable error only if absent.
-  const reason: unknown = 'reason' in signal ? signal.reason : undefined;
-  if (reason !== undefined) {
-    // oxlint-disable-next-line typescript/only-throw-error -- AbortSignal reasons can be any value; cancellation must preserve them exactly.
-    throw reason;
-  }
-  const error = new Error('The operation was aborted');
-  error.name = 'AbortError';
-  throw error;
-}
-
-type Arguments<Input> = Readonly<{ context: CacheContext }> &
-  (undefined extends Input
-    ? Readonly<{ input?: Input }>
-    : Readonly<{ input: Input }>);
+type Arguments<Input> = InputArguments<Input>;
 type SkippedArguments = Readonly<{ context: CacheContext; input: SkipToken }>;
 
 type OperationScope =
   | Readonly<{ context: CacheContext; allContexts?: never }>
   | Readonly<{ allContexts: true; context?: never }>;
+
+const cachePrefixes = {
+  ordinary: { envelope: 'pom-query-v1', body: 'pom-query-body-v1' },
+  cursor: { envelope: 'pom-infinite-v1', body: 'pom-infinite-body-v1' },
+  offset: { envelope: 'pom-offset-v1', body: 'pom-offset-body-v1' },
+} as const;
+export type CacheRepresentation = 'envelope' | 'body';
+export type Body<R extends Responses> = Success<R>['data'];
+export type QueryValue<
+  R extends Responses,
+  M extends CacheRepresentation = 'envelope',
+> = M extends 'body' ? Body<R> : Success<R>;
+type QueryPrefix<M extends CacheRepresentation> =
+  (typeof cachePrefixes)['ordinary'][M];
 
 type KeyParts<Prefix extends string = 'pom-query-v1'> = readonly [
   Prefix,
@@ -165,36 +122,57 @@ type KeyParts<Prefix extends string = 'pom-query-v1'> = readonly [
 // Interfaces preserve named boundaries even when an application publishes
 // inferred exports of factories, options or keys. Readonly object aliases can
 // instead inline DataTag's unique symbols without importing them.
-export interface QueryKey<R extends Responses>
-  extends KeyParts, DataTag<unknown, Success<R>> {}
+export interface QueryKey<
+  R extends Responses,
+  M extends CacheRepresentation = 'envelope',
+>
+  extends KeyParts<QueryPrefix<M>>, DataTag<unknown, QueryValue<R, M>> {}
 
-export interface SkippableQueryOptions<R extends Responses> {
-  readonly queryKey: QueryKey<R>;
+export interface SkippableQueryOptions<
+  R extends Responses,
+  M extends CacheRepresentation = 'envelope',
+> {
+  readonly queryKey: QueryKey<R, M>;
   readonly retry: false;
   readonly structuralSharing: typeof shareQueryData;
   readonly queryFn:
-    | ((context: QueryFunctionContext<QueryKey<R>>) => Promise<Success<R>>)
+    | ((
+        context: QueryFunctionContext<QueryKey<R, M>>,
+      ) => Promise<QueryValue<R, M>>)
     | SkipToken;
 }
 
 export interface QueryOptions<
   R extends Responses,
-> extends SkippableQueryOptions<R> {
+  M extends CacheRepresentation = 'envelope',
+> extends SkippableQueryOptions<R, M> {
   readonly queryFn: (
-    context: QueryFunctionContext<QueryKey<R>>,
-  ) => Promise<Success<R>>;
+    context: QueryFunctionContext<QueryKey<R, M>>,
+  ) => Promise<QueryValue<R, M>>;
 }
 
-export interface OperationFilter extends ScopedOperationFilter<'pom-query-v1'> {}
+export interface OperationFilter<
+  M extends CacheRepresentation = 'envelope',
+> extends ScopedOperationFilter<QueryPrefix<M>> {}
 
-export interface QueryFactory<Input, R extends Responses> {
+export interface QueryFactory<
+  Input,
+  R extends Responses,
+  M extends CacheRepresentation = 'envelope',
+> {
   readonly isError: (error: unknown) => error is TypedQueryResponseError<R>;
-  readonly key: (args: Arguments<Input>) => QueryKey<R>;
+  readonly key: (args: Arguments<Input>) => QueryKey<R, M>;
   readonly options: {
-    (args: Arguments<Input>): QueryOptions<R>;
-    (args: Arguments<Input> | SkippedArguments): SkippableQueryOptions<R>;
+    (args: Arguments<Input>): QueryOptions<R, M>;
+    (args: Arguments<Input> | SkippedArguments): SkippableQueryOptions<R, M>;
   };
-  readonly filter: (scope: OperationScope) => OperationFilter;
+  readonly invalidationFilter: (
+    scope: OperationScope,
+  ) => OperationInvalidationFilter;
+  readonly filter: (scope: OperationScope) => OperationFilter<M>;
+  readonly body: undefined extends Body<R>
+    ? never
+    : () => QueryFactory<Input, R, 'body'>;
 }
 
 type QueryOperation = Readonly<{
@@ -211,68 +189,8 @@ export type QueryFactories<
     : never;
 }>;
 
-function dataRecord(value: unknown, location: string): Record<string, unknown> {
-  if (
-    value === null ||
-    typeof value !== 'object' ||
-    (Object.getPrototypeOf(value) !== Object.prototype &&
-      Object.getPrototypeOf(value) !== null)
-  )
-    throw new TypeError(`${location} must be a plain record`);
-  return Object.fromEntries(
-    Reflect.ownKeys(value).map((name) => {
-      const descriptor = Object.getOwnPropertyDescriptor(value, name)!;
-      if (
-        typeof name !== 'string' ||
-        !descriptor.enumerable ||
-        !Object.hasOwn(descriptor, 'value')
-      )
-        throw new TypeError(`${location} must contain enumerable data fields`);
-      const item: unknown = descriptor.value;
-      return [name, item];
-    }),
-  );
-}
-
-function cacheContext(input: unknown): ContextEntries {
-  const context = dataRecord(input, 'query context');
-  return Object.freeze(
-    Object.keys(context)
-      .sort()
-      .map((name) => {
-        const value = context[name];
-        if (
-          value !== null &&
-          typeof value !== 'string' &&
-          typeof value !== 'boolean' &&
-          !(typeof value === 'number' && Number.isFinite(value))
-        )
-          throw new TypeError(
-            `query context.${name} must be a finite JSON scalar`,
-          );
-        // Entry arrays retain names such as __proto__ that an object-based
-        // TanStack hash can drop while rebuilding sorted object properties.
-        // JSON hashing and hydration turn -0 into 0. Normalize the shared
-        // snapshot so execute observes the same value represented by its key.
-        return Object.freeze([name, value === 0 ? 0 : value] as const);
-      }),
-  );
-}
-
-export function queryNamespace(value: string): string {
-  if (typeof value !== 'string' || value.length === 0)
-    throw new TypeError('query namespace must be a nonempty string');
-  return value;
-}
-
-export function queryConfig(
-  config: Readonly<{ namespace: string; execute: QueryExecutor }>,
-) {
-  const namespace = queryNamespace(config.namespace);
-  const execute = config.execute;
-  if (typeof execute !== 'function')
-    throw new TypeError('query executor must be a function');
-  return { namespace, execute };
+export function queryConfig(config: QueryConfig) {
+  return executionConfig(config, 'query');
 }
 
 type FactoryConfig = Readonly<{
@@ -281,6 +199,8 @@ type FactoryConfig = Readonly<{
   client: string;
   // The emitter supplies identity without building a request with fake inputs.
   operationId: string;
+  mapCancellation?: CancellationMapper;
+  bodyCache?: boolean;
 }>;
 
 interface ScopedOperationFilter<Prefix extends string> {
@@ -293,7 +213,7 @@ function queryArguments(args: unknown) {
   for (const name of Object.keys(fields))
     if (name !== 'context' && name !== 'input')
       throw new TypeError(`unknown query argument ${name}`);
-  const context = cacheContext(fields['context']);
+  const context = contextEntries(fields['context'], 'query context');
   return {
     input: fields['input'],
     context,
@@ -329,56 +249,142 @@ function keyParts<Prefix extends string>(
   ] as const);
 }
 
-async function executeRequest<R extends Responses>(
-  request: PreparedRequest<R, 'none'>,
-  execute: QueryExecutor,
-  context: CacheContext,
-  signal: AbortSignal,
-  scope: ErrorScope,
-): Promise<Success<R>> {
-  throwIfAborted(signal);
-  let observed: ObservedResponse;
-  try {
-    observed = await execute(request, Object.freeze({ signal, context }));
-  } catch (error) {
-    throwIfAborted(signal);
-    throw error;
-  }
-  // Executors may ignore cancellation; never deliver their late result.
-  throwIfAborted(signal);
-  const result = request.parseResponse(observed);
-  // Evidence getters may synchronously cancel while the parser snapshots them.
-  throwIfAborted(signal);
-  assertSuccess(result, scope);
-  return result;
-}
-
 function createQueryFunction<
   R extends Responses,
   Execution extends Pick<QueryFunctionContext, 'signal' | 'queryKey'>,
+  M extends CacheRepresentation,
 >(
   queryKey: Execution['queryKey'],
-  request: (execution: Execution) => PreparedRequest<R, 'none'>,
+  prepare: (execution: Execution) => PreparedQuery<R>,
   execute: QueryExecutor,
   executionContext: CacheContext,
-  scope: ErrorScope,
-): (execution: Execution) => Promise<Success<R>> {
+  scope: ErrorScope<R>,
+  representation: M,
+  mapCancellation?: CancellationMapper,
+): (execution: Execution) => Promise<QueryValue<R, M>> {
   const identity = JSON.stringify(queryKey);
   return async (execution) => {
     const { signal } = execution;
-    throwIfAborted(signal);
-    if (JSON.stringify(execution.queryKey) !== identity)
-      throw new TypeError('query key does not match the prepared request');
-    // Inspecting the key or assembling a page can synchronously abort. The
-    // executor boundary checks again before invoking application transport.
-    return executeRequest(
-      request(execution),
+    const { request, responseIssues } = prepareExecution(
+      () => {
+        if (JSON.stringify(execution.queryKey) !== identity)
+          throw new TypeError('query key does not match the prepared request');
+        return prepare(execution);
+      },
+      signal,
+      executionContext,
+      scope,
+      mapCancellation,
+    );
+    const result = await executeRequest(
+      request,
       execute,
       executionContext,
       signal,
       scope,
+      responseIssues,
+      mapCancellation,
     );
+    if (representation === 'body' && result.data === undefined)
+      throw new TypeError('body query cannot cache undefined response data');
+    return queryValue(result, representation);
   };
+}
+
+// Conditional types preserve each cache's public DataTag. These two private
+// adapters implement the corresponding projection after complete validation.
+function queryValue<R extends Responses, M extends CacheRepresentation>(
+  page: Success<R>,
+  representation: M,
+): QueryValue<R, M> {
+  return (representation === 'body' ? page.data : page) as QueryValue<R, M>;
+}
+
+function responseBody<R extends Responses, M extends CacheRepresentation>(
+  page: QueryValue<R, M>,
+  representation: M,
+): Body<R> {
+  return (
+    representation === 'body' ? page : (page as Success<R>).data
+  ) as Body<R>;
+}
+
+type PreparedQuery<R extends Responses> = Readonly<{
+  request: PreparedRequest<R, 'none'>;
+  responseIssues?: (page: Success<R>) => readonly ProtocolIssue[];
+}>;
+
+export interface OperationInvalidationFilter {
+  readonly predicate: NonNullable<QueryFilters['predicate']>;
+}
+
+const cacheFamilies = new Set<string>(
+  Object.values(cachePrefixes).flatMap((profile) => Object.values(profile)),
+);
+
+function canonicalEntries(
+  value: unknown,
+  validValue: (item: unknown) => boolean,
+): boolean {
+  if (!Array.isArray(value)) return false;
+  let previous: string | undefined;
+  for (const entry of value as readonly unknown[]) {
+    if (
+      !Array.isArray(entry) ||
+      entry.length !== 2 ||
+      typeof entry[0] !== 'string' ||
+      (previous !== undefined && entry[0] <= previous) ||
+      !validValue(entry[1])
+    )
+      return false;
+    previous = entry[0];
+  }
+  return true;
+}
+
+function canonicalContext(value: unknown): boolean {
+  return canonicalEntries(
+    value,
+    (item) =>
+      item === null ||
+      typeof item === 'string' ||
+      typeof item === 'boolean' ||
+      (typeof item === 'number' &&
+        Number.isFinite(item) &&
+        !Object.is(item, -0)),
+  );
+}
+
+function supportedCacheKey(key: readonly unknown[]): boolean {
+  return (
+    key.length === 7 &&
+    typeof key[0] === 'string' &&
+    cacheFamilies.has(key[0]) &&
+    canonicalContext(key[4]) &&
+    (key[5] === null || typeof key[5] === 'string') &&
+    canonicalEntries(key[6], (item) => typeof item === 'string')
+  );
+}
+
+function operationInvalidationFilter(
+  namespace: string,
+  client: string,
+  operationId: string,
+  scope: OperationScope,
+): OperationInvalidationFilter {
+  const matchesContext = contextPredicate(scope);
+  return Object.freeze({
+    predicate: (query: Query) => {
+      const key = query.queryKey;
+      return (
+        key[1] === namespace &&
+        key[2] === client &&
+        key[3] === operationId &&
+        supportedCacheKey(key) &&
+        matchesContext(query)
+      );
+    },
+  });
 }
 
 function operationFilter<Prefix extends string>(
@@ -388,6 +394,15 @@ function operationFilter<Prefix extends string>(
   operationId: string,
   scope: OperationScope,
 ): ScopedOperationFilter<Prefix> {
+  return Object.freeze({
+    queryKey: Object.freeze([prefix, namespace, client, operationId] as const),
+    predicate: contextPredicate(scope),
+  });
+}
+
+function contextPredicate(
+  scope: OperationScope,
+): NonNullable<QueryFilters['predicate']> {
   const fields = dataRecord(scope, 'query filter');
   const names = Object.keys(fields);
   if (
@@ -399,39 +414,60 @@ function operationFilter<Prefix extends string>(
       'query filter must specify context or allContexts: true',
     );
   const context =
-    names[0] === 'context' ? cacheContext(fields['context']) : undefined;
-  return Object.freeze({
-    queryKey: Object.freeze([prefix, namespace, client, operationId] as const),
-    // TanStack's partial key matching accepts context prefixes (including an
-    // empty context). Compare complete canonical entries to avoid widening a
-    // scope to extra fields; entry arrays also retain special property names.
-    predicate: (query: Query) => {
-      if (context === undefined) return true;
-      const candidate: unknown = query.queryKey[4];
-      if (!Array.isArray(candidate) || candidate.length !== context.length)
-        return false;
-      const entries: readonly unknown[] = candidate;
-      return context.every(([name, value], index) => {
-        const entry = entries[index];
-        return (
-          Array.isArray(entry) &&
-          entry.length === 2 &&
-          entry[0] === name &&
-          entry[1] === value
-        );
-      });
-    },
-  });
+    names[0] === 'context'
+      ? contextEntries(fields['context'], 'query context')
+      : undefined;
+  // TanStack's partial key matching accepts context prefixes (including an
+  // empty context). Compare complete canonical entries to avoid widening a
+  // scope to extra fields; entry arrays also retain special property names.
+  return (query: Query) => {
+    if (context === undefined) return true;
+    const candidate: unknown = query.queryKey[4];
+    if (!Array.isArray(candidate) || candidate.length !== context.length)
+      return false;
+    const entries: readonly unknown[] = candidate;
+    return context.every(([name, value], index) => {
+      const entry = entries[index];
+      return (
+        Array.isArray(entry) &&
+        entry.length === 2 &&
+        entry[0] === name &&
+        entry[1] === value
+      );
+    });
+  };
 }
 
 export function defineQuery<Input, const R extends Responses>(
   config: FactoryConfig &
     Readonly<{
-      operation: { build: (input: Input) => PreparedRequest<R, 'none'> };
+      operation: {
+        build: (input: Input) => PreparedRequest<R, 'none'>;
+        parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
+      };
     }>,
 ): QueryFactory<Input, R> {
+  return queryFactory(config, 'envelope');
+}
+
+function queryFactory<
+  Input,
+  R extends Responses,
+  M extends CacheRepresentation,
+>(
+  config: FactoryConfig &
+    Readonly<{
+      operation: {
+        build: (input: Input) => PreparedRequest<R, 'none'>;
+        parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
+      };
+    }>,
+  representation: M,
+): QueryFactory<Input, R, M> {
   const { operation, execute, namespace, client, operationId } = config;
-  const scope: ErrorScope = { operation, namespace, client, operationId };
+  const scope: ErrorScope<R> = { operation, namespace, client, operationId };
+  const prefix = cachePrefixes.ordinary[representation];
+  let bodyFactory: QueryFactory<Input, R, 'body'> | undefined;
   function prepare(args: Arguments<Input> | SkippedArguments) {
     const { input, context, executionContext } = queryArguments(args);
     // The conditional argument type permits omission only when Input includes
@@ -439,39 +475,33 @@ export function defineQuery<Input, const R extends Responses>(
     const request =
       input === skipToken ? undefined : operation.build(input as Input);
     const key = keyParts(
-      'pom-query-v1',
+      prefix,
       namespace,
       client,
       operationId,
       context,
       request,
-    ) as QueryKey<R>;
+    ) as QueryKey<R, M>;
     return { request, key, context: executionContext };
   }
 
-  function key(args: Arguments<Input>): QueryKey<R> {
+  function key(args: Arguments<Input>): QueryKey<R, M> {
     const prepared = prepare(args);
     if (!prepared.request) throw new TypeError('query keys require real input');
     return prepared.key;
   }
 
-  function filter(scope: OperationScope): OperationFilter {
-    return operationFilter(
-      'pom-query-v1',
-      namespace,
-      client,
-      operationId,
-      scope,
-    );
+  function filter(scope: OperationScope): OperationFilter<M> {
+    return operationFilter(prefix, namespace, client, operationId, scope);
   }
 
-  function options(args: Arguments<Input>): QueryOptions<R>;
+  function options(args: Arguments<Input>): QueryOptions<R, M>;
   function options(
     args: Arguments<Input> | SkippedArguments,
-  ): SkippableQueryOptions<R>;
+  ): SkippableQueryOptions<R, M>;
   function options(
     args: Arguments<Input> | SkippedArguments,
-  ): SkippableQueryOptions<R> {
+  ): SkippableQueryOptions<R, M> {
     const { request, key: queryKey, context: executionContext } = prepare(args);
     return Object.freeze({
       queryKey,
@@ -484,57 +514,78 @@ export function defineQuery<Input, const R extends Responses>(
           ? skipToken
           : createQueryFunction(
               queryKey,
-              () => request,
+              () => ({ request }),
               execute,
               executionContext,
               scope,
+              representation,
+              config.mapCancellation,
             ),
     });
   }
-  return Object.freeze({
+  const factory: QueryFactory<Input, R, M> = Object.freeze({
     key,
     options,
     filter,
+    invalidationFilter: (scope: OperationScope) =>
+      operationInvalidationFilter(namespace, client, operationId, scope),
     isError: operationErrorGuard<R>(scope),
+    body: (() => {
+      if (!config.bodyCache)
+        throw new TypeError(
+          `${operationId} has a bodyless success; use an envelope query`,
+        );
+      if (representation === 'body')
+        return factory as unknown as QueryFactory<Input, R, 'body'>;
+      return (bodyFactory ??= queryFactory(config, 'body'));
+    }) as QueryFactory<Input, R, M>['body'],
   });
+  return factory;
 }
 
 type Cursor = string | null;
 type Pagination = string | number;
 type PageParameter<P extends Pagination> = P extends number ? number : Cursor;
 type InitialPageParameter<P extends Pagination> = P extends number ? 0 : null;
-type InfinitePrefix<P extends Pagination> = P extends number
-  ? 'pom-offset-v1'
-  : 'pom-infinite-v1';
+type InfinitePrefix<
+  P extends Pagination,
+  M extends CacheRepresentation = 'envelope',
+> = (typeof cachePrefixes)[P extends number ? 'offset' : 'cursor'][M];
 
 export interface InfiniteQueryKey<
   R extends Responses,
   P extends Pagination = string,
+  M extends CacheRepresentation = 'envelope',
 >
   extends
-    KeyParts<InfinitePrefix<P>>,
-    DataTag<unknown, InfiniteData<Success<R>, PageParameter<P>>> {}
+    KeyParts<InfinitePrefix<P, M>>,
+    DataTag<unknown, InfiniteData<QueryValue<R, M>, PageParameter<P>>> {}
 
 export interface InfiniteOperationFilter<
   P extends Pagination = string,
-> extends ScopedOperationFilter<InfinitePrefix<P>> {}
+  M extends CacheRepresentation = 'envelope',
+> extends ScopedOperationFilter<InfinitePrefix<P, M>> {}
 
 export interface SkippableInfiniteQueryOptions<
   R extends Responses,
   P extends Pagination = string,
+  M extends CacheRepresentation = 'envelope',
 > {
-  readonly queryKey: InfiniteQueryKey<R, P>;
+  readonly queryKey: InfiniteQueryKey<R, P, M>;
   readonly initialPageParam: InitialPageParameter<P>;
   readonly retry: false;
   readonly structuralSharing: typeof shareQueryData;
   readonly queryFn:
     | ((
-        context: QueryFunctionContext<InfiniteQueryKey<R, P>, PageParameter<P>>,
-      ) => Promise<Success<R>>)
+        context: QueryFunctionContext<
+          InfiniteQueryKey<R, P, M>,
+          PageParameter<P>
+        >,
+      ) => Promise<QueryValue<R, M>>)
     | SkipToken;
   readonly getNextPageParam: (
-    lastPage: Success<R>,
-    pages: Success<R>[],
+    lastPage: QueryValue<R, M>,
+    pages: QueryValue<R, M>[],
     lastPageParam: PageParameter<P>,
     pageParams: PageParameter<P>[],
   ) => Exclude<PageParameter<P>, null> | undefined;
@@ -543,10 +594,11 @@ export interface SkippableInfiniteQueryOptions<
 export interface InfiniteQueryOptions<
   R extends Responses,
   P extends Pagination = string,
-> extends SkippableInfiniteQueryOptions<R, P> {
+  M extends CacheRepresentation = 'envelope',
+> extends SkippableInfiniteQueryOptions<R, P, M> {
   readonly queryFn: (
-    context: QueryFunctionContext<InfiniteQueryKey<R, P>, PageParameter<P>>,
-  ) => Promise<Success<R>>;
+    context: QueryFunctionContext<InfiniteQueryKey<R, P, M>, PageParameter<P>>,
+  ) => Promise<QueryValue<R, M>>;
 }
 
 export interface InfiniteQueryFactory<
@@ -554,19 +606,26 @@ export interface InfiniteQueryFactory<
   R extends Responses,
   Item,
   P extends Pagination = string,
+  M extends CacheRepresentation = 'envelope',
 > {
   readonly isError: (error: unknown) => error is TypedQueryResponseError<R>;
-  readonly key: (args: Arguments<Input>) => InfiniteQueryKey<R, P>;
+  readonly key: (args: Arguments<Input>) => InfiniteQueryKey<R, P, M>;
   readonly options: {
-    (args: Arguments<Input>): InfiniteQueryOptions<R, P>;
+    (args: Arguments<Input>): InfiniteQueryOptions<R, P, M>;
     (
       args: Arguments<Input> | SkippedArguments,
-    ): SkippableInfiniteQueryOptions<R, P>;
+    ): SkippableInfiniteQueryOptions<R, P, M>;
   };
-  readonly filter: (scope: OperationScope) => InfiniteOperationFilter<P>;
+  readonly invalidationFilter: (
+    scope: OperationScope,
+  ) => OperationInvalidationFilter;
+  readonly filter: (scope: OperationScope) => InfiniteOperationFilter<P, M>;
   readonly items: (
-    data: InfiniteData<Success<R>, PageParameter<P>> | undefined,
+    data: InfiniteData<QueryValue<R, M>, PageParameter<P>> | undefined,
   ) => Item[];
+  readonly body: undefined extends Body<R>
+    ? never
+    : () => InfiniteQueryFactory<Input, R, Item, P, 'body'>;
 }
 
 type OperationResponses<Operation> = Operation extends {
@@ -598,25 +657,31 @@ export function defineInfiniteQuery<
 >(
   config: FactoryConfig &
     Readonly<{
-      operation: { build: (input: never) => PreparedRequest<R, 'none'> };
+      operation: {
+        build: (input: never) => PreparedRequest<R, 'none'>;
+        parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
+      };
       input: O;
       cursor: string;
-      nextCursor: (page: Success<R>) => Cursor;
-      items: (page: Success<R>) => Items;
+      nextCursor: (page: Body<R>) => Cursor;
+      items: (page: Body<R>) => Items;
     }>,
 ): InfiniteQueryFactory<z.input<O>, R, Items[number]> {
-  return infiniteFactory<O, R, Items, string>({
-    ...config,
-    parameter: config.cursor,
-    prefix: 'pom-infinite-v1',
-    initialPageParam: null,
-    parsePageParam: (value) => {
-      if (value !== null && typeof value !== 'string')
-        throw new TypeError('page cursor must be a string or null');
-      return value;
+  return infiniteFactory<O, R, Items, string, 'envelope'>(
+    {
+      ...config,
+      parameter: config.cursor,
+      profile: 'cursor',
+      initialPageParam: null,
+      parsePageParam: (value) => {
+        if (value !== null && typeof value !== 'string')
+          throw new TypeError('page cursor must be a string or null');
+        return value;
+      },
+      nextPageParam: (page) => config.nextCursor(page) ?? undefined,
     },
-    nextPageParam: (page) => config.nextCursor(page) ?? undefined,
-  });
+    'envelope',
+  );
 }
 
 type OffsetPage<Items extends readonly unknown[]> = Readonly<{
@@ -664,43 +729,49 @@ export function defineOffsetQuery<
 >(
   config: FactoryConfig &
     Readonly<{
-      operation: { build: (input: never) => PreparedRequest<R, 'none'> };
+      operation: {
+        build: (input: never) => PreparedRequest<R, 'none'>;
+        parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
+      };
       input: O;
       offset: string;
       fields: OffsetFields;
-      page: (page: Success<R>) => OffsetPage<Items>;
+      page: (page: Body<R>) => OffsetPage<Items>;
     }>,
 ): InfiniteQueryFactory<z.input<O>, R, Items[number], number> {
-  return infiniteFactory<O, R, Items, number>({
-    ...config,
-    parameter: config.offset,
-    prefix: 'pom-offset-v1',
-    initialPageParam: 0,
-    parsePageParam: (value) => {
-      if (
-        typeof value !== 'number' ||
-        !Number.isSafeInteger(value) ||
-        value < 0
-      )
-        throw new TypeError('page offset must be a nonnegative safe integer');
-      return value === 0 ? 0 : value;
+  return infiniteFactory<O, R, Items, number, 'envelope'>(
+    {
+      ...config,
+      parameter: config.offset,
+      profile: 'offset',
+      initialPageParam: 0,
+      parsePageParam: (value) => {
+        if (
+          typeof value !== 'number' ||
+          !Number.isSafeInteger(value) ||
+          value < 0
+        )
+          throw new TypeError('page offset must be a nonnegative safe integer');
+        return value === 0 ? 0 : value;
+      },
+      items: (page) => config.page(page).items,
+      responseIssues: (page, offset) =>
+        offsetIssues(config.page(page), offset, config.fields),
+      nextPageParam: (page, offset) => {
+        const data = config.page(page);
+        // Metadata can also come from application cache updates. Recheck before
+        // arithmetic; advancing from the response survives retained-page eviction.
+        const issues = offsetIssues(data, offset, config.fields);
+        if (issues.length)
+          throw new TypeError(
+            `invalid offset pagination metadata: ${issues.map((issue) => issue.message).join('; ')}`,
+          );
+        const next = data.offset + data.items.length;
+        return data.items.length > 0 && next < data.total ? next : undefined;
+      },
     },
-    items: (page) => config.page(page).items,
-    responseIssues: (page, offset) =>
-      offsetIssues(config.page(page), offset, config.fields),
-    nextPageParam: (page, offset) => {
-      const data = config.page(page);
-      // Metadata can also come from application cache updates. Recheck before
-      // arithmetic; advancing from the response survives retained-page eviction.
-      const issues = offsetIssues(data, offset, config.fields);
-      if (issues.length)
-        throw new TypeError(
-          `invalid offset pagination metadata: ${issues.map((issue) => issue.message).join('; ')}`,
-        );
-      const next = data.offset + data.items.length;
-      return data.items.length > 0 && next < data.total ? next : undefined;
-    },
-  });
+    'envelope',
+  );
 }
 
 function infiniteFactory<
@@ -708,27 +779,38 @@ function infiniteFactory<
   const R extends Responses,
   Items extends readonly unknown[],
   P extends Pagination,
+  M extends CacheRepresentation,
 >(
   config: FactoryConfig &
     Readonly<{
-      operation: { build: (input: never) => PreparedRequest<R, 'none'> };
+      operation: {
+        build: (input: never) => PreparedRequest<R, 'none'>;
+        parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
+      };
       input: O;
       parameter: string;
-      prefix: InfinitePrefix<P>;
+      profile: P extends number ? 'offset' : 'cursor';
       initialPageParam: InitialPageParameter<P>;
       parsePageParam: (value: unknown) => PageParameter<P>;
       nextPageParam: (
-        page: Success<R>,
+        page: Body<R>,
         parameter: PageParameter<P>,
       ) => Exclude<PageParameter<P>, null> | undefined;
-      items: (page: Success<R>) => Items;
+      items: (page: Body<R>) => Items;
       responseIssues?: (
-        page: Success<R>,
+        page: Body<R>,
         parameter: PageParameter<P>,
       ) => readonly ProtocolIssue[];
     }>,
-): InfiniteQueryFactory<z.input<O>, R, Items[number], P> {
-  const scope: ErrorScope = {
+  representation: M,
+): InfiniteQueryFactory<z.input<O>, R, Items[number], P, M> {
+  let bodyFactory:
+    | InfiniteQueryFactory<z.input<O>, R, Items[number], P, 'body'>
+    | undefined;
+  const prefix = cachePrefixes[config.profile][
+    representation
+  ] as InfinitePrefix<P, M>;
+  const scope: ErrorScope<R> = {
     operation: config.operation,
     namespace: config.namespace,
     client: config.client,
@@ -741,7 +823,10 @@ function infiniteFactory<
     input: unknown,
   ) => PreparedRequest<R, 'none'>;
   const responseIssues = config.responseIssues;
-  function pageRequest(input: z.output<O>, parameter: unknown) {
+  function pageRequest(
+    input: z.output<O>,
+    parameter: unknown,
+  ): PreparedQuery<R> {
     const value = config.parsePageParam(parameter);
     const request = build({
       ...input,
@@ -750,65 +835,52 @@ function infiniteFactory<
         ...(value === null ? {} : { [config.parameter]: value }),
       },
     });
-    if (!responseIssues) return request;
-    return Object.freeze({
-      ...request,
-      parseResponse: (observed: ObservedResponse): ProtocolResult<R> => {
-        const result = request.parseResponse(observed);
-        if (result.kind !== 'success') return result;
-        // Responses is a generic status map; the discriminant proves success
-        // even though TypeScript cannot reduce its conditional mapped union.
-        const issues = responseIssues(result as Success<R>, value);
-        if (!issues.length) return result;
-        return Object.freeze({
-          kind: 'protocol',
-          operationId: result.operationId,
-          status: result.status,
-          headers: result.headers,
-          validatedHeaders: result.validatedHeaders,
-          issues: Object.freeze([...issues]),
-        });
-      },
-    });
+    return {
+      request,
+      ...(responseIssues
+        ? {
+            responseIssues: (page: Success<R>) =>
+              responseIssues(page.data, value),
+          }
+        : {}),
+    };
   }
   function prepare(args: Arguments<z.input<O>> | SkippedArguments) {
     const { input, context, executionContext } = queryArguments(args);
     let request: PreparedRequest<R, 'none'> | undefined;
-    let fetchPage:
-      | ((parameter: unknown) => PreparedRequest<R, 'none'>)
-      | undefined;
+    let fetchPage: ((parameter: unknown) => PreparedQuery<R>) | undefined;
     if (input !== skipToken) {
       const snapshot = validateOptions(config.input, input, config.operationId);
       const initial = pageRequest(snapshot, config.initialPageParam);
-      request = initial;
+      request = initial.request;
       fetchPage = (parameter) =>
         Object.is(parameter, config.initialPageParam)
           ? initial
           : pageRequest(snapshot, parameter);
     }
     const key = keyParts(
-      config.prefix,
+      prefix,
       config.namespace,
       config.client,
       config.operationId,
       context,
       request,
-    ) as InfiniteQueryKey<R, P>;
+    ) as InfiniteQueryKey<R, P, M>;
     return { fetchPage, key, executionContext };
   }
-  function key(args: Arguments<z.input<O>>): InfiniteQueryKey<R, P> {
+  function key(args: Arguments<z.input<O>>): InfiniteQueryKey<R, P, M> {
     const prepared = prepare(args);
     if (!prepared.fetchPage)
       throw new TypeError('query keys require real input');
     return prepared.key;
   }
-  function options(args: Arguments<z.input<O>>): InfiniteQueryOptions<R, P>;
+  function options(args: Arguments<z.input<O>>): InfiniteQueryOptions<R, P, M>;
   function options(
     args: Arguments<z.input<O>> | SkippedArguments,
-  ): SkippableInfiniteQueryOptions<R, P>;
+  ): SkippableInfiniteQueryOptions<R, P, M>;
   function options(
     args: Arguments<z.input<O>> | SkippedArguments,
-  ): SkippableInfiniteQueryOptions<R, P> {
+  ): SkippableInfiniteQueryOptions<R, P, M> {
     const { fetchPage, key: queryKey, executionContext } = prepare(args);
     // Query Core installs its infinite-query behavior on this object before
     // copying options. Keep the outer container extensible; identities and the
@@ -825,7 +897,7 @@ function infiniteFactory<
               queryKey,
               (
                 context: QueryFunctionContext<
-                  InfiniteQueryKey<R, P>,
+                  InfiniteQueryKey<R, P, M>,
                   PageParameter<P>
                 >,
               ) => {
@@ -836,14 +908,19 @@ function infiniteFactory<
               config.execute,
               executionContext,
               scope,
+              representation,
+              config.mapCancellation,
             ),
       getNextPageParam: (
-        lastPage: Success<R>,
-        _pages: Success<R>[],
+        lastPage: QueryValue<R, M>,
+        _pages: QueryValue<R, M>[],
         lastPageParam: PageParameter<P>,
         pageParams: PageParameter<P>[],
       ) => {
-        const next = config.nextPageParam(lastPage, lastPageParam);
+        const next = config.nextPageParam(
+          responseBody(lastPage, representation),
+          lastPageParam,
+        );
         // Empty strings are real cursors. Repeated retained cursors stop a
         // broken endpoint from appending the same page indefinitely.
         return next === undefined || pageParams.includes(next)
@@ -852,25 +929,55 @@ function infiniteFactory<
       },
     };
   }
-  return Object.freeze({
+  const factory: InfiniteQueryFactory<
+    z.input<O>,
+    R,
+    Items[number],
+    P,
+    M
+  > = Object.freeze({
     key,
     options,
     isError: operationErrorGuard<R>(scope),
+    invalidationFilter: (scope: OperationScope) =>
+      operationInvalidationFilter(
+        config.namespace,
+        config.client,
+        config.operationId,
+        scope,
+      ),
     filter: (scope: OperationScope) =>
       operationFilter(
-        config.prefix,
+        prefix,
         config.namespace,
         config.client,
         config.operationId,
         scope,
       ),
     items: (
-      data: InfiniteData<Success<R>, PageParameter<P>> | undefined,
+      data: InfiniteData<QueryValue<R, M>, PageParameter<P>> | undefined,
     ): Items[number][] => {
       const items: Items[number][] = [];
       for (const page of data?.pages ?? [])
-        for (const item of config.items(page)) items.push(item);
+        for (const item of config.items(responseBody(page, representation)))
+          items.push(item);
       return items;
     },
+    body: (() => {
+      if (!config.bodyCache)
+        throw new TypeError(
+          `${config.operationId} has a bodyless success; use an envelope query`,
+        );
+      if (representation === 'body')
+        return factory as unknown as InfiniteQueryFactory<
+          z.input<O>,
+          R,
+          Items[number],
+          P,
+          'body'
+        >;
+      return (bodyFactory ??= infiniteFactory(config, 'body'));
+    }) as InfiniteQueryFactory<z.input<O>, R, Items[number], P, M>['body'],
   });
+  return factory;
 }

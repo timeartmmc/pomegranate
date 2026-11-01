@@ -10,12 +10,48 @@ This document owns the boundaries and guarantees that changes must preserve.
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Application    | API schemas, OpenAPI export, operation policy, generated artifacts, transport, authentication, retries, deadlines, error interpretation, platform adapters, and integration tests |
 | Pomegranate    | Supported contract interpretation, one normalized model, generation, diagnostics, drift detection, and generated-output ownership                                                 |
-| Generated code | Types, request validation, URL construction, exact-status response validation, and optional query factories using an application executor                                         |
+| Generated code | Types, request validation, URL construction, exact-status response validation, and optional executable clients and query factories using an application executor                  |
 
 The compiler is a development dependency. Generated modules use relative imports
 and declared runtime dependencies; applications must not import the compiler at
 runtime. Policy labels describe application choices. They do not implement those
 choices or establish authorization.
+
+Executable clients are selected independently of queries and bind every operation
+on a selected surface to one application executor configuration. They preserve required
+input inference, snapshot context and requests before yielding, forward a usable
+signal, and return exact-status success envelopes. Declared HTTP and protocol
+failures reject; executor errors retain their identity. Direct calls and queries
+share cancellation, context normalization, response interpretation and operation
+error provenance in `execution-runtime.ts`. Only executable surfaces emit
+`call-runtime.ts` for direct-call construction and default signal creation;
+query-only output adds no `AbortController` declaration requirement.
+Query cache identities and pagination
+checks remain in the query runtime. Applications own body reads. Raw executors
+return evidence for interpretation after execution; scoped executors can call the
+supplied validation callback inside their recovery and deadline scope. The latter
+performs exact-status and bound-pagination validation once and returns a detached,
+deeply readonly inspection handle. Only an original handle from that invocation
+can select its saved response. Evidence passed to the callback is single-use
+within that invocation; repeated validation and returning inspected raw evidence
+fail explicitly. Handles cannot transform the selected response.
+
+Public parser, call, and query bodies remain mutable. The saved response stays
+private until handoff, so inspection cannot change data after validation and
+before return or caching. Public mutability after handoff does not make shared
+cache mutation safe. Copying and freezing inspection data happens only on the
+scoped path, inside the application's selected budget. Callback state closes on
+executor settlement and releases saved response trees after every outcome.
+Applications own clocks, attempt/total budgets, and transport recovery. The
+optional cancellation mapper belongs to this execution boundary, preserves
+original reasons by default, and supplies no delivery classification. TanStack
+separately owns query cancellation and state reversion.
+
+One application-owned adapter can connect an existing transport's parser hook to
+the validation callback. POM does not require a second transport or a raw-response
+API when that hook already supplies the observed response. Applications can adopt
+generated calls independently of generated query factories, retaining their
+existing cache keys, domain ownership, and mutation effects.
 
 Optional query factories derive their keys and requests from one validated input
 snapshot. The context passed to the executor must preserve the identity encoded
@@ -26,8 +62,14 @@ while retaining explicit, validated context. A skipped query must not execute on
 mount, invalidation, or manual refetch. Real inputs still validate immediately.
 Public operation filters match every parameter variant within one namespace,
 client, operation, and complete canonical context; matching across contexts must
-be explicit. These identities must survive JSON hydration. Applications own
-invalidation policy.
+be explicit. These identities must survive JSON hydration. Envelopes remain the
+default; explicit body storage uses separate cache families and excludes any
+operation with a bodyless success. Complete response and pagination validation
+precedes body projection. Family filters retain their scope; operation-wide
+invalidation spans the six known families without combining their stored-data
+types. Applications select a representation centrally and own invalidation policy
+and updates to any intentionally coexisting caches. POM neither deduplicates
+requests nor synchronizes direct writes across those cache identities.
 
 Infinite-query bindings explicitly select a cursor or offset profile and required
 response fields across every success status. Validate the
@@ -46,7 +88,7 @@ Applications own eviction, deduplication, rendering, and consistency while recor
 change between requests.
 
 Generated query functions delegate transport work, forward cancellation, and
-validate raw response evidence before returning a success envelope. They do not
+validate response evidence before returning the selected success representation. They do not
 resolve credentials or add an automatic retry budget.
 Query cache integration must preserve all supported response data, including
 dynamic map entries and raw header names with prototype-related names, across
@@ -157,6 +199,13 @@ installed-package checks:
   adoption gates. Extend remaining forms only for demonstrated consumer needs.
 - Migrate each application completely to the canonical generated API and run its
   required integration checks, preserving transport and platform behavior.
+
+Adopt individual call sites incrementally while regenerating the complete output
+set from one compiler version. Remove thin endpoint wrappers as their callers
+migrate; retain wrappers that implement domain behavior. Shared setup has a fixed
+cost, so a small pilot can increase handwritten code. A compatibility experiment
+does not establish net maintenance savings, a full application migration, or
+device performance acceptance.
 
 Keep those requirements distinct from the currently supported vocabulary. A new
 capability needs observable tests and an honest diagnostic for its unsupported

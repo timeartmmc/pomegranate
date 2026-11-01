@@ -1,0 +1,109 @@
+Historical review of the 2026-10-30 checkout. The UTF-16 source comment
+identified below was corrected on 2026-10-31; emitter behavior is unchanged.
+GENERATION_PROPOSALS.txt owns the remaining changes and diagnostic decisions.
+
+Generated output cleanup assessment
+Assessment date: 2026-10-30
+
+The critique is mostly accurate. The repetition is real, but "identical
+behavior" needs qualification, and the proposed string helper is partly
+unnecessary with the supported Zod versions.
+
+1. Brackets around every key
+
+   Accurate. Ordinary keys can use label:, and names containing punctuation
+   can use 'Idempotency-Key':. Only __proto__ needs special handling to remain
+   an ordinary property in an object literal. The emitter currently brackets
+   everything, including fixed internal keys.
+
+   Source: src/code.ts:57
+
+2. Redundant literal checks
+
+   Accurate for accepted values. The compiler already checks literals against
+   their types, constraints, and formats, so emitting z.literal(true) instead
+   of z.boolean().and(z.literal(true)) is reasonable.
+
+   Diagnostics change, however. Passing the string "true" currently produces
+   two issues; the simplified validator produces one. Constraints added
+   through $ref siblings must still be enforced.
+
+   Sources: src/emit-schema.ts:125, src/scalar-rules.ts:82,
+   src/schemas.ts:649
+
+3. Repeated string-length lambdas
+
+   Accurate, with a simpler alternative available. Native .min() and .max()
+   already count Unicode code points in both the minimum supported Zod 4.6.6
+   and installed Zod 4.6.7. This was verified with BMP characters, emoji,
+   combining marks, a lone surrogate, and an empty string.
+
+   Therefore, z.string().min(1).max(40) preserves the relevant length
+   acceptance semantics without introducing a codePoints() helper. POM's
+   comment saying native bounds count UTF-16 is stale for its current peer
+   minimum. Existing message text can be supplied explicitly, although raw
+   Zod issue codes would change.
+
+   Sources: src/emit-schema.ts:29, package.json,
+   node_modules/zod/src/v4/core/checks.ts:561
+   Upstream documentation: https://zod.dev/api#strings
+
+4. Duplicate header schemas
+
+   Accurate in the cited example. The Idempotency-Key rule appears in the
+   builder's input schema and again in the merged-header specification.
+   Sharing one schema constant would reduce duplicate generated expressions.
+
+   Both validation stages remain necessary because applications can modify
+   headers before sending. Sharing a validator does not remove that need.
+
+   Source: examples/json/generated/client.consumer.operations.ts:93
+
+5. Long inline type imports
+
+   Accurate, primarily as a readability improvement. Named type imports such
+   as ZodType and ZodArray would shorten the annotations. They would not
+   reduce the JavaScript bundle because type annotations are erased.
+
+   Source: src/schema-types.ts:69
+
+Regex evaluation after a length failure
+
+The observation is correct. Instrumented refinement chains on Zod 4.6.6 and
+4.6.7 each ran the regex once for a four-code-point string that failed a
+maximum length of two.
+
+Fixing this requires explicit short-circuiting, such as a pipeline or an
+early return inside a helper. Merely extracting the existing refinements,
+or placing the regex after a length refinement, does not fix it. Skipping
+checks can also change the collection of reported issues while preserving
+which values are accepted.
+
+A string helper cannot itself remove redundant boolean or numeric literal
+checks. Literal simplification requires a separate emitter change.
+
+Sources: src/emit-schema.ts:29, src/runtime.ts:26
+
+Deliberate structure to preserve
+
+Named structural validator types limit inference expansion through schema
+references. Arrays retain the specialized ZodArray API so reference sibling
+bounds can reject oversized arrays before validating their items.
+
+The _part declarations keep aggregate expressions shallow for the formatter
+and TypeScript. Relaxing them for tiny schemas is a tradeoff, not an obvious
+correctness fix.
+
+Sources: src/schema-types.ts:74, src/emit-schema.ts
+
+Impact and verification limits
+
+The readability and generated-diff benefits are clear. Claims about
+meaningful bundle-size or speed improvements still need measurement against
+bundled and compressed output. Type import cleanup has no runtime effect.
+
+This assessment used source review and focused runtime probes against Zod
+4.6.6 and 4.6.7. The minimum-version tarball was checked against the integrity
+published in its npm metadata. The checkout fingerprint remained unchanged
+during review. Full CI was not run, and no compiler or generated sources
+were changed.

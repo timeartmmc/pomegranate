@@ -1,5 +1,14 @@
 # Query integration
 
+See [checkout status](README.md#checkout-status) for release availability.
+Factories default to success-envelope
+storage and can explicitly select API-body storage.
+
+Query factories are an optional adoption separate from executable clients.
+Applications can use generated calls with their existing cache keys, readers,
+writers, and mutation effects. Adopt factory keys only with an explicit migration
+of every affected cache access.
+
 ## Optional query options
 
 Select bodyless GET or HEAD operations per client with `queries` in configuration
@@ -11,29 +20,33 @@ or `CompileOptions`, for example:
 }
 ```
 
-This adds `client.consumer.queries.ts` and shared `query-runtime.ts` and
+This adds `client.consumer.queries.ts` and shared `execution-runtime.ts`, `query-runtime.ts` and
 `query-sharing.ts` helpers without changing the existing client entries.
 Query modules import `@tanstack/query-core`
 at runtime; install 5.104.5 or newer within 5.x. React applications can use
 TanStack React Query 5.104.5 or newer within 5.x. Use the same Query Core release
-as your framework adapter. Clients without selected queries need neither TanStack
-nor React.
+as your framework adapter, including persistence adapters that share Query Core.
+Clients without selected queries need neither TanStack nor React and do not
+require a query-library upgrade for executable-client adoption.
 
 TypeScript environments without DOM libraries must supply platform declarations
 for `AbortSignal` and `VoidFunction`. Node types provide `AbortSignal`; if needed,
 add `interface VoidFunction { (): void; }` in a global `.d.ts` file.
 Cancellation also supports native signals without `throwIfAborted` or `reason`;
-it preserves a provided reason and uses an error named `AbortError` when none is
-available.
+the default behavior preserves a provided reason and uses an error named
+`AbortError` when none is available.
 
 Supply an application `QueryExecutor` as `executeRaw` below. It receives the
-prepared request and `{ signal, context }`, and returns raw `{ status, headers, body }`
-HTTP evidence with body text. It owns credentials, merged-header validation,
+prepared request and `{ signal, context, validateResponse }`, and can return raw
+`{ status, headers, body }` HTTP evidence with body text or an inspection handle
+from the callback. It owns credentials, merged-header validation,
 transport headers, deadlines, and retries. Forward the signal to the transport.
 Use the frozen context snapshot to bind transport values and session checks to
 the same identity as the key, rather than reading changed application state.
-The existing example's `execute` returns an already parsed result and does not
-implement this raw-response interface.
+The example's `createExecutor` serves this raw interface and executable clients
+through one configuration. Its legacy `execute` entry returns a parsed result.
+See [executable clients](EXECUTION.md) for sharing an executor with direct calls,
+writes and uploads.
 
 ```ts
 import { createQueries } from './generated/client.consumer.queries.ts';
@@ -127,8 +140,8 @@ options retain response inference and a typed cache key in either state.
 `key(args)` accepts real inputs only. Setting `enabled: false` with real input
 still validates that input immediately.
 
-To invalidate every input variant of one operation, pass its public filter to the
-query client:
+To invalidate every input variant in the factory's cache family, pass its public
+filter to the query client:
 
 ```ts
 await queryClient.invalidateQueries(
@@ -146,9 +159,25 @@ filter explicitly matches across contexts. Both isolate the factory's namespace,
 client, and operation. Preserve both the returned `queryKey` and `predicate` when
 adding application filters. Applications own when and why invalidation happens.
 
+To invalidate all supported representations and pagination families of that
+operation, use `invalidationFilter` instead:
+
+```ts
+await queryClient.invalidateQueries(
+  queries.getWidget.invalidationFilter({ context: args.context }),
+);
+```
+
+It accepts the same `{ context }` or `{ allContexts: true }` scope. Its predicate
+matches the complete context and the same namespace, client, and operation across
+the six families below, including JSON-hydrated keys. Unknown key formats do not
+match. Preserve its returned predicate when adding application filters; it has no
+single-family `queryKey` or common stored-data type. Use family-specific keys for
+typed data reads and writes. Existing `filter` behavior is unchanged.
+
 Query functions forward cancellation, reject late results after cancellation,
-and set `retry: false` so the executor owns the retry budget. Success data is the
-validated response envelope, including exact status and bodyless `data: undefined`.
+and set `retry: false` so the executor owns the retry budget. By default, success
+data is the validated response envelope, including exact status and bodyless `data: undefined`.
 Declared HTTP errors and protocol failures reject with a `QueryResponseError`
 whose `result` holds the failure envelope. Narrow an unknown error with the
 operation's `isError` guard to recover its exact status and declared body types:
@@ -178,6 +207,61 @@ this provenance. Transport errors propagate without being classified as response
 failures; malformed executor evidence rejects with `TypeError`. The broad
 `QueryResponseError` class remains available for shared error handling.
 
+Client and query configurations accept the same optional `mapCancellation` and
+execution validation callback; [executable clients](EXECUTION.md#validation-inside-recovery-and-deadlines)
+owns those contracts. TanStack handles its own query cancellations and can replace
+the query function's mapped rejection with its cancellation result.
+
+## Choose cache storage once per operation
+
+Factories store exact-status success envelopes by default. For an operation whose
+every declared success has a JSON body, `.body()` creates a factory that stores
+only the validated API body. Any bodyless success makes body mode unavailable in
+types and rejects JavaScript selection before transport. JSON `null` is valid;
+successful `undefined` query data is never stored. All response and bound
+pagination checks finish before projection. Observer `select` only changes an
+observer's view, not the stored representation.
+
+Select and export the representation in one application query module, and have
+components and cache writers use that export:
+
+```ts
+const factories = createQueries({
+  namespace: 'widgets-api-v1',
+  execute: executeRaw,
+});
+export const widgetQuery = factories.getWidget.body();
+
+const key = widgetQuery.key(args);
+const body = queryClient.getQueryData(key); // The API body type, not an envelope.
+```
+
+Use one representation per operation in normal application code. Choose envelopes
+when status or response headers affect the application. Repeated `.body()`
+selection keeps the same cache identity; factory object identity is irrelevant.
+Storage is an application choice, so there is no additional `pom.json` setting.
+
+The representations deliberately use separate keys:
+
+| Query profile | Envelope family   | Body family            |
+| ------------- | ----------------- | ---------------------- |
+| Ordinary      | `pom-query-v1`    | `pom-query-body-v1`    |
+| Cursor        | `pom-infinite-v1` | `pom-infinite-body-v1` |
+| Offset        | `pom-offset-v1`   | `pom-offset-body-v1`   |
+
+All retain namespace, client, operation, complete context, and validated input
+identity. Cache access, hydration, and page selectors retain the selected stored
+type. Operation error guards work across these families for the same generated
+operation, namespace, and client.
+
+If representations coexist intentionally, they are independent cache entries:
+requests are not deduplicated between them, and `setQueryData` on one does not
+update the other. `invalidationFilter` can refresh both but does not synchronize
+direct writes. Applications own updates to every representation they keep. This
+also applies when ordinary and infinite caches coexist.
+
+## Sharing and hydration
+
 Options use POM's `shareQueryData` function for structural sharing. Equal plain
 data trees reuse their previous references; changed trees reuse equal children.
 Sharing preserves every map and header key, including `__proto__` and
@@ -202,8 +286,8 @@ On TanStack 5.104.5, `useQueries({ combine })` applies its own structural sharin
 and ignores the per-query setting. Keep arbitrary JSON maps out of combined
 results: entries such as `__proto__` can be lost.
 Hydration restores data without generated options. Configure
-`shareQueryData` as the query default before hydrating entries that application
-code will update with `setQueryData`:
+`shareQueryData` as the query default before cold `setQueryData` writes or hydration,
+including entries created before generated options exist:
 
 ```ts
 import { QueryClient } from '@tanstack/query-core';
@@ -218,6 +302,10 @@ Reading fresh cached data with `fetchQuery` does not install the generated
 setting. JSON hydration does not preserve frozen descriptors or null prototypes;
 the first live refetch can replace the envelope and header records to restore
 them while still sharing equal body subtrees.
+Body storage has no frozen-body transition on that first refetch. Hydration and
+direct writes do not validate response schemas or create validation handles;
+applications own their sources and compatibility. Keep cache updates immutable
+even though returned body types are mutable.
 
 ## Infinite queries
 
@@ -288,12 +376,18 @@ already present in the retained `pageParams` ends pagination to prevent repeated
 pages and cycles. TanStack's `maxPages` option can evict that history; applications
 that enable eviction own the resulting limit on cycle detection.
 
-Without `select`, data is `{ pages, pageParams }`: each page is its exact-status
-validated success envelope, and page parameters are strings or the initial
+With default envelope storage and no `select`, data is `{ pages, pageParams }`:
+each page is its exact-status validated success envelope, and page parameters are strings or the initial
 `null`. Keys retain these types through cache access and JSON hydration. Use
 `key(args)` for a real request and `filter({ context })` or
 `filter({ allContexts: true })` for infinite-cache invalidation. Ordinary query
 filters and infinite query filters address their own cache families.
+
+Select `.body()` centrally for an infinite factory to store each validated page's
+API body instead. The collection still has `pages` and `pageParams`, with the same
+cursor types, and that factory's `items` selector accepts the selected page shape.
+Its `invalidationFilter` spans all supported families for the operation, while
+`filter` remains specific to its representation and pagination profile.
 
 Required inputs can wait using `input: skipToken`, with the same explicit,
 validated context as ordinary queries. Cancellation and failed HTTP/protocol
@@ -337,7 +431,7 @@ fields required: integer offset, limit and total, and an array of items.
 Component references are supported. Nested fields and mixed cursor/offset
 bindings receive diagnostics.
 
-Use the same `createInfiniteQueries`, `options`, `items`, `key`, and `filter`
+Use the same `createInfiniteQueries`, `options`, `items`, `key`, `body`, `filter`, and `invalidationFilter`
 methods as for cursors. Base inputs exclude the request offset. The first request
 explicitly sends `0` with `initialPageParam: 0`; all cached `pageParams` remain
 numbers, including through declaration emission and JSON hydration. Supply page

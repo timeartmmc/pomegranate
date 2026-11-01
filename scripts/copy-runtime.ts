@@ -5,6 +5,8 @@ import { copyFile } from 'node:fs/promises';
 for (const name of [
   'runtime.ts',
   'runtime.browser.ts',
+  'execution-runtime.ts',
+  'call-runtime.ts',
   'query-runtime.ts',
   'query-sharing.ts',
 ])

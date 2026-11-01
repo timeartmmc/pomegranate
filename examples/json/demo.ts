@@ -1,15 +1,11 @@
-import { operations } from './generated/client.consumer.js';
-import { execute } from './transport.js';
-
-const request = operations.prepareWidget.build({
-  path: { widgetId: 'demo/widget' },
-  headers: { 'Idempotency-Key': 'demo-attempt-1' },
-  body: { acknowledged: true, label: 'Example widget' },
-});
+import { QueryClient } from '@tanstack/query-core';
+import { createClient } from './generated/client.consumer.js';
+import { createQueries } from './generated/client.consumer.queries.js';
+import { createExecutor } from './transport.js';
 
 // An injected response keeps the example local and deterministic.
-const result = await execute(
-  request,
+let sent = '';
+const execute = createExecutor(
   async (_url, options) => {
     if (
       new Headers(options?.headers).get('Authorization') !==
@@ -17,6 +13,13 @@ const result = await execute(
     )
       throw new Error(
         'The application transport did not apply bearer credentials',
+      );
+    const url = new URL(_url instanceof Request ? _url.url : _url);
+    sent = `${options?.method} ${url.pathname}`;
+    if (options?.method === 'GET')
+      return new Response(
+        JSON.stringify({ id: 'demo/widget', label: 'Example widget' }),
+        { headers: { 'Content-Type': 'application/json' } },
       );
     return new Response(
       JSON.stringify({ state: 'pending', reference: 'synthetic-123' }),
@@ -36,8 +39,32 @@ const result = await execute(
   'https://example.invalid',
 );
 
-if (result.kind !== 'success' || result.status !== 202)
-  throw new Error('Expected a pending preparation');
-console.log(
-  `${request.method} ${request.url} → ${result.status} ${result.data.reference}`,
-);
+const runtime = { namespace: 'synthetic-widgets-v1', execute };
+const client = createClient(runtime);
+const queries = createQueries(runtime);
+const context = { sessionRevision: 'demo-one', locale: 'en' };
+const cache = new QueryClient();
+try {
+  await client.getWidget.call({
+    context,
+    input: { path: { widgetId: 'demo/widget' } },
+  });
+  await cache.fetchQuery(
+    queries.getWidget.options({
+      context,
+      input: { path: { widgetId: 'demo/widget' } },
+    }),
+  );
+} finally {
+  cache.clear();
+}
+const result = await client.prepareWidget.call({
+  context,
+  input: {
+    path: { widgetId: 'demo/widget' },
+    headers: { 'Idempotency-Key': 'demo-attempt-1' },
+    body: { acknowledged: true, label: 'Example widget' },
+  },
+});
+if (result.status !== 202) throw new Error('Expected a pending preparation');
+console.log(`${sent} → ${result.status} ${result.data.reference}`);

@@ -1,0 +1,48 @@
+POM EXECUTION AND QUERY CACHE INTEGRATION: IMPLEMENTATION EVIDENCE
+2026-11-01
+
+At this verification the unpublished checkout implemented both integration
+capabilities. EXECUTION.md and QUERIES.md own current usage; ARCHITECTURE.md owns
+their boundaries. The completed integration plan is retired. This record describes
+this verification, not later changes, consumer migration, or publication.
+
+The complete bun run verify passed on Node 22.18.0, 24.0.0, and 26.12.1 with
+672 tests on each runtime. The source snapshot was unchanged across all three
+runs. Each run included formatting, strict types, type-aware Oxlint, Chromium,
+example drift/run, and a 69-file packed install. Minimum consumers used
+TypeScript 5.7.3, Zod 4.6.6, and Query Core 5.104.5. Generated TypeScript and
+emitted JavaScript ran without the compiler; the source suite used TypeScript
+7.0.2. Query-only platform declarations and browser/native uploads remained green.
+
+New checks exercise frozen readonly inspection, mutable final bodies, one
+response parse, single-use evidence, original-handle provenance, callback expiry,
+parser/context capture, cancellation mapping, and controlled validation budgets.
+Fresh generated ordinary/cursor/offset body factories run in source and packed
+consumers. Declaration consumers include explicitly Execution-annotated raw and
+bodyless adapters plus independent-output scoped adapters, resolving emitted
+declarations without original generated sources.
+
+Chromium exercised 12 raw/scoped, envelope/body, ordinary/cursor/offset
+combinations plus two mixed-cache cases, with 56 requests and body reads. Mixed
+cases confirmed independent requests and direct writes, followed by one refetch
+per matching cache entry through operation-wide invalidation.
+
+A separate local Node 26.12.1 probe used 10,000 synthetic nested items and nine
+warmed samples. Median complete calls were 13.0 ms for raw execution, 33.0 ms for
+in-executor parsing followed by another raw-return parse, and 24.9 ms for scoped
+validation with a frozen inspection copy. They performed one, two, and one JSON
+and schema passes respectively. Raw parsing occurs outside executor scopes;
+the scoped path includes its copy inside that scope. These are local comparisons,
+not application budgets or a general speed guarantee. Sampled heap growth before
+collection was approximately 11.2, 41.0, and 37.2 MB; this is not peak-live-memory
+measurement or an allocation profile. Equal-body sharing took about 14.4 ms.
+
+The existing executable-binding benchmark still passed shared acceptance for
+both handwritten and generated bindings. Its 11-to-zero endpoint-binding result
+belongs to executable clients, not new A-specific line savings. Its representative
+output totaled 140,960 unminified TypeScript bytes including notices; retained
+production bundle size remains application-dependent.
+
+No complete application migration, net application maintenance savings, or
+consumer time/memory-budget acceptance was established. Owners must supply those
+budgets and application integration evidence separately. No publication occurred.

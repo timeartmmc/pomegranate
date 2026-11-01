@@ -15,6 +15,10 @@ import {
   infiniteSelection,
 } from '../test/infinite-fixture.ts';
 import { offsetFixture, offsetSelection } from '../test/offset-fixture.ts';
+import {
+  executionFixture,
+  executionSelection,
+} from '../test/execution-fixture.ts';
 
 // Give the test program the real generated signatures. Runtime tests still
 // compile into fresh temporary directories, and independent consumer fixtures
@@ -37,6 +41,7 @@ const fixtures: [string, unknown, CompileOptions][] = [
   ['queries', queryFixture(), querySelection],
   ['infinite', infiniteFixture(), infiniteSelection],
   ['offset', offsetFixture(), offsetSelection],
+  ['execution', executionFixture(), executionSelection],
 ];
 // Keep cleanup unsuffixed: a final slash would follow a directory symlink.
 const root = new URL('../test/.generated', import.meta.url);

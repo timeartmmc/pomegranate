@@ -4,13 +4,23 @@ Pomegranate (POM) compiles a strict subset of OpenAPI 3.1 documents in JSON or
 YAML into TypeScript request builders, Zod validators, and response validation
 keyed by HTTP status.
 Applications own the transport and the meaning of their authentication, retry,
-and timeout policy. Optional query factories delegate execution to an
-application-supplied executor; POM provides no transport.
+and timeout policy. Optional executable clients and query factories delegate
+execution to an application-supplied executor; POM provides no transport.
 
 POM supports JSON and multipart requests, declared bearer transport requirements, and selected
 client surfaces, with a synthetic example and an isolated installed-package
 check. It uses one explicit operation-policy format across the owner's projects.
 The package is [MIT licensed](LICENSE).
+
+## Checkout status
+
+This documentation describes version 0.3.0. It adds executable clients,
+numeric-offset pagination, validation inside application execution scopes, and
+explicit body query caches to 0.2.0. Use a matching compiler version and regenerate
+the complete output set when upgrading. For unreleased changes, use a locally
+packed checkout; [Contributing](CONTRIBUTING.md#before-publication) owns that workflow.
+[Executable clients](EXECUTION.md) and [query integration](QUERIES.md) own usage.
+Compiler verification does not establish a complete application migration.
 
 ## Use POM in a project
 
@@ -127,8 +137,10 @@ POST /api/widgets/demo%2Fwidget/preparations → 202 synthetic-123
 `examples/json/openapi.json` declares distinct `200` and `202` success bodies,
 distinct error bodies, required headers, a `true` constant, and bodyless HEAD and
 OPTIONS operations. It also demonstrates inherited bearer security, public
-overrides, and separate consumer/staff surfaces. `demo.ts` and `transport.ts` show
-application-owned token resolution with a synthetic token. The transport accepts
+overrides, and separate consumer/staff surfaces. `demo.ts` uses direct calls and a
+selected query with one executor configuration. `transport.ts` shows application-owned
+token resolution with a synthetic token and a raw response boundary shared with
+its parsed transport entry. The transport accepts
 an explicit base URL so Node and browser Fetch can resolve generated relative
 paths. It sends once; applications must implement their actual authentication,
 deadlines, retries, cancellation, and error handling.
@@ -282,12 +294,40 @@ or headers. Other protocol issues may omit `path`.
 A body valid under `200` does not pass under `202` unless both declare it.
 Bodyless responses require empty text and expose `data: undefined`.
 
+## Optional executable clients
+
+Add `"executionClients": ["consumer"]` to generate `createClient` from
+`client.consumer.ts` and `client.consumer.execute.ts`. Every operation on the
+selected surface gets a typed `call` and `isError` guard:
+
+```ts
+const client = createClient({
+  namespace: 'widgets-api-v1',
+  execute: executeRaw,
+});
+const response = await client.getWidget.call({
+  context: { sessionRevision: 'one', locale: 'en' },
+  input: { path: { widgetId: 'demo/widget' } },
+  signal,
+});
+```
+
+Calls validate requests before execution and return exact-status success
+envelopes; declared HTTP failures and protocol failures reject. One executor
+supporting none, JSON and multipart bodies can also serve selected query
+factories. Executors can return raw evidence or validate inside their recovery
+and deadline scope through the supplied callback. Execution alone needs only Zod.
+See [executable clients](EXECUTION.md) for inspection handles, cancellation mapping,
+error compatibility, uploads and ownership.
+
 ## Optional query integration
 
 Select bodyless GET/HEAD operations with `queries`, or forward cursor- or offset-paginated
 GET operations with `infiniteQueries`. POM emits factories using an application
 executor, validated cache identities, cancellation, and exact-status response
-validation. These modules also require `@tanstack/query-core` 5.104.5 or newer
+validation. Factories default to envelope storage; `.body()` explicitly selects
+API-body storage when every success has a body. Choose one representation per
+operation centrally. These modules also require `@tanstack/query-core` 5.104.5 or newer
 within 5.x. See [query integration](QUERIES.md) for configuration, React examples,
 cache ownership, pagination rules, and TanStack integration limits.
 
@@ -428,6 +468,11 @@ remain unsupported. See
 [architecture and next needs](ARCHITECTURE.md) for the adoption boundaries.
 
 ## Generated output
+
+Shared runtime helpers are authored in POM and copied once into each output set;
+they are not customized for every operation. Generated definitions import those
+local helpers. Keep this self-contained delivery model when adding execution or
+cache capabilities; a separate runtime package is not required.
 
 Generation uses the package's pinned formatter and writes a complete set of
 modules with `.pom-manifest.json`. Exclude these files from application formatter

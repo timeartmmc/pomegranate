@@ -11,6 +11,7 @@ import { surfaceNames } from './policy.js';
 
 export type CompileOptions = Readonly<{
   clients: readonly string[];
+  executionClients?: readonly string[];
   transportHeaders?: readonly string[];
   targets?: Readonly<Record<string, 'browser' | 'native'>>;
   queries?: Readonly<Record<string, readonly string[]>>;
@@ -23,6 +24,7 @@ export type CompileOptions = Readonly<{
 }>;
 export const selectionKeys = [
   'clients',
+  'executionClients',
   'transportHeaders',
   'standalone',
   'targets',
@@ -36,6 +38,7 @@ export type RootSelection = Readonly<{
 }>;
 export type Selection = Readonly<{
   clients: readonly string[];
+  executionClients: readonly string[];
   transportHeaders: readonly string[];
   targets: Readonly<Record<string, 'browser' | 'native'>>;
   queries: Readonly<Record<string, readonly string[]>>;
@@ -74,6 +77,18 @@ export function parseSelection(value: Record<string, unknown>): Selection {
     value.clients.length === 0
       ? []
       : surfaceNames(value.clients, 'clients');
+  const executionClients =
+    value.executionClients === undefined ||
+    (Array.isArray(value.executionClients) &&
+      value.executionClients.length === 0)
+      ? []
+      : surfaceNames(value.executionClients, 'executionClients');
+  for (const name of executionClients)
+    if (!clients.includes(name))
+      fail(
+        'executionClients',
+        `execution client ${JSON.stringify(name)} must name a selected client`,
+      );
   const headerInput =
     value.transportHeaders === undefined ? [] : value.transportHeaders;
   if (
@@ -182,6 +197,7 @@ export function parseSelection(value: Record<string, unknown>): Selection {
   );
   return {
     clients,
+    executionClients,
     transportHeaders,
     targets,
     standalone,

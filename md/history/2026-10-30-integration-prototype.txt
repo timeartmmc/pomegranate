@@ -1,0 +1,47 @@
+POM EXECUTION/CACHE PROTOTYPE: RECORDED EXPERIMENT
+2026-10-30
+
+This records a temporary experiment against the unpublished checkout at
+6b0d7fbc79ee63ecdfa0a5218d5ae4a8068e8662 plus its existing executable-client
+changes. Neither feature was added to the original source repository.
+The later execution/cache integration plan is complete. EXECUTION.md and
+QUERIES.md own current behavior; this record describes the earlier candidate.
+
+The candidate executor accepted raw evidence or a receipt minted by its supplied
+validateResponse callback. Receipts were invocation-bound, and recovery could
+inspect validated denial values. Per-factory body() selection had distinct
+body/envelope keys for ordinary, cursor, and offset queries.
+
+Recorded verification
+
+On Node 26.12.1, bun run verify passed 681 tests, strict types, type-aware lint,
+Chromium checks, example drift/run, declaration consumers, and a 69-file packed
+installation. The packed consumer used TypeScript 5.7.3, Zod 4.6.6, and Query Core
+5.104.5; generated sources and JavaScript ran after removing the compiler.
+Node 22/24 execution was not repeated for this experiment.
+
+A separate one-operation teaching example later passed 32 checks. Its fully
+selected output contained 536 operation/schema-specific TypeScript lines and
+2,402 copied shared-helper lines, including comments and notices. That shared
+portion stayed fixed across synthetic one-, ten-, and hundred-operation inputs.
+Synthetic minified entries retained 12.6 KB of POM code for the core and 31.2 KB
+with all selected layers, excluding Zod/Query Core. These are example measurements,
+not application size, speed, or maintenance guarantees.
+
+Acceptance limits and follow-up review
+
+The green suite did not establish a uniform result-mutability contract: raw
+results were mutable, scoped results deeply frozen, and common types permitted
+mutation. Fix that mismatch before adoption. Memoized receipts also repeated
+freezing unnecessarily.
+
+New runtime fixtures covered body pagination, but shared packed checks did not
+yet exercise generated cursor/offset body factories or mounted body/scoped hooks.
+Existing browser success cannot be claimed as coverage of every new combination.
+Private consumer experiments remain application-owned evidence and do not
+establish a full production migration.
+
+The implementation, independent probes, and logs were retained as local
+Git-metadata artifacts during the 2026-10-31 cleanup. They are review material,
+not release artifacts or current implementation. Keep copied runtimes; changing
+package delivery is not required by either capability.

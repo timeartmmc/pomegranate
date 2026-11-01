@@ -53,6 +53,7 @@ export function selectClients(
 ): readonly Client[] {
   const {
     clients: names,
+    executionClients,
     targets,
     transportHeaders,
     queries,
@@ -118,6 +119,7 @@ export function selectClients(
     });
     return {
       name,
+      execution: executionClients.includes(name),
       ...(target === undefined ? {} : { target }),
       transportHeaders,
       operations,

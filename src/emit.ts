@@ -304,11 +304,20 @@ function renderClient(
     export { operations } from './client.${client.name}.operations.ts';
     export type { RequestTypes, ResponseTypes } from './client.${client.name}.schemas.ts';
     export { RequestValidationError } from './runtime.ts';
-    export type { PreparedRequest, Responses, ProtocolResult, ProtocolFailure, ObservedResponse, HeaderContext, MultipartField } from './runtime.ts';`;
+    export type { PreparedRequest, Responses, ProtocolResult, ProtocolFailure, ObservedResponse, HeaderContext, MultipartField } from './runtime.ts';
+    ${
+      client.execution
+        ? `export { createClient, ResponseError } from './client.${client.name}.execute.ts';
+    export type { ClientConfig, Executor, Execution, ExecutionContext, ResponseInspection, ValidatedResponse, CancellationEvent, CancellationMapper, TypedResponseError } from './client.${client.name}.execute.ts';`
+        : ''
+    }`;
   return {
     [`client.${client.name}.schemas.ts`]: emittedSchema,
     [`client.${client.name}.operations.ts`]: emittedOperations,
     [`client.${client.name}.ts`]: index,
+    ...(client.execution
+      ? { [`client.${client.name}.execute.ts`]: renderExecution(client) }
+      : {}),
     ...(client.queries.length + client.infiniteQueries.length > 0
       ? {
           [`client.${client.name}.queries.ts`]: renderQueries(
@@ -320,13 +329,32 @@ function renderClient(
   };
 }
 
+function renderExecution(client: Client): string {
+  const entries = client.operations.map(
+    (operation) =>
+      `[${JSON.stringify(operation.id)}]: defineCall({ operation: operations[${JSON.stringify(operation.id)}], ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
+  );
+  return `${banner}
+    import { operations } from './client.${client.name}.operations.ts';
+    import { defineCall } from './call-runtime.ts';
+    import { executionConfig } from './execution-runtime.ts';
+    import type { ClientConfig } from './execution-runtime.ts';
+    import type { ExecutionClient } from './call-runtime.ts';
+    export { ResponseError } from './execution-runtime.ts';
+    export type { ClientConfig, Executor, Execution, ExecutionContext, ResponseInspection, ValidatedResponse, CancellationEvent, CancellationMapper, TypedResponseError } from './execution-runtime.ts';
+    export function createClient(config: ClientConfig): ExecutionClient<typeof operations> {
+      const runtime = executionConfig(config);
+      return Object.freeze({ ${entries.join(',')} });
+    }`;
+}
+
 function renderQueries(descriptor: Descriptor, client: Client): string {
   const selected = client.queries
     .map((operation) => JSON.stringify(operation.id))
     .join(' | ');
   const entries = client.queries.map(
     (operation) =>
-      `[${JSON.stringify(operation.id)}]: defineQuery({ operation: operations[${JSON.stringify(operation.id)}], execute, namespace, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
+      `[${JSON.stringify(operation.id)}]: defineQuery({ operation: operations[${JSON.stringify(operation.id)}], bodyCache: ${operation.responses.filter((response) => response.status >= 200 && response.status < 300).every((response) => response.body.kind !== 'none')}, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
   );
   // Removing cursors and transport headers can remove every schema reference
   // from base inputs, even when the ordinary client needs those components.
@@ -369,13 +397,13 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
         `[${JSON.stringify(operation.id)}]: InfiniteQueryFactoryFor<typeof ${op}, z.input<typeof ${name}>, ${JSON.stringify(binding.items)}${offset ? ', number' : ''}>;`,
       );
       if (offset)
-        return `[${JSON.stringify(operation.id)}]: defineOffsetQuery({ operation: ${op}, input: ${name}, offset: ${JSON.stringify(binding.offset)}, fields: ${JSON.stringify({ offset: binding.responseOffset, limit: binding.responseLimit, total: binding.total, items: binding.items })}, page: page => ({ offset: page.data[${JSON.stringify(binding.responseOffset)}], limit: page.data[${JSON.stringify(binding.responseLimit)}], total: page.data[${JSON.stringify(binding.total)}], items: page.data[${JSON.stringify(binding.items)}] }), execute, namespace, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
-      return `[${JSON.stringify(operation.id)}]: defineInfiniteQuery({ operation: ${op}, input: ${name}, cursor: ${JSON.stringify(binding.cursor)}, nextCursor: page => page.data[${JSON.stringify(binding.nextCursor)}], items: page => page.data[${JSON.stringify(binding.items)}], execute, namespace, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
+        return `[${JSON.stringify(operation.id)}]: defineOffsetQuery({ operation: ${op}, input: ${name}, offset: ${JSON.stringify(binding.offset)}, fields: ${JSON.stringify({ offset: binding.responseOffset, limit: binding.responseLimit, total: binding.total, items: binding.items })}, page: page => ({ offset: page[${JSON.stringify(binding.responseOffset)}], limit: page[${JSON.stringify(binding.responseLimit)}], total: page[${JSON.stringify(binding.total)}], items: page[${JSON.stringify(binding.items)}] }), bodyCache: true, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
+      return `[${JSON.stringify(operation.id)}]: defineInfiniteQuery({ operation: ${op}, input: ${name}, cursor: ${JSON.stringify(binding.cursor)}, nextCursor: page => page[${JSON.stringify(binding.nextCursor)}], items: page => page[${JSON.stringify(binding.items)}], bodyCache: true, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
     },
   );
   const infinite = client.infiniteQueries.length > 0;
   const factories = ['queryConfig'];
-  const types = ['QueryExecutor'];
+  const types = ['QueryConfig'];
   if (client.queries.length > 0) {
     factories.push('defineQuery');
     types.push('QueryFactories');
@@ -403,12 +431,12 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     ${inputs.join('\n')}
     export { QueryResponseError } from './query-runtime.ts';
     export { shareQueryData } from './query-sharing.ts';
-    export type { CacheContext, QueryExecutor, TypedQueryResponseError } from './query-runtime.ts';
+    export type { CacheContext, QueryConfig, QueryExecutor, Execution, ResponseInspection, ValidatedResponse, CancellationEvent, CancellationMapper, OperationInvalidationFilter, TypedQueryResponseError } from './query-runtime.ts';
     ${
       client.queries.length
         ? `
-    export function createQueries(config: Readonly<{ namespace: string; execute: QueryExecutor }>): QueryFactories<Pick<typeof operations, ${selected}>> {
-      const { namespace, execute } = queryConfig(config);
+    export function createQueries(config: QueryConfig): QueryFactories<Pick<typeof operations, ${selected}>> {
+      const runtime = queryConfig(config);
       return Object.freeze({ ${entries.join(',')} });
     }`
         : ''
@@ -416,8 +444,8 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     ${
       infinite
         ? `
-    export function createInfiniteQueries(config: Readonly<{ namespace: string; execute: QueryExecutor }>): Readonly<{ ${infiniteTypes.join('\n')} }> {
-      const { namespace, execute } = queryConfig(config);
+    export function createInfiniteQueries(config: QueryConfig): Readonly<{ ${infiniteTypes.join('\n')} }> {
+      const runtime = queryConfig(config);
       return Object.freeze({ ${infiniteEntries.join(',')} });
     }`
         : ''
@@ -460,6 +488,18 @@ export async function render(
   const outputs: Record<string, string> = {
     'runtime.ts': `${banner}${helper}`,
   };
+  if (clients.some((client) => client.execution))
+    outputs['call-runtime.ts'] =
+      `${banner}${await readFile(new URL('./call-runtime.ts', import.meta.url), 'utf8')}`;
+  if (
+    clients.some(
+      (client) =>
+        client.execution ||
+        client.queries.length + client.infiniteQueries.length > 0,
+    )
+  )
+    outputs['execution-runtime.ts'] =
+      `${banner}${await readFile(new URL('./execution-runtime.ts', import.meta.url), 'utf8')}`;
   if (
     clients.some(
       (client) => client.queries.length + client.infiniteQueries.length > 0,

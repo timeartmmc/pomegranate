@@ -2,12 +2,18 @@
   "version": 1,
   "generator": "@pomegranate/compiler",
   "files": {
+    "call-runtime.ts": "b27b8f1654a513ee02c736eefe17138cc3e8568101ac5340ba7863127ceef4d6",
+    "client.consumer.execute.ts": "43a98a1860cd802f844c8218fb2953a637ff12b8bbf1e0493b549bd59fb887b7",
     "client.consumer.operations.ts": "508e4e8ee26d8af9d85b6d6698b9a54207c9d3a7bc514f9ef771c9c0406bcc03",
+    "client.consumer.queries.ts": "362e9328cc12146193ca8857850af67a5e5e7c4afb2dac78ec7b7dee8b36bc71",
     "client.consumer.schemas.ts": "d170e37a14dd49ca64fc90cd6c8e60d1cd0ffc5f1a3891339c7af582691d0aa8",
-    "client.consumer.ts": "bbbac0a35018d5ee38398c7da560e6499b3489155bbbc341ba0b5d71100324aa",
+    "client.consumer.ts": "571e7ef80dc659ef4bb507500f391ad253f4db3a325b528aa7f326f9819b6e7a",
     "client.staff.operations.ts": "6b5aef4f538c62b0592345ef7fd5f5054b16ba932b9d8ff3adf0a8e0838b1a46",
     "client.staff.schemas.ts": "7b1b3aebbfa8e22e12c3cb3c9a6238838c8fddf41b4bfd9a3544fb45b5ae6cc5",
     "client.staff.ts": "e2c13bfb8d81c1752e2e036de65e2d087b56fe7e76b96a73af44532210df01bb",
+    "execution-runtime.ts": "4c31bf1849700b90d5933af52886fabb2f1dd26c1b2c1caf380a8d8605d64f60",
+    "query-runtime.ts": "43dade1cbaafde3b85b70ad132275e89b13c6177c273023e04db5bb07d7d4dcf",
+    "query-sharing.ts": "006ea3d09efc3a005e862f92d2fb710fceb86d405888bde3fbf7525642e14b80",
     "runtime.ts": "a28d43ffb2786f622c8596c35547f954f60a69d1bf2d0c00c3a6df066b435079"
   }
 }

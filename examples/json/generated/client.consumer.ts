@@ -12,3 +12,15 @@ export type {
   HeaderContext,
   MultipartField,
 } from './runtime.ts';
+export { createClient, ResponseError } from './client.consumer.execute.ts';
+export type {
+  ClientConfig,
+  Executor,
+  Execution,
+  ExecutionContext,
+  ResponseInspection,
+  ValidatedResponse,
+  CancellationEvent,
+  CancellationMapper,
+  TypedResponseError,
+} from './client.consumer.execute.ts';

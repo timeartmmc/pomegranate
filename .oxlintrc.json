@@ -38,6 +38,7 @@
     "test/symbol-types.ts",
     "test/query-types.ts",
     "test/infinite-types.ts",
-    "test/offset-types.ts"
+    "test/offset-types.ts",
+    "test/execution-types.ts"
   ]
 }

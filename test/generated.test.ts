@@ -65,7 +65,10 @@ before(async () => {
   await mkdir(join(root, 'generated'));
   const document = generatedFixture();
   for (const [name, source] of Object.entries(
-    await compile(document, { clients: ['consumer', 'staff'] }),
+    await compile(document, {
+      clients: ['consumer', 'staff'],
+      executionClients: ['consumer'],
+    }),
   ))
     await writeFile(join(root, 'generated', name), source);
   await writeFile(join(root, 'package.json'), '{"type":"module"}\n');

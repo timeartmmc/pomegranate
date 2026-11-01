@@ -13,6 +13,7 @@ type ValidationError =
 
 export const multipartSelection: CompileOptions = {
   clients: ['browser', 'native'],
+  executionClients: ['browser', 'native'],
   targets: { browser: 'browser', native: 'native' },
 };
 

@@ -26,7 +26,8 @@ function constrain(
   const refine = (predicate: Expression, message: string) => {
     result = method(result, 'refine', [predicate, literal(message)]);
   };
-  // JSON Schema counts code points; Zod's native string bounds count UTF-16.
+  // Count Unicode code points. Native bounds at the supported Zod floor also
+  // count code points, but adopting them changes the raw issue codes.
   for (const [key, operator, message] of [
     ['minLength', '>=', 'string is too short'],
     ['maxLength', '<=', 'string is too long'],

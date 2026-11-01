@@ -13,7 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
@@ -37,9 +37,16 @@ import {
 } from '../test/infinite-fixture.ts';
 import { offsetFixture, offsetSelection } from '../test/offset-fixture.ts';
 import { verifyQueryDeclarations } from '../test/query-declarations.ts';
+import {
+  executionFixture,
+  executionSelection,
+} from '../test/execution-fixture.ts';
+import { verifyExecutionDeclarations } from '../test/execution-declarations.ts';
+import { verifyQueryPlatform } from '../test/query-platform-check.ts';
 
 const exec = promisify(execFile);
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+const suppliedTarball = process.argv[2] ? resolve(process.argv[2]) : undefined;
 // Source tests use pinned development releases; installed consumers exercise the
 // Zod peer minimum with the TypeScript 5.7 compiler line instead.
 const minimumZodVersion = '4.6.6';
@@ -83,15 +90,20 @@ function assertRuntimeLicense(source: string) {
 
 try {
   console.log(`Verifying packed package on ${process.version}`);
-  const tarball = join(scratch, 'compiler.tgz');
+  const tarball = suppliedTarball ?? join(scratch, 'compiler.tgz');
   // Packing runs the build: stale modules from removed source files must not
   // survive into either the archive or the local distribution directory.
   const staleModule = 'dist/obsolete-build-probe.js';
-  await run(process.execPath, [join(repo, 'scripts/clean-dist.ts')], repo);
-  await mkdir(join(repo, 'dist'), { recursive: true });
-  await writeFile(join(repo, staleModule), 'throw new Error("stale build");\n');
-  await run('bun', ['pm', 'pack', '--filename', tarball], repo);
-  await assert.rejects(stat(join(repo, staleModule)), { code: 'ENOENT' });
+  if (!suppliedTarball) {
+    await run(process.execPath, [join(repo, 'scripts/clean-dist.ts')], repo);
+    await mkdir(join(repo, 'dist'), { recursive: true });
+    await writeFile(
+      join(repo, staleModule),
+      'throw new Error("stale build");\n',
+    );
+    await run('bun', ['pm', 'pack', '--filename', tarball], repo);
+    await assert.rejects(stat(join(repo, staleModule)), { code: 'ENOENT' });
+  }
   const entries = json(
     (
       await run(
@@ -118,6 +130,8 @@ try {
   });
   assert.ok(paths.includes('dist/cli.js'));
   assert.ok(paths.includes('dist/runtime.ts'));
+  assert.ok(paths.includes('dist/execution-runtime.ts'));
+  assert.ok(paths.includes('dist/call-runtime.ts'));
   assert.ok(paths.includes('LICENSE'));
   assert.ok(!paths.includes(staleModule));
   for (const path of paths) {
@@ -128,6 +142,7 @@ try {
           'LICENSE',
           'README.md',
           'QUERIES.md',
+          'EXECUTION.md',
           'ARCHITECTURE.md',
           'CONTRIBUTING.md',
         ].includes(path),
@@ -152,6 +167,8 @@ try {
     'infinite-checks.ts',
     'infinite-lifecycle-checks.ts',
     'offset-checks.ts',
+    'execution-checks.ts',
+    'execution-integration-checks.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, 'verification', name));
   await writeFile(
@@ -275,6 +292,7 @@ try {
     'symbol-generated/*.ts',
     'query-generated/*.ts',
     'offset-generated/*.ts',
+    'execution-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
   for (const name of [
@@ -285,6 +303,7 @@ try {
     'query-types.ts',
     'infinite-types.ts',
     'offset-types.ts',
+    'execution-types.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, name));
   await writeFile(
@@ -387,6 +406,91 @@ try {
     join(consumer, 'offset-pom.json'),
   ]);
   await run(binary, ['check', '--config', join(consumer, 'offset-pom.json')]);
+  await writeFile(
+    join(consumer, 'execution-openapi.json'),
+    JSON.stringify(executionFixture()),
+  );
+  await writeFile(
+    join(consumer, 'execution-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './execution-openapi.json',
+      output: './execution-generated',
+      ...executionSelection,
+    }),
+  );
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'execution-pom.json'),
+  ]);
+  await run(binary, [
+    'check',
+    '--config',
+    join(consumer, 'execution-pom.json'),
+  ]);
+  // Execution alone must compile and run with Zod before TanStack is installed.
+  await writeFile(
+    join(consumer, 'execution-only-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './execution-openapi.json',
+      output: './execution-only',
+      clients: ['consumer'],
+      executionClients: ['consumer'],
+      transportHeaders: ['X-Language'],
+    }),
+  );
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'execution-only-pom.json'),
+  ]);
+  await run(binary, [
+    'check',
+    '--config',
+    join(consumer, 'execution-only-pom.json'),
+  ]);
+  await writeFile(
+    join(consumer, 'execution-only.json'),
+    JSON.stringify({
+      compilerOptions: {
+        ...record(tsconfig.compilerOptions),
+        lib: ['ES2022'],
+        types: ['node'],
+        noEmit: true,
+      },
+      include: ['execution-only/*.ts'],
+    }),
+  );
+  await run(process.execPath, [
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+    '-p',
+    join(consumer, 'execution-only.json'),
+  ]);
+  await run(process.execPath, [
+    '--input-type=module',
+    '-e',
+    `
+    import assert from 'node:assert/strict';
+    import {createClient} from './execution-only/client.consumer.ts';
+    const client = createClient({namespace: 'no-tanstack', execute: async () => ({status:204, headers:{}, body:''})});
+    assert.equal((await client.health.call({context:{}})).status,204);
+    const scoped = createClient({namespace: 'no-tanstack-scoped', execute: async (_request, execution) => execution.validateResponse({status:204, headers:{}, body:''})});
+    const healthy = await scoped.health.call({context:{}});
+    assert.equal(healthy.status,204);
+    assert.equal(Object.hasOwn(healthy,'data'),true);
+    assert.equal(healthy.data,undefined);
+    const controller = new AbortController();
+    const cancellation = new Error('standalone cancellation');
+    controller.abort('cancelled before transport');
+    let mappings = 0;
+    const mapped = createClient({namespace:'no-tanstack-mapped',execute:async()=>assert.fail('pre-abort invoked executor'),mapCancellation:event=>{mappings++;assert.equal(event.executorInvoked,false);return {error:cancellation};}});
+    await assert.rejects(mapped.health.call({context:{},signal:controller.signal}),error=>error===cancellation);
+    assert.equal(mappings,1);
+    await assert.rejects(import('@tanstack/query-core'), {code:'ERR_MODULE_NOT_FOUND'});
+  `,
+  ]);
   await run('npm', [
     'install',
     '--ignore-scripts',
@@ -430,6 +534,11 @@ try {
     '-p',
     join(consumer, 'query-native-tsconfig.json'),
   ]);
+  await verifyQueryPlatform(
+    consumer,
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+    ['query-generated', 'offset-generated'],
+  );
   await run(binary, ['--help']);
   await run(binary, [
     'generate',
@@ -456,6 +565,7 @@ try {
       openapi: './multipart-openapi.json',
       output: './native-only',
       clients: ['native'],
+      executionClients: ['native'],
       targets: { native: 'native' },
     }),
   );
@@ -705,6 +815,11 @@ try {
     'multipart-generated/runtime.ts',
     'multipart-generated/runtime.browser.ts',
     'query-generated/query-runtime.ts',
+    'query-generated/execution-runtime.ts',
+    'execution-generated/execution-runtime.ts',
+    'multipart-generated/execution-runtime.ts',
+    'execution-generated/call-runtime.ts',
+    'multipart-generated/call-runtime.ts',
     'query-generated/query-sharing.ts',
   ])
     assertRuntimeLicense(await readFile(join(consumer, path), 'utf8'));
@@ -764,9 +879,25 @@ try {
     join(repo, 'test/infinite-types.ts'),
     join(repo, 'test/offset-types.ts'),
   );
+  await verifyExecutionDeclarations(
+    consumer,
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+    join(repo, 'test/execution-types.ts'),
+  );
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
+    import * as executionModule from './execution-generated/client.consumer.ts';
+    import * as executionQueries from './execution-generated/client.consumer.queries.ts';
+    import * as executionStaff from './execution-generated/client.staff.ts';
+    import {verifyExecutions, verifyExecutableMultipart, verifyExecutionParsing} from './verification/execution-checks.ts';
+    await verifyExecutions(executionModule,executionQueries,executionStaff);
+    import * as executionSchemas from './execution-generated/client.consumer.schemas.ts';
+    import * as exampleTransport from './transport.ts';
+    await verifyExecutionParsing(executionModule,executionSchemas,exampleTransport);
+    import * as browserModule from './multipart-generated/client.browser.ts';
+    import * as nativeModule from './multipart-generated/client.native.ts';
+    await verifyExecutableMultipart(browserModule,nativeModule);
     import {createQueries, QueryResponseError} from './query-generated/client.consumer.queries.ts';
     import {verifyQueries} from './verification/query-checks.ts';
     await verifyQueries(createQueries, QueryResponseError);
@@ -818,6 +949,17 @@ try {
     '-e',
     `
     import assert from 'node:assert/strict';
+    import * as executionModule from './.build/execution-generated/client.consumer.js';
+    import * as executionQueries from './.build/execution-generated/client.consumer.queries.js';
+    import * as executionStaff from './.build/execution-generated/client.staff.js';
+    import {verifyExecutions, verifyExecutableMultipart, verifyExecutionParsing} from './verification/execution-checks.ts';
+    await verifyExecutions(executionModule,executionQueries,executionStaff);
+    import * as executionSchemas from './.build/execution-generated/client.consumer.schemas.js';
+    import * as exampleTransport from './.build/transport.js';
+    await verifyExecutionParsing(executionModule,executionSchemas,exampleTransport);
+    import * as browserModule from './.build/multipart-generated/client.browser.js';
+    import * as nativeModule from './.build/multipart-generated/client.native.js';
+    await verifyExecutableMultipart(browserModule,nativeModule);
     import {createQueries, QueryResponseError} from './.build/query-generated/client.consumer.queries.js';
     import {verifyQueries} from './verification/query-checks.ts';
     await verifyQueries(createQueries, QueryResponseError);
