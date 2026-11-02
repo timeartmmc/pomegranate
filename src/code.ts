@@ -20,16 +20,6 @@ export const literal = (value: Scalar): Expression =>
   node(JSON.stringify(value));
 export const array = (values: readonly Expression[]): Expression =>
   node(`[${values.map((value) => value.source).join(',')}]`, values);
-export const member = (
-  receiver: Expression,
-  key: string | Expression,
-): Expression =>
-  node(
-    typeof key === 'string'
-      ? `${receiver.source}.${key}`
-      : `${receiver.source}[${key.source}]`,
-    typeof key === 'string' ? [receiver] : [receiver, key],
-  );
 export const call = (
   callee: Expression,
   args: readonly Expression[] = [],
@@ -38,22 +28,6 @@ export const call = (
     `${callee.source}(${args.map((argument) => argument.source).join(',')})`,
     [callee, ...args],
   );
-export const method = (
-  receiver: Expression,
-  name: string,
-  args: readonly Expression[] = [],
-): Expression => call(member(receiver, name), args);
-export const arrow = (parameter: string, body: Expression): Expression =>
-  node(`${parameter} => ${body.source}`, [body]);
-export const binary = (
-  left: Expression,
-  operator: '>=' | '<=' | '>' | '<',
-  right: Expression,
-): Expression =>
-  node(`${left.source} ${operator} ${right.source}`, [left, right]);
-export const spread = (value: Expression): Expression =>
-  node(`...${value.source}`, [value]);
-
 export function propertyKey(name: string | number): string {
   const quoted = JSON.stringify(name);
   // __proto__ is data, not an object-literal prototype setter. Negative
@@ -109,11 +83,9 @@ export function pureInitializer(
   expression: Expression,
   location: string,
 ): string {
-  // Only generated schema/operation construction and fresh aggregate freezing
-  // use this boundary. They allocate validators, closures and plain metadata;
-  // they never parse input or invoke application callbacks. Keep argument
-  // construction inside the IIFE so removing it also removes nested allocations.
-  // Do not mark arbitrary calls pure: runtime validation can have visible effects.
+  // Standalone validator allocation is pure: it captures a named parser without
+  // parsing input or invoking application callbacks. Keep argument construction
+  // inside the IIFE so removing the facade also removes its allocations.
   return source(
     {
       source: `/* @__PURE__ */ (() => (${expression.source}))()`,

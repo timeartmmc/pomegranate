@@ -2,18 +2,18 @@
   "version": 1,
   "generator": "@pomegranate/compiler",
   "files": {
-    "call-runtime.ts": "b27b8f1654a513ee02c736eefe17138cc3e8568101ac5340ba7863127ceef4d6",
-    "client.consumer.execute.ts": "68c89fdb4ff6958be973e6853920f78c80ffb175639c7c5f464b33a0f8880710",
-    "client.consumer.operations.ts": "9fbdeb9ec20eeeab36afff10a72d158970fd8a3454ec80de133681de6169ca92",
-    "client.consumer.queries.ts": "9fcce2fee66f4c0b795f1524dd4ce0b3d5a610e1a1c4154ef42570661158bb84",
-    "client.consumer.schemas.ts": "4714d6497f29e8ebe584b8b5043a9929a55a24e752bb65a83321ca4d71268ac1",
-    "client.consumer.ts": "571e7ef80dc659ef4bb507500f391ad253f4db3a325b528aa7f326f9819b6e7a",
-    "client.staff.operations.ts": "2116b00a997e4895f90c94069f5f1e119223a9fc049eb962ff7d3e19ddfce98f",
-    "client.staff.schemas.ts": "60fb588280b9362c7d07204403b678fd249b21d5376a720e61305a5b5ed6c872",
+    "call-runtime.ts": "f471bcfd99ece079a68d12cf971425d8ec1e68f10c4aba76569c58ac4349a689",
+    "client.consumer.execute.ts": "8f319b7c955971987d2766172e0d04ea56a4b0cd2bd6ad3e4e3024553f6318e2",
+    "client.consumer.operations.ts": "60908ba0059e2ce43d522890b0013d111923dccbebda0d84d8cafc60912b2ba1",
+    "client.consumer.queries.ts": "61b8e9c1cee45704f3a274987c2c331832f3725021e3d86cfa41510634fb2294",
+    "client.consumer.schemas.ts": "f5013195bf573eda927fe3a5ea9f64508ad440f180eff867bd400f64d3d54c3e",
+    "client.consumer.ts": "3f2b1b675b456d5d76ca759b716220c49d119bd18b532ceee2bf387e8603533c",
+    "client.staff.operations.ts": "1c501afc58bafe0bc40a3de5277887ab25f74c0722365c82427289dd9f363e90",
+    "client.staff.schemas.ts": "25dafbf63a61de71795a56fb6caf195abe53dc1ab49abbc4033ae3ac696414b1",
     "client.staff.ts": "e2c13bfb8d81c1752e2e036de65e2d087b56fe7e76b96a73af44532210df01bb",
     "execution-runtime.ts": "52d47ae45958799966ba35c20f7d3d9c3c7430e61257c108f3963e15e604f59f",
-    "query-runtime.ts": "444e932882f9a530d862b9b69bfeab0bd430986f5c3138cb95985ee7f4bd6f96",
+    "query-runtime.ts": "ec57988147013fb39e3c68ee80264a38fd0f57ee625a38d3deb0d2a7656e0585",
     "query-sharing.ts": "006ea3d09efc3a005e862f92d2fb710fceb86d405888bde3fbf7525642e14b80",
-    "runtime.ts": "8778b2615607ff97db6125d42fda58c4cbfe766be6fe8185da64e0e1c5a6bc05"
+    "runtime.ts": "7148a2ba2925276d7b960399b57c41f4a245bb19325db985cb5fdf8cba6f9538"
   }
 }

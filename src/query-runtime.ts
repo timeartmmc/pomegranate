@@ -39,7 +39,7 @@ import type {
   ProtocolIssue,
 } from './runtime.ts';
 import { validateOptions } from './runtime.ts';
-import type * as z from 'zod';
+import type { Parse } from './runtime.ts';
 import { shareQueryData } from './query-sharing.ts';
 
 import {
@@ -651,7 +651,7 @@ export type InfiniteQueryFactoryFor<
 >;
 
 export function defineInfiniteQuery<
-  O extends z.ZodType<RequestParts | undefined>,
+  O extends RequestParts | undefined,
   const R extends Responses,
   Items extends readonly unknown[],
 >(
@@ -661,12 +661,12 @@ export function defineInfiniteQuery<
         build: (input: never) => PreparedRequest<R, 'none'>;
         parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
       };
-      input: O;
+      input: Parse<O>;
       cursor: string;
       nextCursor: (page: Body<R>) => Cursor;
       items: (page: Body<R>) => Items;
     }>,
-): InfiniteQueryFactory<z.input<O>, R, Items[number]> {
+): InfiniteQueryFactory<O, R, Items[number]> {
   return infiniteFactory<O, R, Items, string, 'envelope'>(
     {
       ...config,
@@ -723,7 +723,7 @@ function offsetIssues(
 }
 
 export function defineOffsetQuery<
-  O extends z.ZodType<RequestParts | undefined>,
+  O extends RequestParts | undefined,
   const R extends Responses,
   Items extends readonly unknown[],
 >(
@@ -733,12 +733,12 @@ export function defineOffsetQuery<
         build: (input: never) => PreparedRequest<R, 'none'>;
         parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
       };
-      input: O;
+      input: Parse<O>;
       offset: string;
       fields: OffsetFields;
       page: (page: Body<R>) => OffsetPage<Items>;
     }>,
-): InfiniteQueryFactory<z.input<O>, R, Items[number], number> {
+): InfiniteQueryFactory<O, R, Items[number], number> {
   return infiniteFactory<O, R, Items, number, 'envelope'>(
     {
       ...config,
@@ -775,7 +775,7 @@ export function defineOffsetQuery<
 }
 
 function infiniteFactory<
-  O extends z.ZodType<RequestParts | undefined>,
+  O extends RequestParts | undefined,
   const R extends Responses,
   Items extends readonly unknown[],
   P extends Pagination,
@@ -787,7 +787,7 @@ function infiniteFactory<
         build: (input: never) => PreparedRequest<R, 'none'>;
         parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
       };
-      input: O;
+      input: Parse<O>;
       parameter: string;
       profile: P extends number ? 'offset' : 'cursor';
       initialPageParam: InitialPageParameter<P>;
@@ -803,9 +803,9 @@ function infiniteFactory<
       ) => readonly ProtocolIssue[];
     }>,
   representation: M,
-): InfiniteQueryFactory<z.input<O>, R, Items[number], P, M> {
+): InfiniteQueryFactory<O, R, Items[number], P, M> {
   let bodyFactory:
-    | InfiniteQueryFactory<z.input<O>, R, Items[number], P, 'body'>
+    | InfiniteQueryFactory<O, R, Items[number], P, 'body'>
     | undefined;
   const prefix = cachePrefixes[config.profile][
     representation
@@ -823,10 +823,7 @@ function infiniteFactory<
     input: unknown,
   ) => PreparedRequest<R, 'none'>;
   const responseIssues = config.responseIssues;
-  function pageRequest(
-    input: z.output<O>,
-    parameter: unknown,
-  ): PreparedQuery<R> {
+  function pageRequest(input: O, parameter: unknown): PreparedQuery<R> {
     const value = config.parsePageParam(parameter);
     const request = build({
       ...input,
@@ -845,7 +842,7 @@ function infiniteFactory<
         : {}),
     };
   }
-  function prepare(args: Arguments<z.input<O>> | SkippedArguments) {
+  function prepare(args: Arguments<O> | SkippedArguments) {
     const { input, context, executionContext } = queryArguments(args);
     let request: PreparedRequest<R, 'none'> | undefined;
     let fetchPage: ((parameter: unknown) => PreparedQuery<R>) | undefined;
@@ -868,18 +865,18 @@ function infiniteFactory<
     ) as InfiniteQueryKey<R, P, M>;
     return { fetchPage, key, executionContext };
   }
-  function key(args: Arguments<z.input<O>>): InfiniteQueryKey<R, P, M> {
+  function key(args: Arguments<O>): InfiniteQueryKey<R, P, M> {
     const prepared = prepare(args);
     if (!prepared.fetchPage)
       throw new TypeError('query keys require real input');
     return prepared.key;
   }
-  function options(args: Arguments<z.input<O>>): InfiniteQueryOptions<R, P, M>;
+  function options(args: Arguments<O>): InfiniteQueryOptions<R, P, M>;
   function options(
-    args: Arguments<z.input<O>> | SkippedArguments,
+    args: Arguments<O> | SkippedArguments,
   ): SkippableInfiniteQueryOptions<R, P, M>;
   function options(
-    args: Arguments<z.input<O>> | SkippedArguments,
+    args: Arguments<O> | SkippedArguments,
   ): SkippableInfiniteQueryOptions<R, P, M> {
     const { fetchPage, key: queryKey, executionContext } = prepare(args);
     // Query Core installs its infinite-query behavior on this object before
@@ -929,55 +926,50 @@ function infiniteFactory<
       },
     };
   }
-  const factory: InfiniteQueryFactory<
-    z.input<O>,
-    R,
-    Items[number],
-    P,
-    M
-  > = Object.freeze({
-    key,
-    options,
-    isError: operationErrorGuard<R>(scope),
-    invalidationFilter: (scope: OperationScope) =>
-      operationInvalidationFilter(
-        config.namespace,
-        config.client,
-        config.operationId,
-        scope,
-      ),
-    filter: (scope: OperationScope) =>
-      operationFilter(
-        prefix,
-        config.namespace,
-        config.client,
-        config.operationId,
-        scope,
-      ),
-    items: (
-      data: InfiniteData<QueryValue<R, M>, PageParameter<P>> | undefined,
-    ): Items[number][] => {
-      const items: Items[number][] = [];
-      for (const page of data?.pages ?? [])
-        for (const item of config.items(responseBody(page, representation)))
-          items.push(item);
-      return items;
-    },
-    body: (() => {
-      if (!config.bodyCache)
-        throw new TypeError(
-          `${config.operationId} has a bodyless success; use an envelope query`,
-        );
-      if (representation === 'body')
-        return factory as unknown as InfiniteQueryFactory<
-          z.input<O>,
-          R,
-          Items[number],
-          P,
-          'body'
-        >;
-      return (bodyFactory ??= infiniteFactory(config, 'body'));
-    }) as InfiniteQueryFactory<z.input<O>, R, Items[number], P, M>['body'],
-  });
+  const factory: InfiniteQueryFactory<O, R, Items[number], P, M> =
+    Object.freeze({
+      key,
+      options,
+      isError: operationErrorGuard<R>(scope),
+      invalidationFilter: (scope: OperationScope) =>
+        operationInvalidationFilter(
+          config.namespace,
+          config.client,
+          config.operationId,
+          scope,
+        ),
+      filter: (scope: OperationScope) =>
+        operationFilter(
+          prefix,
+          config.namespace,
+          config.client,
+          config.operationId,
+          scope,
+        ),
+      items: (
+        data: InfiniteData<QueryValue<R, M>, PageParameter<P>> | undefined,
+      ): Items[number][] => {
+        const items: Items[number][] = [];
+        for (const page of data?.pages ?? [])
+          for (const item of config.items(responseBody(page, representation)))
+            items.push(item);
+        return items;
+      },
+      body: (() => {
+        if (!config.bodyCache)
+          throw new TypeError(
+            `${config.operationId} has a bodyless success; use an envelope query`,
+          );
+        if (representation === 'body')
+          return factory as unknown as InfiniteQueryFactory<
+            O,
+            R,
+            Items[number],
+            P,
+            'body'
+          >;
+        return (bodyFactory ??= infiniteFactory(config, 'body'));
+      }) as InfiniteQueryFactory<O, R, Items[number], P, M>['body'],
+    });
   return factory;
 }

@@ -17,9 +17,9 @@ export type {
   CancellationMapper,
   TypedResponseError,
 } from './execution-runtime.ts';
-export function createClient(
-  config: ClientConfig,
-): ExecutionClient<typeof operations> {
+export interface ClientMembers extends ExecutionClient<typeof operations> {}
+export type Client = Readonly<ClientMembers>;
+export function createClient(config: ClientConfig): Client {
   const runtime = executionConfig(config);
   return Object.freeze({
     checkHealth: defineCall({

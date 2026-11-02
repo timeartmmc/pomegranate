@@ -44,12 +44,16 @@ import {
 import { verifyExecutionDeclarations } from '../test/execution-declarations.ts';
 import { verifyQueryPlatform } from '../test/query-platform-check.ts';
 
+import {
+  verifyWideDeclarations,
+  wideDeclarationFixture,
+} from '../test/wide-declarations.ts';
+
 const exec = promisify(execFile);
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const suppliedTarball = process.argv[2] ? resolve(process.argv[2]) : undefined;
-// Source tests use pinned development releases; installed consumers exercise the
-// Zod peer minimum with the TypeScript 5.7 compiler line instead.
-const minimumZodVersion = '4.6.6';
+// Source tests use pinned development releases; installed consumers exercise
+// the TypeScript 5.7 compiler line and Query Core minimum instead.
 const minimumQueryVersion = '5.104.5';
 const license = await readFile(join(repo, 'LICENSE'), 'utf8');
 const scratch = await mkdtemp(join(await realpath(tmpdir()), 'pom-package-'));
@@ -178,7 +182,7 @@ try {
         name: 'pom-isolated-verification',
         private: true,
         type: 'module',
-        dependencies: { zod: minimumZodVersion },
+        dependencies: {},
         devDependencies: {
           'pomegranate-compiler': `file:${tarball}`,
           typescript: '5.7.3',
@@ -201,14 +205,10 @@ try {
     '--no-fund',
     '--package-lock=false',
   ]);
-  assert.equal(
-    record(
-      json(
-        await readFile(join(consumer, 'node_modules/zod/package.json'), 'utf8'),
-      ),
-    ).version,
-    minimumZodVersion,
-  );
+  // Generated validators are local functions: no schema library is installed.
+  await assert.rejects(stat(join(consumer, 'node_modules/zod')), {
+    code: 'ENOENT',
+  });
   await assert.rejects(
     stat(join(consumer, 'node_modules/@tanstack/query-core')),
     { code: 'ENOENT' },
@@ -429,7 +429,7 @@ try {
     '--config',
     join(consumer, 'execution-pom.json'),
   ]);
-  // Execution alone must compile and run with Zod before TanStack is installed.
+  // Execution alone must compile and run without a schema library before TanStack is installed.
   await writeFile(
     join(consumer, 'execution-only-pom.json'),
     JSON.stringify({
@@ -855,6 +855,23 @@ try {
       /pomegranate-compiler|oxfmt|prettier|node:|\/Users\//,
     );
   }
+  const wide = wideDeclarationFixture();
+  await writeFile(
+    join(consumer, 'wide-openapi.json'),
+    JSON.stringify(wide.document),
+  );
+  await writeFile(
+    join(consumer, 'wide-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './wide-openapi.json',
+      output: './wide-generated',
+      ...wide.selection,
+    }),
+  );
+  // Generate through the installed package before exercising wide inferred
+  // exports with minimum peers and the TypeScript 5.7 compiler line.
+  await run(binary, ['generate', '--config', join(consumer, 'wide-pom.json')]);
   // Removing the actual compiler installation proves application execution does
   // not reach back into the compiler, its source checkout, or a sibling project.
   await rm(join(consumer, 'node_modules/pomegranate-compiler'), {
@@ -883,6 +900,10 @@ try {
     consumer,
     join(consumer, 'node_modules/typescript/bin/tsc'),
     join(repo, 'test/execution-types.ts'),
+  );
+  await verifyWideDeclarations(
+    consumer,
+    join(consumer, 'node_modules/typescript/bin/tsc'),
   );
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
@@ -1025,7 +1046,7 @@ try {
   `,
   ]);
   console.log(
-    `Packed install passed: ${paths.length} allowed files; Zod ${minimumZodVersion}; TanStack ${minimumQueryVersion}; npm engine-strict install, CLI, library, drift, strict types, transport, queries and compiler-free Node/Bun source and emitted JavaScript execution`,
+    `Packed install passed: ${paths.length} allowed files; no schema library; TanStack ${minimumQueryVersion}; npm engine-strict install, CLI, library, drift, strict types, transport, queries and compiler-free Node/Bun source and emitted JavaScript execution`,
   );
 } finally {
   await rm(scratch, { recursive: true, force: true });

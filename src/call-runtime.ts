@@ -117,7 +117,7 @@ export function defineCall<Input, const R extends Responses>(
         ),
       );
       const signal = callSignal(fields['signal']);
-      // Build synchronously before yielding: Zod snapshots JSON and native file
+      // Build synchronously before yielding: the parser snapshots JSON and native file
       // references, and browser File bytes are immutable. No caller state is
       // reread when application transport later runs recovery or retries.
       const request = prepareExecution(

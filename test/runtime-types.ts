@@ -1,10 +1,10 @@
-import type { ZodType } from 'zod';
 import type {
   ObservedResponse,
   PreparedRequest,
   ProtocolResult,
   RequestValidationError,
   Responses,
+  Validator,
 } from '../src/runtime.ts';
 
 // Runtime-only tables deliberately contain unknown values, including invalid
@@ -19,5 +19,5 @@ export interface RuntimeClient {
   RequestValidationError: typeof RequestValidationError;
 }
 export interface StandaloneModule {
-  schema: ZodType;
+  schema: Validator<unknown>;
 }

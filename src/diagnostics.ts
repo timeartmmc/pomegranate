@@ -72,7 +72,7 @@ export function safeKey(value: string, location: string): string {
 
 export function contractField(value: string, location: string): string {
   safeKey(value, location);
-  // Zod reads inherited properties, and TypeScript even rejects {} as
+  // Fixed parsers read inherited properties, and TypeScript even rejects {} as
   // {toString?: string}. Supporting these fields needs an explicit own-property
   // type policy; weakening generated inputs would hide the contract instead.
   if (Object.hasOwn(Object.prototype, value))

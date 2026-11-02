@@ -21,11 +21,14 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-import * as z from 'zod';
+import { report } from './runtime.ts';
+import type { Invalid, Issues } from './runtime.ts';
 
-// Zod's file validator dereferences File even where it is absent. Report an
-// ordinary validation failure there, while keeping this browser type isolated.
-export const browserFile = z.custom<File>(
-  (value) => typeof File !== 'undefined' && value instanceof File,
-  'expected a browser File',
-);
+// File may be absent outside browsers. Report an ordinary validation failure
+// there, while keeping this browser type isolated. Browser files keep their
+// identity: their bytes are immutable.
+export function browserFile(input: unknown, issues: Issues): File | Invalid {
+  return typeof File !== 'undefined' && input instanceof File
+    ? input
+    : report(issues, 'expected a browser File', true);
+}

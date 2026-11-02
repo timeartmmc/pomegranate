@@ -36,6 +36,11 @@ complete configured selection. Importing the full `operations` registry or using
 application and bundler; generation still validates every declaration and emits
 the complete selected client surfaces.
 
+Factories return the exported readonly `Queries` and `InfiniteQueries` types.
+Their `QueryMembers` and `InfiniteQueryMembers` interfaces keep inferred
+application declarations compact. Treat these interfaces as declaration anchors;
+module augmentation does not add runtime factories.
+
 TypeScript environments without DOM libraries must supply platform declarations
 for `AbortSignal` and `VoidFunction`. Node types provide `AbortSignal`; if needed,
 add `interface VoidFunction { (): void; }` in a global `.d.ts` file.

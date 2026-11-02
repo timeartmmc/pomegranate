@@ -1,7 +1,6 @@
 import { fail } from './diagnostics.js';
 import { propertyKey } from './code.js';
 import type { Client, Direction, Schema } from './model.js';
-import { resolveSchema } from './schemas.js';
 
 function identifier(name: string): string {
   // Escape the escape character too: A-B, A.B and A_hB must remain distinct.
@@ -12,10 +11,10 @@ function identifier(name: string): string {
   );
 }
 
-export const schemaSymbol = (name: string, direction: Direction): string =>
-  `schema_${identifier(name)}_${direction}`;
 export const typeSymbol = (name: string, direction: Direction): string =>
   `type_${identifier(name)}_${direction}`;
+export const parseSymbol = (name: string, direction: Direction): string =>
+  `parse_${identifier(name)}_${direction}`;
 
 export function schemaType(
   schema: Schema,
@@ -29,8 +28,8 @@ export function schemaType(
     case 'ref':
       return reference(schema.name, direction);
     case 'object':
-      // TypeScript's {} includes non-null primitives. Match Zod's empty-object
-      // contract so named types cannot admit values the validator rejects.
+      // TypeScript's {} includes non-null primitives. Match the empty-object
+      // parser so named types cannot admit values the validator rejects.
       if (Object.keys(schema.properties).length === 0)
         return 'Record<string, never>';
       return `{${Object.entries(schema.properties)
@@ -65,21 +64,4 @@ export function schemaType(
           ? 'number'
           : schema.kind;
   }
-}
-
-export function validatorType(
-  schema: Schema,
-  name: string,
-  schemas: Readonly<Record<string, Schema>>,
-  imports: Set<string>,
-): string {
-  // A named structural type stops inference expanding through every reference.
-  // Arrays retain their specialized validator API: $ref siblings use native
-  // .min/.max checks to reject oversized inputs before validating their items.
-  imports.add('ZodType');
-  if (resolveSchema(schema, schemas).kind === 'array') {
-    imports.add('ZodArray');
-    return `ZodArray<ZodType<${name}[number], ${name}[number]>>`;
-  }
-  return `ZodType<${name}, ${name}>`;
 }

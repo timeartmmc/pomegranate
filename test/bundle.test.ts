@@ -79,38 +79,27 @@ async function bundle(
   };
 }
 
-void test('namespace Zod imports reduce retained code and preserve schema validation and diagnostics', async (t) => {
+void test('generated validators bundle without a schema library and preserve schema validation and diagnostics', async (t) => {
   const files = await compile(schemaFixture(), {
     clients: ['samples'],
     transportHeaders: ['X-Origin'],
   });
-  // This control changes only import form. Both variants use the same generated
-  // contracts and initializer boundaries, so it isolates Zod bundle retention.
-  const namedFiles = Object.fromEntries(
-    Object.entries(files).map(([name, source]) => [
-      name,
-      source.replaceAll(
-        "import * as z from 'zod';",
-        "import { z } from 'zod';",
-      ),
-    ]),
-  );
+  // Native validators are generated functions over local runtime helpers.
+  for (const source of Object.values(files))
+    assert.doesNotMatch(source, /from 'zod'|import\('zod'\)/);
   const source =
     "export { operations, RequestValidationError } from './client.samples.ts';";
-  const roots = [await workspace(t, files), await workspace(t, namedFiles)];
-  const outputs = await Promise.all(
-    roots.map((root) => bundle(root, source, 'esbuild', 'zod')),
+  const output = await bundle(
+    await workspace(t, files),
+    source,
+    'esbuild',
+    'native',
   );
-  assert.ok(
-    gzipSync(outputs[0]!.code).length <
-      gzipSync(outputs[1]!.code).length * 0.65,
-  );
-  for (const output of outputs) {
-    const module = (await import(
-      output.url
-    )) as typeof import('./.generated/schema/client.samples.ts');
-    verifySchemas(module.operations, module.RequestValidationError);
-  }
+  assert.doesNotMatch(output.code, /\bzod\b/i);
+  const module = (await import(
+    output.url
+  )) as typeof import('./.generated/schema/client.samples.ts');
+  verifySchemas(module.operations, module.RequestValidationError);
 });
 
 for (const bundler of ['esbuild', 'bun'] as const) {

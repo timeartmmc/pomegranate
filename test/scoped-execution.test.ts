@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { z } from 'zod';
 import { defineOperation, jsonValue } from '../src/runtime.ts';
 import { defineCall } from '../src/call-runtime.ts';
 import { defineQuery } from '../src/query-runtime.ts';
@@ -12,6 +11,7 @@ import type {
   Executor,
 } from '../src/execution-runtime.ts';
 import { invalidOptions, record, runtimeInput } from './assertions.ts';
+import { detail, labelled, noOptions } from './native-schemas.ts';
 
 const policy = {
   auth: { label: 'public', transport: 'none' },
@@ -26,18 +26,18 @@ function operation(onValidate: () => void = () => {}) {
     bodyKind: 'none',
     policy,
     parameters: [],
-    options: z.object({}).strict().optional(),
+    options: noOptions,
     headers: {},
     responses: {
       200: {
         bodyKind: 'json',
         headers: {},
-        schema: z.object({ label: z.string() }).superRefine(onValidate),
+        schema: labelled(onValidate),
       },
       401: {
         bodyKind: 'json',
         headers: {},
-        schema: z.object({ detail: z.string() }),
+        schema: detail,
       },
     },
   });
@@ -200,7 +200,7 @@ void test('private mutable bodies preserve special map keys, -0, and deeply nest
     bodyKind: 'none',
     policy,
     parameters: [],
-    options: z.object({}).strict().optional(),
+    options: noOptions,
     headers: {},
     responses: { 200: { bodyKind: 'json', headers: {}, schema: jsonValue } },
   });
@@ -284,7 +284,7 @@ void test('inspection copies preserve own data when Object.prototype contains a 
       bodyKind: 'none',
       policy,
       parameters: [],
-      options: z.object({}).strict().optional(),
+      options: noOptions,
       headers: {},
       responses: { 200: { bodyKind: 'json', headers: {}, schema: jsonValue } },
     });

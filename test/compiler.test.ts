@@ -130,7 +130,7 @@ void test('compiles every supported method and keeps per-status responses distin
   for (const source of Object.values(outputs))
     for (const [, specifier] of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g))
       assert.ok(
-        specifier === 'zod' || present(specifier).startsWith('./'),
+        present(specifier).startsWith('./'),
         `Unexpected generated import: ${specifier}`,
       );
 });

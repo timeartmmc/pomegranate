@@ -73,16 +73,11 @@ void test('generated browser code preserves declared request and response fields
       }
       if (request.url === '/') {
         response.setHeader('Content-Type', 'text/html');
-        response.end(
-          '<!doctype html><script type="importmap">{"imports":{"zod":"/zod/index.js"}}</script>',
-        );
+        response.end('<!doctype html>');
         return;
       }
-      const mount = request.url.startsWith('/zod/') ? '/zod/' : '/generated/';
-      const directory =
-        mount === '/zod/'
-          ? join(repo, 'node_modules/zod')
-          : join(root, 'built');
+      const mount = '/generated/';
+      const directory = join(root, 'built');
       const path = resolve(directory, request.url.slice(mount.length));
       assert.ok(path.startsWith(directory + sep));
       response.setHeader('Content-Type', 'text/javascript');

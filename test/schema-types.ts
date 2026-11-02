@@ -8,7 +8,50 @@ import type {
   Input as EmptyInput,
   Output as EmptyOutput,
 } from './schema-generated/standalone.empty.js';
+import {
+  requestSchemas,
+  responseSchemas,
+} from './schema-generated/client.samples.schemas.js';
+import type { Validator } from './schema-generated/runtime.js';
 const emptyInput: EmptyInput = {};
+operations.checkSpacedKey.build({ body: { id: 'id', 'a b-c': 'value' } });
+operations.checkCompactKey.build({ body: { id: 'id', 'ab-c': 'value' } });
+operations.checkSpacedLiteral.build({ body: { state: 'a b' } });
+operations.checkCompactLiteral.build({ body: { state: 'ab' } });
+operations.checkTypeLikeLiteral.build({
+  body: { state: 'type_ShortCode_request' },
+});
+operations.checkOtherTypeLikeLiteral.build({
+  body: { state: 'type_LongCode_request' },
+});
+// @ts-expect-error Whitespace in property names is significant.
+operations.checkSpacedKey.build({ body: { id: 'id', 'ab-c': 'value' } });
+// @ts-expect-error Whitespace in literal values is significant.
+operations.checkSpacedLiteral.build({ body: { state: 'ab' } });
+operations.checkTypeLikeLiteral.build({
+  // @ts-expect-error Literal text resembling a shared type name is still data.
+  body: { state: 'type_LongCode_request' },
+});
+const spacedResponse: ResponseTypes['SpacedKey'] = {
+  id: 'id',
+  'a b-c': 'value',
+};
+const literalResponse: ResponseTypes['TypeLikeLiteral'] = {
+  state: 'type_ShortCode_request',
+};
+const wrongSpacedResponse: ResponseTypes['SpacedKey'] = {
+  id: 'id',
+  // @ts-expect-error Response properties retain their exact names too.
+  'ab-c': 'value',
+};
+// @ts-expect-error Response literals do not collapse when their type names match.
+const wrongLiteralResponse: ResponseTypes['SpacedLiteral'] = { state: 'ab' };
+void [
+  spacedResponse,
+  literalResponse,
+  wrongSpacedResponse,
+  wrongLiteralResponse,
+];
 operations.checkTypeArrayString.build({ body: null });
 operations.checkTypeArrayString.build({ body: 'AB' });
 operations.checkTypeArrayEnum.build({ body: 'ready' });
@@ -181,3 +224,23 @@ if (result.kind === 'success' && result.data.kind === 'circle') {
   // @ts-expect-error The discriminator narrows the response branch.
   void result.data.width;
 }
+
+// Native facade inference retains exact directional contracts.
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+    ? true
+    : false;
+type Expect<T extends true> = T;
+export type ArrayOutput = Expect<
+  Equal<
+    ReturnType<typeof responseSchemas.BoundedItemsAlias.parse>,
+    { id: string }[]
+  >
+>;
+const request: Validator<RequestTypes['BoundedItemsAlias']> =
+  requestSchemas.BoundedItemsAlias;
+// @ts-expect-error Required fields remain required.
+const missing: RequestTypes['BoundedItemsAlias'] = [{}];
+// @ts-expect-error Literal schemas retain exact values.
+const wrongLiteral: Validator<'wrong'> = responseSchemas.ShortCode;
+void [request, missing, wrongLiteral];

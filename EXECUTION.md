@@ -18,8 +18,8 @@ Every execution surface must also appear in `clients`. Unknown, unselected or
 duplicate names fail before writing. Omission or `[]` disables execution output.
 Each selected surface gets `client.<surface>.execute.ts` and an explicit
 `createClient` export from its client entry. Its operations and schema maps stay
-independently usable. Execution alone imports no TanStack or React code and needs
-only the supported Zod runtime.
+independently usable. Execution alone uses the copied local validation runtime and imports no
+TanStack, React, or schema-library dependency.
 `call-runtime.ts` holds direct-call construction, while `execution-runtime.ts`
 shares response interpretation and error identity with queries. Native direct
 calls need platform declarations and implementations for `AbortController` and
@@ -56,6 +56,11 @@ of `input`. Calls return promises. Invalid requests reject before the executor
 runs. Successes retain the exact declared 2xx status, raw normalized headers,
 validated declared headers and schema-validated data. Bodyless success has an own
 `data: undefined` field. Different success statuses retain distinct body types.
+
+`createClient` returns the exported readonly `Client` type. Its `ClientMembers`
+interface names declaration members so applications can publish inferred clients
+without expanding the entire API. Treat it as a declaration anchor; module
+augmentation does not add runtime operations.
 
 ## One application executor
 

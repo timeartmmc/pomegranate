@@ -1,7 +1,7 @@
 # Pomegranate
 
 Pomegranate (POM) compiles a strict subset of OpenAPI 3.1 documents in JSON or
-YAML into TypeScript request builders, Zod validators, and response validation
+YAML into TypeScript request builders, native validators, and response validation
 keyed by HTTP status.
 Applications own the transport and the meaning of their authentication, retry,
 and timeout policy. Optional executable clients and query factories delegate
@@ -25,12 +25,11 @@ Compiler verification does not establish a complete application migration.
 ## Use POM in a project
 
 The compiler supports Node.js 22.18+ on the 22.x line, and Node.js 24 or newer.
-Generated code uses Zod 4.6.6 or newer within 4.x. In your TypeScript project,
-install the compiler as a development dependency and Zod for runtime use:
+Generated validators use the copied local runtime without a schema-library
+dependency. Install the compiler as a development dependency:
 
 ```sh
 npm install --save-dev pomegranate-compiler
-npm install zod@4
 ```
 
 npm and Bun can both install the published package. Bun is needed for this
@@ -70,9 +69,8 @@ They use ES2022 runtime APIs; TypeScript targets must be ES2020 or newer for
 bigint literals. The example uses ES2022 target and library declarations.
 When emitting JavaScript with TypeScript 5.7 or newer, enable
 `rewriteRelativeImportExtensions` to produce `.js` imports. For a bundler-only
-`noEmit` typecheck, use `allowImportingTsExtensions`. Core generated modules need
-only Zod at runtime; optional query modules also need Query Core. Deployed
-applications do not need the compiler.
+`noEmit` typecheck, use `allowImportingTsExtensions`. Core and execution-only generated modules have no package runtime dependencies;
+optional query modules need Query Core. Deployed applications do not need the compiler.
 
 For programmatic use in development tooling, pass a parsed OpenAPI `document`:
 
@@ -277,6 +275,15 @@ unknown enum values. Declared dynamic maps validate and preserve their entries.
 Fixed objects validate structural fields, including fields supplied by class
 instances or prototypes, and return fresh plain objects. Dynamic maps require
 plain records.
+Schema registries and standalone `schema` exports expose `parse(unknown)` and
+`safeParse(unknown)`. `parse` returns the named output type or throws
+`ValidationError`; `safeParse` returns `{ success: true, data }` or
+`{ success: false, error }`. Errors expose `issues` with `path` and `message`.
+Generated `RequestTypes`, `ResponseTypes`, and standalone `Input`/`Output` are
+plain contract types. Validators do not expose Zod fluent methods, `z.infer`,
+Zod error utilities, or the Standard Schema interface. Regenerate the complete
+output set and adapt schema-library-specific calls when upgrading.
+
 Pass `parseResponse` numeric `status`, raw text `body`, and a plain `headers`
 record with string values. Incorrect JavaScript evidence types throw `TypeError`
 before protocol validation.
@@ -316,7 +323,7 @@ Calls validate requests before execution and return exact-status success
 envelopes; declared HTTP failures and protocol failures reject. One executor
 supporting none, JSON and multipart bodies can also serve selected query
 factories. Executors can return raw evidence or validate inside their recovery
-and deadline scope through the supplied callback. Execution alone needs only Zod.
+and deadline scope through the supplied callback. Execution alone needs no package runtime dependency.
 See [executable clients](EXECUTION.md) for inspection handles, cancellation mapping,
 error compatibility, uploads and ownership.
 
@@ -412,10 +419,10 @@ Schemas support at most 128 structural levels, including structure behind
 references. Pure aliases add no levels. Each inline schema is limited to 32
 levels; use component references for deeper structures. Named types and typed
 aggregate validators keep inference from expanding through every level.
-Generated expressions have a separate 128-level complexity limit, including
-constraint wrappers. Excess nesting receives a location-specific diagnostic
-before formatting or writing. Default annotations do not add schema or expression
-levels; YAML document limits still apply to their values.
+Generated expressions have a separate 128-level complexity limit. Excess
+nesting receives a location-specific diagnostic before formatting or writing.
+Default annotations do not add schema or expression levels; YAML document
+limits still apply to their values.
 
 Numbers use finite JavaScript numeric values. Integer validation checks
 integrality without adding an implicit safe-integer range; declare required
@@ -436,8 +443,11 @@ text. Timestamps with leap seconds are unsupported.
 `uuid` validates case-insensitive hexadecimal `8-4-4-4-12` syntax without adding
 version or variant restrictions; braces and URN prefixes are rejected.
 
-Array bounds use Zod's native checks, so oversized bounded arrays are rejected
-before their items are validated.
+Arrays observe their length once and check all effective bounds, including
+reference constraints, before reading items. Parsing visits exactly that many
+positions and returns a fresh dense array. Later growth is ignored; positions
+removed during parsing still undergo item validation. Arbitrary JSON arrays use
+the same policy.
 
 Path and query names/values must contain well-formed Unicode. Header values use
 HTTP byte characters, permit internal horizontal tabs, and reject other ASCII

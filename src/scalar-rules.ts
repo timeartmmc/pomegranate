@@ -1,9 +1,6 @@
-import * as z from 'zod';
 import { fail } from './diagnostics.js';
 import type { Constraints, Scalar, Schema } from './model.js';
-import { dateTime, multipleOf, patternTest } from './runtime.js';
-
-const formats = { date: z.iso.date(), 'date-time': dateTime, uuid: z.guid() };
+import { formats, multipleOf, patternTest } from './runtime.js';
 
 function adjacentNumber(value: number, direction: 1 | -1): number {
   if (value === 0) return direction * Number.MIN_VALUE;
@@ -92,7 +89,7 @@ export function literalViolation(
   limits: Constraints,
   format?: 'date' | 'date-time' | 'uuid',
 ): (item: Scalar) => string | undefined {
-  // Use the same predicates and Zod format profiles as emitted validators.
+  // Use the same predicates and format profiles as emitted validators.
   const pattern =
     limits.pattern === undefined ? undefined : patternTest(limits.pattern);
   const multiple =
@@ -114,7 +111,7 @@ export function literalViolation(
       return 'literal violates declared bounds';
     if (typeof item === 'string') {
       if (pattern && !pattern(item)) return 'literal violates declared pattern';
-      if (format && !formats[format].safeParse(item).success)
+      if (format && !formats[format](item))
         return `literal violates declared ${format} format`;
     } else if (typeof item === 'number' && multiple && !multiple(item))
       return 'literal violates declared multipleOf';

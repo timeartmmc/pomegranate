@@ -5,6 +5,10 @@ import { compile } from '../dist/index.js';
 import { generatedWorkspace } from './generated-workspace.ts';
 import { verifyQueryDeclarations } from './query-declarations.ts';
 import { queryFixture, querySelection } from './query-fixture.ts';
+import {
+  verifyWideDeclarations,
+  wideDeclarationFixture,
+} from './wide-declarations.ts';
 
 void test('query declarations publish usable factories, options and inferred application exports', async (t) => {
   const root = await generatedWorkspace(
@@ -18,5 +22,20 @@ void test('query declarations publish usable factories, options and inferred app
       new URL('../node_modules/typescript/bin/tsc', import.meta.url),
     ),
     fileURLToPath(new URL('./query-types.ts', import.meta.url)),
+  );
+});
+
+void test('large client declarations remain usable without generated sources', async (t) => {
+  const { document, selection } = wideDeclarationFixture();
+  const root = await generatedWorkspace(
+    await compile(document, selection),
+    'wide-generated',
+  );
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await verifyWideDeclarations(
+    root,
+    fileURLToPath(
+      new URL('../node_modules/typescript/bin/tsc', import.meta.url),
+    ),
   );
 });

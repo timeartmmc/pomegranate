@@ -43,7 +43,7 @@ Test observable guarantees and meaningful failure paths across these boundaries:
   contradictions, defaults, maps, constrained references, tagged unions, nullable
   values, and agreement between types and validators. `schema-oracle.test.ts`
   compares supported cases with Ajv2020 without rewriting references or `oneOf`.
-  Ajv is a development dependency; generated validation uses Zod.
+  Ajv is a development dependency; generated validation uses the native runtime.
 - Input and selection: equivalent JSON/YAML, shared YAML policy, BOMs, duplicate
   keys, malformed UTF-8, security inheritance, unsupported unselected operations,
   and transitive client/standalone projection.
@@ -87,7 +87,7 @@ older envelope-only browser success does not cover those paths.
 ## Installed consumers and declarations
 
 The packed consumer installs through npm with strict engine/peer checks, minimum
-Zod and Query Core, TypeScript 5.7.3, and Node 22 types. Source tests use pinned
+Query Core, TypeScript 5.7.3, and Node 22 types, with no schema library installed. Source tests use pinned
 development dependencies. Verify core and execution-only output before installing
 TanStack. Run generated TypeScript on Node and Bun and emitted JavaScript on Node
 after removing the compiler, formatter, and YAML parser. No sibling checkout or
@@ -106,6 +106,15 @@ raw/bodyless `Execution` adapters, readonly inspection edits, and body-cache API
 Repeat with the packed minimum dependencies. Verify packaged/generated licenses,
 allowed inventory, clean `dist`, and `noPropertyAccessFromIndexSignature`.
 
+Parser changes must retain checked return bodies, exact contract types, the
+`parse`/`safeParse` facade, useful aggregate diagnostics, and component-local names.
+Check observed array counts and effective bounds before any item read, including
+aliases and arbitrary JSON. Keep wide objects, large literal enums, long aliases,
+and corrupted-return type controls covered on both supported TypeScript lines.
+Wide publication coverage includes 1,024-field objects, 2,048-member literal enums,
+schema registries and inferred client/query wrappers, with producer sources removed
+before downstream checking.
+
 ## Measurements and adoption
 
 Use `node scripts/benchmark-execution.ts [baseline-ref]` for handwritten/generated
@@ -113,8 +122,7 @@ binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Us
 `node scripts/benchmark-query-sharing.ts` for sharing comparisons. Timings are
 local evidence, never machine-dependent CI thresholds. Keep dated results separate
 from current usage; the source checkout retains the
-[execution/query integration record](md/history/2026-11-01-execution-integration.txt)
-and [generation optimization record](md/history/2026-11-01-generation-optimizations.txt).
+[verification and measurement summary](md/history/2026-11-01-verification.txt).
 
 Application adoption needs its own parity/integration checks and declared time
 and memory budgets. Measure generated/retained bundle size, typecheck, parsing,
@@ -131,6 +139,10 @@ when selected, verify one compatible Query Core resolution across framework and
 persistence adapters in the consumer lockfile.
 
 ## Make a change
+
+The source checkout's [sprint proposal](SPRINT_PROPOSAL.txt) owns the proposed
+mutation and nullable-cursor milestones. [Future proposals](FUTURE_PROPOSALS.txt)
+hold deferred capabilities and decisions; neither document describes shipped work.
 
 This repository keeps only `main`. Review dependency updates manually;
 automatic dependency-update pull requests are disabled.

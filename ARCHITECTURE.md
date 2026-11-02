@@ -114,6 +114,23 @@ Bound schema structure and generated validator expression complexity before
 entering native formatting. Excess complexity receives a contract diagnostic;
 annotation values such as defaults are not generated expressions.
 
+Generated validation uses checked named parsers returning a value or an invalid
+sentinel while recording path/message issues in one sink. The public validator
+facade fails on either an invalid return or recorded issues. Named structural
+contract types remain independent of validation-library inference. Aggregate
+returns, including wide objects and literal enums, must typecheck without
+application-shape assertions or unchecked parser overloads.
+
+Pure aliases share parser and validator identity through the first constrained
+target. Constrained aliases combine their effective array bounds before parsing
+items; they preserve scalar constraint sets without adding runtime alias depth.
+Arrays read the host length once, reject illegal counts and effective bound
+violations before item access, and visit exactly the observed positions. Fresh
+outputs cannot grow with later source mutation or retain unvisited holes. JSON
+copying uses the same count policy and tracks ancestors iteratively, preserving
+repeated acyclic references as independent copies. This bounds traversal work,
+not arbitrary getter/regex execution or host snapshot atomicity.
+
 Terminal reference resolution is cached within each normalized descriptor.
 Intermediate defaults and sibling constraints still receive context-specific
 validation; compiling a mutable input document again creates a fresh descriptor.

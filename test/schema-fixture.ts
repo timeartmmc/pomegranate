@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import type { ZodType } from 'zod';
+import type { Validator } from '../src/runtime.ts';
 import type { CompileOptions } from '../dist/index.js';
 import {
   entry,
@@ -55,6 +55,33 @@ export function schemaFixture() {
         ]),
       ),
     ),
+    SpacedKey: object({ id: { type: 'string' }, 'a b-c': { type: 'string' } }, [
+      'id',
+    ]),
+    CompactKey: object({ id: { type: 'string' }, 'ab-c': { type: 'string' } }, [
+      'id',
+    ]),
+    SpacedLiteral: object({ state: { type: 'string', const: 'a b' } }),
+    CompactLiteral: object({ state: { type: 'string', const: 'ab' } }),
+    ShortCode: object({
+      value: { type: 'string', maxLength: 2, pattern: '^[A-Z]+$' },
+    }),
+    LongCode: object({
+      value: { type: 'string', minLength: 4, pattern: '^[a-z]+$' },
+    }),
+    BoundedItems: {
+      type: 'array',
+      items: object({ id: { type: 'string' } }),
+      minItems: 1,
+      maxItems: 3,
+    },
+    BoundedItemsAlias: { ...ref('BoundedItems'), maxItems: 2 },
+    TypeLikeLiteral: object({
+      state: { type: 'string', const: 'type_ShortCode_request' },
+    }),
+    OtherTypeLikeLiteral: object({
+      state: { type: 'string', const: 'type_LongCode_request' },
+    }),
     Label: { type: 'string', enum: ['red', 'blue', 'green'] },
     ShortLabel: { ...ref('Label'), maxLength: 4, pattern: '^(red|blue)$' },
     Circle: object({
@@ -157,6 +184,16 @@ export function schemaFixture() {
         'Empty',
         'EmptyContainers',
         'EscapedNames',
+        'SpacedKey',
+        'CompactKey',
+        'SpacedLiteral',
+        'CompactLiteral',
+        'ShortCode',
+        'LongCode',
+        'BoundedItems',
+        'BoundedItemsAlias',
+        'TypeLikeLiteral',
+        'OtherTypeLikeLiteral',
         'Shape',
         'NullableShape',
         'ShapeMap',
@@ -283,6 +320,42 @@ export function verifySchemas(
   };
   for (const { name, samples } of nullableTypeCases)
     for (const [value, accepted] of samples) check(name, value, accepted);
+  // Equal value types retain independent constraints and exact property/literal
+  // text in both request and response validation.
+  for (const [name, accepted, rejected] of [
+    ['SpacedKey', { id: 'id', 'a b-c': 'value' }, { 'ab-c': 'value' }],
+    ['CompactKey', { id: 'id', 'ab-c': 'value' }, { 'a b-c': 'value' }],
+    ['SpacedLiteral', { state: 'a b' }, { state: 'ab' }],
+    ['CompactLiteral', { state: 'ab' }, { state: 'a b' }],
+    ['ShortCode', { value: 'AB' }, { value: 'abcd' }],
+    ['LongCode', { value: 'abcd' }, { value: 'AB' }],
+    [
+      'TypeLikeLiteral',
+      { state: 'type_ShortCode_request' },
+      { state: 'type_LongCode_request' },
+    ],
+    [
+      'OtherTypeLikeLiteral',
+      { state: 'type_LongCode_request' },
+      { state: 'type_ShortCode_request' },
+    ],
+  ] satisfies [string, unknown, unknown][]) {
+    check(name, accepted, true);
+    check(name, rejected, false);
+  }
+  assert.throws(
+    () =>
+      runtimeInput(operations.checkShortCode.build, {
+        body: { value: 'AB', extra: true },
+      }),
+    RequestValidationError,
+  );
+  assert.deepEqual(data('LongCode', { value: 'abcd', extra: true }), {
+    value: 'abcd',
+  });
+  assert.deepEqual(data('SpacedKey', { id: 'id', 'ab-c': 'extra' }), {
+    id: 'id',
+  });
   check('Empty', {}, true);
   for (const value of [42, false, 'text', null, []])
     check('Empty', value, false);
@@ -386,7 +459,7 @@ export function verifySchemas(
   check('NullableShape', { kind: 'rectangle', width: 1 }, true);
   check('NullableShape', false, false);
   // A union rejection must explain the failing field, including through a
-  // nullable union and a map transform that converts Zod issues itself.
+  // nullable union and a map with nested branch failures.
   for (const [name, value, path] of [
     ['Shape', { kind: 'circle', radius: 'wrong' }, ['radius']],
     ['NullableShape', { kind: 'circle', radius: 'wrong' }, ['radius']],
@@ -424,7 +497,7 @@ export function verifySchemas(
     true,
   );
   check('ShapeMap', { north: { kind: 'circle', radius: -1 } }, false);
-  // Every own JSON key survives, including the keys ordinary Zod records skip.
+  // Every own JSON key survives copying, including prototype-related names.
   const special = record(
     json(
       '{"__proto__":{"kind":"circle","radius":1},"constructor":null,"toString":null}',
@@ -663,6 +736,30 @@ export function verifySchemas(
       error.issues.length === 1 &&
       present(error.issues[0]).path.join('.') === 'query.tags',
   );
+  for (const [operation, maximum] of [
+    [operations.checkBoundedItems, 3],
+    [operations.checkBoundedItemsAlias, 2],
+  ] as const) {
+    let visits = 0;
+    const input = Array.from({ length: maximum + 1 }, () => ({
+      get id() {
+        visits++;
+        return 'item';
+      },
+    }));
+    assert.throws(
+      () => runtimeInput(operation.build, { body: input }),
+      RequestValidationError,
+    );
+    assert.equal(visits, 0, 'array bounds must reject before visiting items');
+    assert.throws(
+      () => runtimeInput(operation.build, { body: [] }),
+      RequestValidationError,
+    );
+    assert.deepEqual(operation.build({ body: [{ id: 'item' }] }).body, [
+      { id: 'item' },
+    ]);
+  }
   assert.throws(
     () =>
       runtimeInput(operations.checkScalars.build, {
@@ -767,7 +864,10 @@ export function verifySchemas(
   assert.equal(response('Defaults', { required: true }).kind, 'protocol');
 }
 
-export function verifyStandalone(message: ZodType, input: ZodType) {
+export function verifyStandalone(
+  message: Validator<unknown>,
+  input: Validator<unknown>,
+) {
   assert.deepEqual(message.parse({ kind: 'circle', radius: 1, extra: true }), {
     kind: 'circle',
     radius: 1,

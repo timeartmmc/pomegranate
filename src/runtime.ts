@@ -21,9 +21,184 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-// Keep Zod's individual exports visible to bundlers. Its named `z` object
-// retains unrelated validators when bundled through generated runtime helpers.
-import * as z from 'zod';
+// Generated validators are ordinary functions over unknown input. A parser
+// returns a fresh value of its declared type, or `invalid` after recording at
+// least one issue in the caller's sink. Generated return expressions are
+// checked against named contract types, so no schema-library inference or
+// assertion establishes a validated type.
+export const invalid: unique symbol = Symbol('pom.invalid');
+export type Invalid = typeof invalid;
+// An optional field distinguishes an absent key from an explicit undefined.
+export const absent: unique symbol = Symbol('pom.absent');
+export type Absent = typeof absent;
+
+// Fatal issues report a wrong shape or type. Constraint, format and unknown-key
+// issues are not fatal: later checks still run, and a union reports the one
+// branch that failed only on constraints instead of every alternative.
+type Problem = { path: (string | number)[]; message: string; fatal: boolean };
+export type Issues = Problem[];
+export type Parse<T> = (input: unknown, issues: Issues) => T | Invalid;
+
+export function report(
+  issues: Issues,
+  message: string,
+  fatal: boolean,
+  path: (string | number)[] = [],
+): Invalid {
+  issues.push({ path, message, fatal });
+  return invalid;
+}
+
+// Children record relative paths. Prefix only on failure, so successful parsing
+// allocates no path frames.
+function within(issues: Issues, start: number, key: string | number): void {
+  for (let index = start; index < issues.length; index++)
+    issues[index]?.path.unshift(key);
+}
+
+function fatalSince(issues: Issues, start: number): boolean {
+  for (let index = start; index < issues.length; index++)
+    if (issues[index]?.fatal) return true;
+  return false;
+}
+
+export type ValidationIssue = Readonly<{
+  path: readonly (string | number)[];
+  message: string;
+}>;
+
+function validationIssues(issues: Issues): ValidationIssue[] {
+  return issues.map(({ path, message }) => ({ path, message }));
+}
+
+export class ValidationError extends Error {
+  readonly issues: readonly ValidationIssue[];
+
+  constructor(issues: readonly ValidationIssue[]) {
+    super(
+      `invalid value (${issues.map((issue) => `${issue.path.join('.') || 'value'}: ${issue.message}`).join('; ')})`,
+    );
+    this.name = 'ValidationError';
+    this.issues = issues;
+  }
+}
+
+export type SafeParseResult<T> =
+  | Readonly<{ success: true; data: T }>
+  | Readonly<{ success: false; error: ValidationError }>;
+
+// The public validator API for schema registries and standalone roots. It is
+// deliberately small: generated code composes parse functions, not validators.
+export interface Validator<T> {
+  readonly parse: (input: unknown) => T;
+  readonly safeParse: (input: unknown) => SafeParseResult<T>;
+}
+
+export function validator<T>(run: Parse<T>): Validator<T> {
+  const safeParse = (input: unknown): SafeParseResult<T> => {
+    const issues: Issues = [];
+    const data = run(input, issues);
+    return data === invalid || issues.length > 0
+      ? { success: false, error: new ValidationError(validationIssues(issues)) }
+      : { success: true, data };
+  };
+  return Object.freeze({
+    safeParse,
+    parse: (input: unknown): T => {
+      const result = safeParse(input);
+      if (result.success) return result.data;
+      throw result.error;
+    },
+  });
+}
+
+// Read the unparsed input only after validation selected its expected shape.
+// Generated parsers never retain caller objects: they return fresh values.
+export function objectValue(input: unknown, issues: Issues): object | Invalid {
+  return typeof input === 'object' && input !== null && !Array.isArray(input)
+    ? input
+    : report(issues, 'expected an object', true);
+}
+
+// Fixed fields use TypeScript's structural semantics: inherited and accessor
+// fields count. Read once, then test presence: an accessor may change membership.
+export function field<T>(
+  source: object,
+  key: string,
+  parse: Parse<T>,
+  issues: Issues,
+): T | Invalid {
+  const start = issues.length;
+  const value: unknown = Reflect.get(source, key);
+  const result = parse(value, issues);
+  const present = key in source;
+  if (result === invalid) {
+    within(issues, start, key);
+    return invalid;
+  }
+  return present
+    ? result
+    : report(issues, 'expected a required property', true, [key]);
+}
+
+export function optionalField<T>(
+  source: object,
+  key: string,
+  parse: Parse<T>,
+  issues: Issues,
+): T | undefined | Absent | Invalid {
+  const start = issues.length;
+  const value: unknown = Reflect.get(source, key);
+  const result = value === undefined ? undefined : parse(value, issues);
+  if (!(key in source)) {
+    issues.length = start;
+    return absent;
+  }
+  if (result === invalid) within(issues, start, key);
+  return result;
+}
+
+// Generated modules declare key lists and rule objects as plain data and call
+// these helpers from function bodies. Derived sets and compiled checks are
+// cached by identity, so module initialisation runs no validator constructors.
+const keySets = new WeakMap<readonly string[], ReadonlySet<string>>();
+export const noKeys: readonly string[] = [];
+export function unknownKeys(
+  source: object,
+  known: readonly string[],
+  issues: Issues,
+): boolean {
+  let keys = keySets.get(known);
+  if (!keys) {
+    keys = new Set(known);
+    keySets.set(known, keys);
+  }
+  const extra: string[] = [];
+  // Strict request objects reject enumerable inherited keys too, as for...in
+  // reports them. Own __proto__ data is an unknown key like any other.
+  // oxlint-disable-next-line guard-for-in -- inherited enumerable keys are input.
+  for (const key in source) if (!keys.has(key)) extra.push(key);
+  if (extra.length === 0) return false;
+  report(
+    issues,
+    `unrecognized ${extra.length === 1 ? 'key' : 'keys'}: ${extra.map((key) => JSON.stringify(key)).join(', ')}`,
+    false,
+  );
+  return true;
+}
+
+function codePoints(value: string): number {
+  let count = 0;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) index++;
+    }
+    count++;
+  }
+  return count;
+}
 
 export function patternTest(pattern: string): (value: string) => boolean {
   const expression = new RegExp(pattern, 'u');
@@ -31,9 +206,9 @@ export function patternTest(pattern: string): (value: string) => boolean {
 }
 
 function decimal(value: number): readonly [bigint, number] {
-  const [mantissa, exponent] = value.toString().split('e');
-  const fraction = mantissa!.split('.')[1]?.length ?? 0;
-  return [BigInt(mantissa!.replace('.', '')), Number(exponent ?? 0) - fraction];
+  const [mantissa = '', exponent] = value.toString().split('e');
+  const fraction = mantissa.split('.')[1]?.length ?? 0;
+  return [BigInt(mantissa.replace('.', '')), Number(exponent ?? 0) - fraction];
 }
 
 export function multipleOf(divisor: number): (value: number) => boolean {
@@ -50,29 +225,314 @@ export function multipleOf(divisor: number): (value: number) => boolean {
   };
 }
 
-const isoDateTime = z.iso.datetime({ offset: true });
-// The supported RFC 3339 profile requires seconds and a timezone, accepts
-// lowercase t/z, and preserves wire text. Leap-second timestamps are excluded.
-export const dateTime = z
-  .string()
-  .refine(
-    (value) =>
-      /T\d{2}:\d{2}:\d{2}/i.test(value) &&
-      isoDateTime.safeParse(value.toUpperCase()).success,
+function calendarDate(year: string, month: string, day: string): boolean {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const days = m === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31;
+  return m >= 1 && m <= 12 && d >= 1 && d <= days;
+}
+
+const datePattern = /^(\d{4})-(\d{2})-(\d{2})$/;
+// RFC 3339 profile: seconds and a timezone are required, fractions are allowed,
+// lowercase t/z are accepted without changing the value, leap seconds are not.
+const dateTimePattern =
+  /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i;
+const uuidPattern =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+export const formats = {
+  date: (value: string): boolean => {
+    const match = datePattern.exec(value);
+    return (
+      match !== null &&
+      calendarDate(match[1] ?? '', match[2] ?? '', match[3] ?? '')
+    );
+  },
+  'date-time': (value: string): boolean => {
+    const match = dateTimePattern.exec(value);
+    return (
+      match !== null &&
+      calendarDate(match[1] ?? '', match[2] ?? '', match[3] ?? '')
+    );
+  },
+  uuid: (value: string): boolean => uuidPattern.test(value),
+} as const;
+const formatMessages = {
+  date: 'expected a calendar date',
+  'date-time':
     'expected a calendar date-time with seconds and timezone (no leap seconds)',
-  );
+  uuid: 'expected a UUID',
+} as const;
 
-// Native applications resolve file references and own file access/serialization.
-// Keep browser File globals and types out of this shared runtime.
-export const nativeFile = z
-  .object({
-    uri: z.string().min(1),
-    name: z.string().min(1).optional(),
-    mediaType: z.string().min(1).optional(),
-  })
-  .strict();
+export type StringRules = Readonly<{
+  format?: keyof typeof formats;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+}>;
+type Check<T> = (value: T, issues: Issues) => void;
 
-export type NativeFile = z.input<typeof nativeFile>;
+const stringCache = new WeakMap<StringRules, Check<string>>();
+function stringChecks(rules: StringRules): Check<string> {
+  const known = stringCache.get(rules);
+  if (known) return known;
+  const { format, minLength, maxLength, pattern } = rules;
+  const formatted = format === undefined ? undefined : formats[format];
+  const matches = pattern === undefined ? undefined : patternTest(pattern);
+  // Lengths count Unicode code points, as JSON Schema specifies.
+  const check: Check<string> = (value, issues) => {
+    if (format !== undefined && formatted && !formatted(value))
+      report(issues, formatMessages[format], false);
+    if (minLength !== undefined || maxLength !== undefined) {
+      const length = codePoints(value);
+      if (minLength !== undefined && length < minLength)
+        report(issues, 'string is too short', false);
+      if (maxLength !== undefined && length > maxLength)
+        report(issues, 'string is too long', false);
+    }
+    if (matches && !matches(value))
+      report(issues, 'string does not match pattern', false);
+  };
+  stringCache.set(rules, check);
+  return check;
+}
+
+export function text(
+  input: unknown,
+  issues: Issues,
+  rules?: StringRules,
+): string | Invalid {
+  if (typeof input !== 'string')
+    return report(issues, 'expected a string', true);
+  if (!rules) return input;
+  const start = issues.length;
+  stringChecks(rules)(input, issues);
+  return issues.length === start ? input : invalid;
+}
+
+export type NumberRules = Readonly<{
+  integer?: true;
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+  multipleOf?: number;
+}>;
+
+const numberCache = new WeakMap<NumberRules, Check<number>>();
+function numberChecks(rules: NumberRules): Check<number> {
+  const known = numberCache.get(rules);
+  if (known) return known;
+  const { integer, minimum, maximum, exclusiveMinimum, exclusiveMaximum } =
+    rules;
+  const multiple =
+    rules.multipleOf === undefined ? undefined : multipleOf(rules.multipleOf);
+  // Integer checks add no implicit safe-integer range.
+  const check: Check<number> = (value, issues) => {
+    if (integer && !Number.isInteger(value))
+      report(issues, 'expected an integer', false);
+    if (minimum !== undefined && !(value >= minimum))
+      report(issues, `expected value >= ${minimum}`, false);
+    if (maximum !== undefined && !(value <= maximum))
+      report(issues, `expected value <= ${maximum}`, false);
+    if (exclusiveMinimum !== undefined && !(value > exclusiveMinimum))
+      report(issues, `expected value > ${exclusiveMinimum}`, false);
+    if (exclusiveMaximum !== undefined && !(value < exclusiveMaximum))
+      report(issues, `expected value < ${exclusiveMaximum}`, false);
+    if (multiple && !multiple(value))
+      report(issues, 'expected a declared multiple', false);
+  };
+  numberCache.set(rules, check);
+  return check;
+}
+
+export function numeric(
+  input: unknown,
+  issues: Issues,
+  rules?: NumberRules,
+): number | Invalid {
+  if (typeof input !== 'number' || !Number.isFinite(input))
+    return report(issues, 'expected a finite number', true);
+  if (!rules) return input;
+  const start = issues.length;
+  numberChecks(rules)(input, issues);
+  return issues.length === start ? input : invalid;
+}
+
+const integerRules: NumberRules = { integer: true };
+export function stringValue(input: unknown, issues: Issues): string | Invalid {
+  return text(input, issues);
+}
+export function numberValue(input: unknown, issues: Issues): number | Invalid {
+  return numeric(input, issues);
+}
+export function integerValue(input: unknown, issues: Issues): number | Invalid {
+  return numeric(input, issues, integerRules);
+}
+export function booleanValue(
+  input: unknown,
+  issues: Issues,
+): boolean | Invalid {
+  return typeof input === 'boolean'
+    ? input
+    : report(issues, 'expected a boolean', true);
+}
+export function nullValue(input: unknown, issues: Issues): null | Invalid {
+  return input === null ? null : report(issues, 'expected null', true);
+}
+function neverValue(_input: unknown, issues: Issues): Invalid {
+  return report(issues, 'expected no value', true);
+}
+
+// $ref siblings restrict the referenced value. Their checks run unless the base
+// already reported a wrong type or shape. A constraint failure remains eligible
+// for the remaining sibling rules.
+// Alias chains are resolved by the compiler: `rules` lists each reference's
+// siblings from the terminal outwards, so no wrapper frame grows with depth.
+export function refineText<T extends string>(
+  input: unknown,
+  issues: Issues,
+  base: Parse<T>,
+  rules: readonly StringRules[],
+): T | Invalid {
+  const start = issues.length;
+  const value = base(input, issues);
+  if (typeof input === 'string' && !fatalSince(issues, start))
+    for (const rule of rules) stringChecks(rule)(input, issues);
+  return issues.length === start ? value : invalid;
+}
+
+export function refineNumber<T extends number>(
+  input: unknown,
+  issues: Issues,
+  base: Parse<T>,
+  rules: readonly NumberRules[],
+): T | Invalid {
+  const start = issues.length;
+  const value = base(input, issues);
+  if (typeof input === 'number' && !fatalSince(issues, start))
+    for (const rule of rules) numberChecks(rule)(input, issues);
+  return issues.length === start ? value : invalid;
+}
+
+export type ArrayRules = Readonly<{ minItems?: number; maxItems?: number }>;
+
+// Observe a host length once and reject impossible counts before any item read.
+function arrayLength(input: readonly unknown[]): number | undefined {
+  const length: unknown = Reflect.get(input, 'length');
+  return typeof length === 'number' &&
+    Number.isSafeInteger(length) &&
+    length >= 0 &&
+    length <= 0xffffffff
+    ? length
+    : undefined;
+}
+
+export function list<T>(
+  input: unknown,
+  issues: Issues,
+  items: Parse<T>,
+  rules?: ArrayRules,
+): T[] | Invalid {
+  if (!Array.isArray(input)) return report(issues, 'expected an array', true);
+  const length = arrayLength(input);
+  if (length === undefined)
+    return report(issues, 'expected a valid array length', true);
+  if (rules?.maxItems !== undefined && length > rules.maxItems)
+    return report(issues, `expected at most ${rules.maxItems} items`, false);
+  if (rules?.minItems !== undefined && length < rules.minItems)
+    return report(issues, `expected at least ${rules.minItems} items`, false);
+  const start = issues.length;
+  const output: T[] = [];
+  for (let index = 0; index < length; index++) {
+    const before = issues.length;
+    const element: unknown = input[index];
+    const value = items(element, issues);
+    if (value === invalid) within(issues, before, index);
+    else output.push(value);
+  }
+  return issues.length === start ? output : invalid;
+}
+
+function* arrayEntries(
+  input: unknown[],
+  length: number,
+): Generator<readonly [number, unknown]> {
+  for (let index = 0; index < length; index++) yield [index, input[index]];
+}
+
+export function map<T>(
+  input: unknown,
+  issues: Issues,
+  values: Parse<T>,
+): Record<string, T> | Invalid {
+  // Dynamic JSON keys are data: inspect own entries of plain records and build
+  // the result with fromEntries so keys such as __proto__ stay own properties.
+  if (!plainRecord(input)) return report(issues, 'expected an object', true);
+  const start = issues.length;
+  const entries: [string, T][] = [];
+  for (const [name, value] of Object.entries(input)) {
+    const before = issues.length;
+    const parsed = values(value, issues);
+    if (parsed === invalid) within(issues, before, name);
+    else entries.push([name, parsed]);
+  }
+  return issues.length === start ? Object.fromEntries(entries) : invalid;
+}
+
+export function emptyOptions(
+  input: unknown,
+  issues: Issues,
+): Record<string, never> | Invalid {
+  return map<never>(input, issues, neverValue);
+}
+
+export function union<T>(
+  input: unknown,
+  issues: Issues,
+  left: Parse<T>,
+  right: Parse<T>,
+): T | Invalid {
+  const first: Issues = [];
+  const a = left(input, first);
+  if (a !== invalid && first.length === 0) return a;
+  const second: Issues = [];
+  const b = right(input, second);
+  if (b !== invalid && second.length === 0) return b;
+  const leftFatal = fatalSince(first, 0);
+  if (leftFatal !== fatalSince(second, 0)) {
+    issues.push(...(leftFatal ? second : first));
+    return invalid;
+  }
+  for (const [index, branch] of [first, second].entries())
+    for (const { path, message } of branch)
+      report(issues, `union branch ${index + 1}: ${message}`, true, path);
+  return invalid;
+}
+
+export function taggedUnion<T>(
+  input: unknown,
+  issues: Issues,
+  propertyName: string,
+  cases: Readonly<Record<string, Parse<T>>>,
+): T | Invalid {
+  // The compiler proves that each branch requires its distinct literal tag.
+  // Dispatch before parsing: trying every branch repeats nested union work.
+  if (input === null || typeof input !== 'object' || Array.isArray(input))
+    return report(issues, 'expected an object', true);
+  const tag: unknown = Reflect.get(input, propertyName);
+  const parse =
+    typeof tag === 'string' && Object.hasOwn(cases, tag)
+      ? cases[tag]
+      : undefined;
+  if (parse === undefined)
+    return report(issues, 'expected a declared discriminator tag', true, [
+      propertyName,
+    ]);
+  return parse(input, issues);
+}
 
 export type JsonValue =
   | string
@@ -128,14 +588,18 @@ function cloneJson(input: unknown): JsonValue | typeof invalidJson {
     else {
       if ((!Array.isArray(value) && !plainRecord(value)) || pending.has(value))
         return invalidJson;
+      let entries: Frame['entries'];
+      if (Array.isArray(value)) {
+        const count = arrayLength(value);
+        if (count === undefined) return invalidJson;
+        entries = arrayEntries(value, count);
+      } else entries = Object.entries(value).values();
       pending.add(value);
       copy = Array.isArray(value) ? [] : {};
       stack.push({
         source: value,
         target: copy,
-        entries: Array.isArray(value)
-          ? value.entries()
-          : Object.entries(value).values(),
+        entries,
       });
     }
     // Own JSON keys such as __proto__ must remain data, including in arrays.
@@ -149,72 +613,42 @@ function cloneJson(input: unknown): JsonValue | typeof invalidJson {
   return result['value']!;
 }
 
-export const jsonValue = z.custom<JsonValue>().transform((value, context) => {
-  const result = cloneJson(value);
-  if (result === invalidJson) {
-    context.addIssue({ code: 'custom', message: 'expected a JSON value' });
-    return z.NEVER;
-  }
-  return result;
-});
-
-export function recordSchema<V extends z.ZodType>(values: V) {
-  // Zod records omit __proto__ without validating it. Dynamic JSON keys are
-  // data: inspect own entries and use FromEntries to preserve them safely.
-  return z
-    .custom<Record<string, z.input<V>>>(plainRecord, 'expected an object')
-    .transform((input, context): Record<string, z.output<V>> => {
-      const entries: [string, z.output<V>][] = [];
-      for (const [name, value] of Object.entries(input)) {
-        const parsed = values.safeParse(value);
-        if (parsed.success) entries.push([name, parsed.data]);
-        else
-          for (const issue of validationIssues(parsed.error.issues))
-            context.addIssue({
-              code: 'custom',
-              path: [name, ...issue.path],
-              message: issue.message,
-            });
-      }
-      return Object.fromEntries(entries);
-    });
+export function jsonValue(input: unknown, issues: Issues): JsonValue | Invalid {
+  const result = cloneJson(input);
+  return result === invalidJson
+    ? report(issues, 'expected a JSON value', true)
+    : result;
 }
 
-export function discriminatedUnion<
-  Cases extends Readonly<Record<string, z.ZodType>>,
->(propertyName: string, cases: Cases) {
-  type Branch = Cases[keyof Cases];
-  // The compiler proves that each branch requires its distinct literal tag.
-  // Dispatch before parsing: trying every branch repeats nested union work
-  // exponentially. Named validators can be aliases or refined Zod schemas, so
-  // select from the explicit mapping rather than inspecting Zod internals.
-  return z
-    .custom<z.input<Branch>>()
-    .transform((input, context): z.output<Branch> => {
-      if (input === null || typeof input !== 'object' || Array.isArray(input)) {
-        context.addIssue({ code: 'custom', message: 'expected an object' });
-        return z.NEVER;
-      }
-      const tag: unknown = Reflect.get(input, propertyName);
-      if (typeof tag !== 'string' || !Object.hasOwn(cases, tag)) {
-        context.addIssue({
-          code: 'custom',
-          path: [propertyName],
-          message: 'expected a declared discriminator tag',
-        });
-        return z.NEVER;
-      }
-      const parsed = cases[tag]!.safeParse(input);
-      // This own entry belongs to Cases; retain the union of its output types.
-      if (parsed.success) return parsed.data as z.output<Branch>;
-      for (const issue of validationIssues(parsed.error.issues))
-        context.addIssue({
-          code: 'custom',
-          path: [...issue.path],
-          message: issue.message,
-        });
-      return z.NEVER;
-    });
+// Native applications resolve file references and own file access/serialization.
+// Keep browser File globals and types out of this shared runtime.
+export type NativeFile = {
+  uri: string;
+  name?: string | undefined;
+  mediaType?: string | undefined;
+};
+const nonemptyRules: StringRules = { minLength: 1 };
+const nativeFileKeys = ['uri', 'name', 'mediaType'];
+function nonemptyText(input: unknown, issues: Issues): string | Invalid {
+  return text(input, issues, nonemptyRules);
+}
+export function nativeFile(
+  input: unknown,
+  issues: Issues,
+): NativeFile | Invalid {
+  const source = objectValue(input, issues);
+  if (source === invalid) return invalid;
+  const uri = field(source, 'uri', nonemptyText, issues);
+  const name = optionalField(source, 'name', nonemptyText, issues);
+  const mediaType = optionalField(source, 'mediaType', nonemptyText, issues);
+  const extra = unknownKeys(source, nativeFileKeys, issues);
+  if (uri === invalid || name === invalid || mediaType === invalid || extra)
+    return invalid;
+  return {
+    uri,
+    ...(name === absent ? {} : { name }),
+    ...(mediaType === absent ? {} : { mediaType }),
+  };
 }
 
 export type Policy = Readonly<{
@@ -228,33 +662,6 @@ export type ObservedResponse = Readonly<{
   headers: HeaderContext;
   body: string;
 }>;
-export type ValidationIssue = Readonly<{
-  path: readonly (string | number)[];
-  message: string;
-}>;
-function validationIssues(
-  issues: readonly z.core.$ZodIssue[],
-  prefix: readonly (string | number)[] = [],
-): ValidationIssue[] {
-  return issues.flatMap((issue): ValidationIssue[] => {
-    const path = [
-      ...prefix,
-      ...issue.path.map((part) =>
-        typeof part === 'symbol' ? String(part) : part,
-      ),
-    ];
-    // Union alternatives carry relative paths. Preserve each cause before a
-    // custom map issue or public error conversion can erase the branch tree.
-    if (issue.code === 'invalid_union')
-      return issue.errors.flatMap((branch, index) =>
-        validationIssues(branch, path).map((detail) => ({
-          ...detail,
-          message: `union branch ${index + 1}: ${detail.message}`,
-        })),
-      );
-    return [{ path, message: issue.message }];
-  });
-}
 export type ProtocolIssue = Readonly<{
   part: 'status' | 'headers' | 'content-type' | 'body';
   path?: readonly (string | number)[];
@@ -270,19 +677,17 @@ export type ProtocolFailure = Readonly<{
   issues: readonly ProtocolIssue[];
 }>;
 
-type HeaderSpec = Readonly<{ schema: z.ZodType<string>; required: boolean }>;
+type HeaderSpec = Readonly<{ schema: Parse<string>; required: boolean }>;
 type ResponseSpec = Readonly<{
   headers: Readonly<Record<string, HeaderSpec>>;
 }> &
   (
     | Readonly<{ bodyKind: 'none' }>
-    | Readonly<{ bodyKind: 'json'; schema: z.ZodType }>
+    | Readonly<{ bodyKind: 'json'; schema: Parse<unknown> }>
   );
 export type Responses = Readonly<Record<number, ResponseSpec>>;
 
-type Data<R> = R extends { schema: infer S extends z.ZodType }
-  ? z.output<S>
-  : undefined;
+type Data<R> = R extends { schema: Parse<infer T> } ? T : undefined;
 export type DeclaredResponse<R extends Responses> = {
   [S in keyof R]: S extends number
     ? Readonly<{
@@ -365,7 +770,7 @@ type Parameter = Readonly<{
   required: boolean;
 }>;
 type Definition<
-  O extends z.ZodType<RequestParts | undefined>,
+  O extends RequestParts | undefined,
   R extends Responses,
   B extends BodyKind,
 > = Readonly<{
@@ -376,9 +781,9 @@ type Definition<
   bodyKind: B;
   multipart?: readonly MultipartField[];
   parameters: readonly Parameter[];
-  options: O;
+  options: Parse<O>;
   headers: Readonly<
-    Record<string, { schema: z.ZodType<string | null>; required: boolean }>
+    Record<string, { schema: Parse<string | null>; required: boolean }>
   >;
   responses: R;
 }>;
@@ -499,17 +904,18 @@ function declaredHeaders(
     for (const [name, header] of Object.entries(spec.headers)) {
       const raw = headers[name];
       if (raw === undefined && !header.required) continue;
-      const parsed = header.schema.safeParse(raw);
-      if (!parsed.success)
-        for (const detail of validationIssues(parsed.error.issues)) {
+      const problems: Issues = [];
+      const parsed = header.schema(raw, problems);
+      if (parsed === invalid || problems.length > 0)
+        for (const detail of validationIssues(problems)) {
           issues.push({
             ...detail,
             part: 'headers',
             path: [name, ...detail.path],
           });
         }
-      else if (!invalidFields.has(name) && validHeaderValue(parsed.data))
-        validated[name] = parsed.data;
+      else if (!invalidFields.has(name) && validHeaderValue(parsed))
+        validated[name] = parsed;
       else
         issues.push({
           part: 'headers',
@@ -575,10 +981,11 @@ function responseParser<R extends Responses>(
         issues.push({ part: 'body', message: 'invalid JSON response body' });
       }
       if (decodedSuccessfully) {
-        const parsed = spec.schema.safeParse(decoded);
-        if (parsed.success) data = parsed.data;
+        const problems: Issues = [];
+        const parsed = spec.schema(decoded, problems);
+        if (parsed !== invalid && problems.length === 0) data = parsed;
         else
-          for (const detail of validationIssues(parsed.error.issues))
+          for (const detail of validationIssues(problems))
             issues.push({ part: 'body', ...detail });
       }
     }
@@ -701,7 +1108,7 @@ function serializeParameters(
 function headerValidator(
   operationId: string,
   specs: Readonly<
-    Record<string, { schema: z.ZodType<string | null>; required: boolean }>
+    Record<string, { schema: Parse<string | null>; required: boolean }>
   >,
 ) {
   return (input: HeaderContext): HeaderContext => {
@@ -724,9 +1131,10 @@ function headerValidator(
     }
     for (const [name, spec] of Object.entries(specs)) {
       if (headers[name] === undefined && !spec.required) continue;
-      const parsed = spec.schema.safeParse(headers[name]);
-      if (!parsed.success)
-        for (const detail of validationIssues(parsed.error.issues)) {
+      const problems: Issues = [];
+      const parsed = spec.schema(headers[name], problems);
+      if (parsed === invalid || problems.length > 0)
+        for (const detail of validationIssues(problems)) {
           issues.push({
             ...detail,
             path: ['headers', name, ...detail.path],
@@ -738,22 +1146,20 @@ function headerValidator(
   };
 }
 
-export function validateOptions<O extends z.ZodType>(
-  schema: O,
+export function validateOptions<O>(
+  schema: Parse<O>,
   input: unknown,
   operationId: string,
-): z.output<O> {
-  const parsed = schema.safeParse(input);
-  if (!parsed.success)
-    throw new RequestValidationError(
-      operationId,
-      validationIssues(parsed.error.issues),
-    );
-  return parsed.data;
+): O {
+  const issues: Issues = [];
+  const parsed = schema(input, issues);
+  if (parsed === invalid || issues.length > 0)
+    throw new RequestValidationError(operationId, validationIssues(issues));
+  return parsed;
 }
 
 export function defineOperation<
-  const O extends z.ZodType<RequestParts | undefined>,
+  const O extends RequestParts | undefined,
   const R extends Responses,
   const B extends BodyKind,
 >(definition: Definition<O, R, B>) {
@@ -772,12 +1178,9 @@ export function defineOperation<
     definition.operationId,
     definition.headers,
   );
-  type Body =
-    NonNullable<z.output<O>> extends { body: infer Value } ? Value : never;
+  type Body = NonNullable<O> extends { body: infer Value } ? Value : never;
   function build(
-    ...args: undefined extends z.input<O>
-      ? [options?: z.input<O>]
-      : [options: z.input<O>]
+    ...args: undefined extends O ? [options?: O] : [options: O]
   ): PreparedRequest<R, B, Body> {
     if (args.length > 1)
       throw new RequestValidationError(definition.operationId, [

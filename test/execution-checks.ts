@@ -596,7 +596,7 @@ export async function verifyExecutions(
 
 export async function verifyExecutionParsing(
   module: Module,
-  schemas: typeof import('./.generated/execution/client.consumer.schemas.ts'),
+  _schemas: typeof import('./.generated/execution/client.consumer.schemas.ts'),
   transport: Pick<
     typeof import('../examples/json/transport.ts'),
     'createExecutor' | 'execute'
@@ -611,32 +611,32 @@ export async function verifyExecutionParsing(
   const successText = '{"id":"item","label":"Once"}';
   const denialText = '{"detail":"Synthetic recovery"}';
   const parse = JSON.parse;
-  const success = schemas.responseSchemas['Item'];
-  const failure = schemas.responseSchemas['Problem'];
-  const successDescriptor = Object.getOwnPropertyDescriptor(
-    success,
-    'safeParse',
-  );
-  const failureDescriptor = Object.getOwnPropertyDescriptor(
-    failure,
-    'safeParse',
-  );
-  const parseSuccess = success.safeParse.bind(success);
-  const parseFailure = failure.safeParse.bind(failure);
+  // Generated operations call their parsers directly. Count each schema pass
+  // by the one read it makes of a declared field of the decoded body.
+  const counted = (value: unknown, key: string, count: () => void): unknown => {
+    if (value === null || typeof value !== 'object') return value;
+    const field: unknown = Reflect.get(value, key);
+    Object.defineProperty(value, key, {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        count();
+        return field;
+      },
+    });
+    return value;
+  };
   try {
     JSON.parse = (...args: Parameters<typeof JSON.parse>): unknown => {
       // Node lazily initializes Fetch with unrelated JSON of its own. Count
       // parsing of these observed bodies, including any accidental second pass.
       if (args[0] === successText || args[0] === denialText) parses++;
-      return parse(...args) as unknown;
-    };
-    success.safeParse = (...args: Parameters<typeof parseSuccess>) => {
-      successes++;
-      return parseSuccess(...args);
-    };
-    failure.safeParse = (...args: Parameters<typeof parseFailure>) => {
-      denials++;
-      return parseFailure(...args);
+      const value = parse(...args) as unknown;
+      if (args[0] === successText)
+        return counted(value, 'id', () => successes++);
+      if (args[0] === denialText)
+        return counted(value, 'detail', () => denials++);
+      return value;
     };
     const send: typeof fetch = async () => {
       const deny = denyNext;
@@ -723,14 +723,6 @@ export async function verifyExecutionParsing(
     assert.equal(recoveries, 2);
   } finally {
     JSON.parse = parse;
-    // Zod can materialize these methods lazily. Restore the prior descriptor
-    // or absence; cleanup must also work on fresh schemas in a focused run.
-    if (successDescriptor)
-      Object.defineProperty(success, 'safeParse', successDescriptor);
-    else Reflect.deleteProperty(success, 'safeParse');
-    if (failureDescriptor)
-      Object.defineProperty(failure, 'safeParse', failureDescriptor);
-    else Reflect.deleteProperty(failure, 'safeParse');
   }
 }
 

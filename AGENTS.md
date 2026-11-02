@@ -1,6 +1,6 @@
 # Working on Pomegranate
 
-Pomegranate (POM) compiles a supported OpenAPI vocabulary into TypeScript, Zod
+Pomegranate (POM) compiles a supported OpenAPI vocabulary into TypeScript, native
 validators, request builders, and protocol helpers. It is an independent tool
 used by personal projects and intended for a public GitHub repository.
 

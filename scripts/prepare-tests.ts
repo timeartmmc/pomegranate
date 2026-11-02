@@ -15,6 +15,7 @@ import {
   infiniteSelection,
 } from '../test/infinite-fixture.ts';
 import { offsetFixture, offsetSelection } from '../test/offset-fixture.ts';
+import { nativeFixture } from '../test/native-fixture.ts';
 import {
   executionFixture,
   executionSelection,
@@ -24,6 +25,7 @@ import {
 // compile into fresh temporary directories, and independent consumer fixtures
 // retain their accepted examples and expected compile errors.
 const fixtures: [string, unknown, CompileOptions][] = [
+  ['native', nativeFixture(), { clients: ['consumer'] }],
   ['example', fixture(), { clients: ['consumer', 'staff'] }],
   ['runtime', generatedFixture(), { clients: ['consumer', 'staff'] }],
   [

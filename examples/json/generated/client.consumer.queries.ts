@@ -19,9 +19,11 @@ export type {
   TypedQueryResponseError,
 } from './query-runtime.ts';
 
-export function createQueries(
-  config: QueryConfig,
-): QueryFactories<{ getWidget: typeof operation_getWidget }> {
+export interface QueryMembers extends QueryFactories<{
+  getWidget: typeof operation_getWidget;
+}> {}
+export type Queries = Readonly<QueryMembers>;
+export function createQueries(config: QueryConfig): Queries {
   const runtime = queryConfig(config);
   return Object.freeze({
     getWidget: defineQuery({

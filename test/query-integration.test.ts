@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { QueryClient, hydrate, skipToken } from '@tanstack/query-core';
-import { z } from 'zod';
-import { defineOperation, jsonValue, recordSchema } from '../src/runtime.ts';
+import { defineOperation, nullValue } from '../src/runtime.ts';
+import {
+  labelledAttributes,
+  limitInput,
+  noOptions,
+  offsetPage,
+  pageOptions,
+} from './native-schemas.ts';
 import { defineQuery, defineOffsetQuery } from '../src/query-runtime.ts';
 import { shareQueryData } from '../src/query-sharing.ts';
 import { dehydrateJson } from './query-hydration.ts';
@@ -12,7 +18,7 @@ const policy = {
   retry: 'never',
   timeout: 'interactive',
 } as const;
-const options = z.object({}).strict().optional();
+const options = noOptions;
 const item = defineOperation({
   operationId: 'read',
   method: 'GET',
@@ -26,10 +32,7 @@ const item = defineOperation({
     200: {
       headers: {},
       bodyKind: 'json',
-      schema: z.object({
-        label: z.string(),
-        attributes: recordSchema(jsonValue),
-      }),
+      schema: labelledAttributes,
     },
   },
 });
@@ -240,7 +243,7 @@ void test('JSON null is cacheable while any bodyless success rejects body select
     options,
     parameters: [],
     headers: {},
-    responses: { 200: { bodyKind: 'json', headers: {}, schema: z.null() } },
+    responses: { 200: { bodyKind: 'json', headers: {}, schema: nullValue } },
   });
   const factory = defineQuery({
     operation,
@@ -271,7 +274,7 @@ void test('JSON null is cacheable while any bodyless success rejects body select
     parameters: [],
     headers: {},
     responses: {
-      200: { bodyKind: 'json', headers: {}, schema: z.null() },
+      200: { bodyKind: 'json', headers: {}, schema: nullValue },
       204: { bodyKind: 'none', headers: {} },
     },
   });
@@ -294,31 +297,15 @@ void test('JSON null is cacheable while any bodyless success rejects body select
 });
 
 void test('offset body queries validate pagination before storing projected pages', async () => {
-  const page = z.object({
-    offset: z.number().int(),
-    limit: z.number().int(),
-    total: z.number().int(),
-    items: z.array(z.string()),
-  });
-  const input = z
-    .object({ query: z.object({ limit: z.number().int().min(1) }).strict() })
-    .strict();
+  const page = offsetPage;
+  const input = limitInput;
   const operation = defineOperation({
     operationId: 'page',
     method: 'GET',
     path: '/page',
     policy,
     bodyKind: 'none',
-    options: z
-      .object({
-        query: z
-          .object({
-            offset: z.number().int().nonnegative(),
-            limit: z.number().int().min(1),
-          })
-          .strict(),
-      })
-      .strict(),
+    options: pageOptions,
     parameters: [
       { name: 'offset', in: 'query', required: true },
       { name: 'limit', in: 'query', required: true },

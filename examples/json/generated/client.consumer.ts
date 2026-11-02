@@ -14,6 +14,7 @@ export type {
 } from './runtime.ts';
 export { createClient, ResponseError } from './client.consumer.execute.ts';
 export type {
+  Client,
   ClientConfig,
   Executor,
   Execution,

@@ -1,0 +1,69 @@
+POM: NATIVE VALIDATION COMPARISON
+2026-11-02
+
+Decision
+
+Use checked native sentinel parsers with shared scalar/container helpers.
+Selective inline field checks improved isolated parsing but did not improve the
+measured call/query pipelines enough to justify higher compiler and output costs.
+Generated core and execution modules no longer require Zod.
+
+Cost comparison
+
+Synthetic 1,004-operation fixture with distinct nested shapes and full client/
+query exports. Three fresh-process medians on Apple M4 Pro, 48 GiB, macOS 15.6;
+Node 26.12.1, Bun 1.4.3, TypeScript 5.7.3 and native TypeScript 7.0.2.
+Strict types and dependency declarations were checked without incremental caches.
+TS5 measurements used a 16 GiB heap. Timings are local evidence, not CI limits.
+
+Metric                              Sentinel       Specialized sentinel
+TS5 source check, seconds               2.23                    2.67
+TS7 source check, seconds               0.68                    0.82
+Generation, milliseconds              132.54                  173.07
+Full raw bundle, bytes            1,311,810               1,882,795
+Full gzip bundle, bytes             115,300                 124,847
+Bundled import, milliseconds          24.00                   27.60
+Declaration output, bytes         2,123,603               2,123,603
+
+Repeated and distinct shapes were exercised at 4, 104, 504 and 1,004 operations,
+with sparse-query and full-client consumers: 232 checker runs, 72 generation
+processes and 288 source/bundle import processes. Every measured check passed.
+
+On Node, representative order parsing was 9.024/9.050 microseconds and a
+1,000-order page was 5.124/5.074 milliseconds (sentinel/specialized). On Bun,
+specialization improved isolated order/page parsing by roughly 17%, but the
+measured raw/scoped call and query pipelines remained nearly tied. Small DTO
+parsing saved about 0.06 microseconds on Node. Wide-object results varied by
+width and workload; neither strategy won every individual runtime metric.
+
+Ordinary and compiled Zod were measured controls. Compiled Zod was faster on
+some successful inputs but could retry changing getters, violating the selected
+read-once behavior. Those throughput results do not establish equivalent input
+semantics. Native validation also improved large-source checking and sparse
+retained bundles compared with the ordinary Zod control.
+
+Implementation and verification
+
+The implementation preserves checked returns, detached mutable outputs, useful
+aggregate diagnostics, named declaration boundaries and compiler-free execution.
+Arrays observe one length and merge reference bounds before visiting items.
+Wide objects use bounded checked groups; large enums use checked switch
+narrowing. Pure aliases share identity with linear table-local resolution.
+
+The architecture evaluation covered 70 schemas, 20,000 seeded candidates per
+strategy, 180 adversarial controls per strategy, and 144 independent type-proof
+outcomes. The adopted source separately passed 20,000 candidates, 180 host
+controls and 72 positive/negative/corrupted-body type outcomes.
+
+After the follow-up cleanup, canonical verification passed 700 tests on Node
+22.18.0, 24.0.0 and 26.12.1 with pinned Bun 1.4.3. This includes formatting,
+strict types, type-aware lint, Chromium, both bundlers, example drift/execution,
+and the isolated packed install without a schema library. Source-free publication
+covers 1,024-field objects and 2,048-member enums on both TypeScript versions.
+Exact nullable diagnostics, enum membership/reference restrictions, calendar/time
+neighbors, mutation bounds and alias complexity have permanent regression tests.
+
+These are synthetic contract and installed-package results. Application latency,
+consumer maintenance savings, Safari/mobile throughput and production deployment
+were not evaluated. Current usage and requirements belong in README.md,
+ARCHITECTURE.md and CONTRIBUTING.md.
