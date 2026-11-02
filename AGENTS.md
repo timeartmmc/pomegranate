@@ -15,8 +15,8 @@ Read [README.md](README.md) for current usage and limitations,
 - Preserve concurrent work and avoid overwriting unrelated changes.
 - Start additional agents only when the user requests them. Do not commit,
   publish, or deploy without an explicit request.
-- The local agent coordination board is open. Coordinate active work and shared
-  verification through the board.
+- The local agent coordination board is closed. Keep it empty; do not register
+  sessions, add entries, or reopen it unless the user explicitly requests it.
 
 ## Boundaries
 
