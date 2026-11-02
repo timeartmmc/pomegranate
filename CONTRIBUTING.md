@@ -120,9 +120,8 @@ before downstream checking.
 Use `node scripts/benchmark-execution.ts [baseline-ref]` for handwritten/generated
 binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Use
 `node scripts/benchmark-query-sharing.ts` for sharing comparisons. Timings are
-local evidence, never machine-dependent CI thresholds. Keep dated results separate
-from current usage; the source checkout retains the
-[verification and measurement summary](md/history/2026-11-01-verification.txt).
+local evidence, never machine-dependent CI thresholds. Include the source
+revision, toolchain versions and exact command scope when reporting results.
 
 Application adoption needs its own parity/integration checks and declared time
 and memory budgets. Measure generated/retained bundle size, typecheck, parsing,

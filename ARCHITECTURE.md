@@ -121,6 +121,11 @@ contract types remain independent of validation-library inference. Aggregate
 returns, including wide objects and literal enums, must typecheck without
 application-shape assertions or unchecked parser overloads.
 
+Keep scalar and container semantics in shared helpers. In the synthetic
+evaluation, inline field specialization increased generation, checking and output
+costs without a material gain in complete call/query pipelines. Revisit
+specialization only for a demonstrated consumer workload with a net benefit.
+
 Pure aliases share parser and validator identity through the first constrained
 target. Constrained aliases combine their effective array bounds before parsing
 items; they preserve scalar constraint sets without adding runtime alias depth.
