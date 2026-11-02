@@ -24,8 +24,8 @@ export function createQueries(
 ): QueryFactories<Pick<typeof operations, 'getWidget'>> {
   const runtime = queryConfig(config);
   return Object.freeze({
-    ['getWidget']: defineQuery({
-      operation: operations['getWidget'],
+    getWidget: defineQuery({
+      operation: operations.getWidget,
       bodyCache: true,
       ...runtime,
       client: 'consumer',

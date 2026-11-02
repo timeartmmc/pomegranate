@@ -45,14 +45,6 @@ function assertInlineSchemaNesting(nesting: number, location: string): void {
     );
 }
 
-export function assertSchemaNesting(nesting: number, location: string): void {
-  if (nesting > maximumSchemaNesting)
-    fail(
-      location,
-      `schema nesting exceeds the supported limit of ${maximumSchemaNesting} levels`,
-    );
-}
-
 function constraints(
   value: Record<string, unknown>,
   location: string,
@@ -552,7 +544,11 @@ function measureSchema(
     );
   // This is a structural runtime bound. Emitted expression depth and compiler
   // inference are handled by flat typed bindings, without semantic cost weights.
-  assertSchemaNesting(depth, location);
+  if (depth > maximumSchemaNesting)
+    fail(
+      location,
+      `schema nesting exceeds the supported limit of ${maximumSchemaNesting} levels`,
+    );
   depths.set(schema, depth);
   return depth;
 }

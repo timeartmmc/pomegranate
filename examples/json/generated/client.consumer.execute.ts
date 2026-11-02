@@ -22,26 +22,26 @@ export function createClient(
 ): ExecutionClient<typeof operations> {
   const runtime = executionConfig(config);
   return Object.freeze({
-    ['checkHealth']: defineCall({
-      operation: operations['checkHealth'],
+    checkHealth: defineCall({
+      operation: operations.checkHealth,
       ...runtime,
       client: 'consumer',
       operationId: 'checkHealth',
     }),
-    ['getWidget']: defineCall({
-      operation: operations['getWidget'],
+    getWidget: defineCall({
+      operation: operations.getWidget,
       ...runtime,
       client: 'consumer',
       operationId: 'getWidget',
     }),
-    ['prepareWidget']: defineCall({
-      operation: operations['prepareWidget'],
+    prepareWidget: defineCall({
+      operation: operations.prepareWidget,
       ...runtime,
       client: 'consumer',
       operationId: 'prepareWidget',
     }),
-    ['widgetOptions']: defineCall({
-      operation: operations['widgetOptions'],
+    widgetOptions: defineCall({
+      operation: operations.widgetOptions,
       ...runtime,
       client: 'consumer',
       operationId: 'widgetOptions',

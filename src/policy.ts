@@ -1,7 +1,7 @@
 import { fail, keys, record, safeKey, text } from './diagnostics.js';
 import type { AuthTransport, Policy, PolicyVocabulary } from './model.js';
 
-export function labels(input: unknown, location: string): readonly string[] {
+function labels(input: unknown, location: string): readonly string[] {
   if (!Array.isArray(input) || input.length === 0)
     fail(location, 'expected a nonempty array of labels');
   // Programmatic callers can supply sparse arrays. Visit every slot so a hole

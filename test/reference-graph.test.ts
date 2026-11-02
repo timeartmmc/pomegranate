@@ -119,3 +119,63 @@ void test('schema ordering keeps dependencies before their users across shared b
   );
   assert.deepEqual(descriptor.schemaOrder, ['Leaf', 'Left', 'Right', 'Root']);
 });
+
+for (const [name, media, field, message] of [
+  [
+    'request defaults',
+    'application/json',
+    { type: 'string', default: 'annotation' },
+    /response schemas must not declare defaults/,
+  ],
+  [
+    'multipart files',
+    'multipart/form-data',
+    { type: 'string', format: 'binary' },
+    /binary values are only supported in multipart/,
+  ],
+] satisfies [string, string, Schema, RegExp][]) {
+  void test(`shared operation schemas retain response restrictions after validating ${name}`, async () => {
+    const document = documentWith({
+      Shared: {
+        type: 'object',
+        properties: { value: field },
+        required: ['value'],
+      },
+    });
+    const operation = {
+      operationId: 'shared',
+      'x-pom': {
+        auth: 'public',
+        retry: 'never',
+        timeout: 'interactive',
+        surfaces: ['samples'],
+      },
+      requestBody: {
+        required: true,
+        content: { [media]: { schema: ref('Shared') } },
+      },
+      responses: {
+        200: {
+          description: 'Success',
+          content: { 'application/json': { schema: { type: 'string' } } },
+        },
+      },
+    };
+    Object.assign(document.paths, { '/shared': { post: operation } });
+    const selection = {
+      clients: ['samples'],
+      targets: { samples: 'native' },
+    } as const;
+    await compile(document, selection);
+    Object.assign(operation.responses[200].content['application/json'], {
+      schema: ref('Shared'),
+    });
+    await assert.rejects(
+      compile(document, selection),
+      (error) =>
+        error instanceof ContractError &&
+        error.location.includes('responses.200') &&
+        message.test(error.message),
+    );
+  });
+}

@@ -54,13 +54,23 @@ export const binary = (
 export const spread = (value: Expression): Expression =>
   node(`...${value.source}`, [value]);
 
+export function propertyKey(name: string | number): string {
+  const quoted = JSON.stringify(name);
+  // __proto__ is data, not an object-literal prototype setter. Negative
+  // numbers also need computed syntax; other keys can use ordinary properties.
+  if (name === '__proto__' || (typeof name === 'number' && name < 0))
+    return `[${quoted}]`;
+  return typeof name === 'string' && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)
+    ? name
+    : quoted;
+}
+
 export function object(
   entries: readonly (readonly [string | number, Expression])[],
 ): Expression {
-  // Computed keys keep contract-owned __proto__ data even if support for that
-  // name changes later. Property and object wrappers each own their depth.
+  // Property and object wrappers each own their expression depth.
   const properties = entries.map(([name, value]) =>
-    node(`[${JSON.stringify(name)}]: ${value.source}`, [value]),
+    node(`${propertyKey(name)}: ${value.source}`, [value]),
   );
   return node(
     `{${properties.map((property) => property.source).join(',')}}`,

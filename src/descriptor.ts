@@ -49,6 +49,8 @@ const methods = [
   'options',
 ] as const;
 
+type Validation = ReturnType<typeof schemaValidation>;
+
 // Endpoint declarations must survive browser Fetch unchanged. These fields
 // belong to the transport, including value-dependent method overrides and the
 // User-Agent field that Chromium still filters. See Fetch §2.2.2.
@@ -118,6 +120,7 @@ function jsonSchema(
 function normalizeParameter(
   input: unknown,
   schemas: Readonly<Record<string, Schema>>,
+  validation: Validation,
   examples: ReadonlySet<string>,
   location: string,
 ): Parameter {
@@ -175,7 +178,7 @@ function normalizeParameter(
       'only false on query parameters is supported',
     );
   const schema = normalizeSchema(value.schema, `${location}.schema`);
-  validateSchema(schema, schemas, `${location}.schema`, 'request');
+  validateSchema(schema, schemas, `${location}.schema`, 'request', validation);
   const resolved = resolveSchema(schema, schemas);
   const primitive = (candidate: Schema): boolean =>
     ['string', 'number', 'integer', 'boolean'].includes(
@@ -238,6 +241,7 @@ function normalizeParameter(
 function normalizeHeaders(
   input: unknown,
   schemas: Readonly<Record<string, Schema>>,
+  validation: Validation,
   examples: ReadonlySet<string>,
   location: string,
 ): readonly ResponseHeader[] {
@@ -289,7 +293,13 @@ function normalizeHeaders(
       if (Object.hasOwn(header, 'explode'))
         optionalBoolean(header, 'explode', headerLocation);
       const schema = normalizeSchema(header.schema, `${headerLocation}.schema`);
-      validateSchema(schema, schemas, `${headerLocation}.schema`, 'response');
+      validateSchema(
+        schema,
+        schemas,
+        `${headerLocation}.schema`,
+        'response',
+        validation,
+      );
       if (resolveSchema(schema, schemas).kind !== 'string')
         fail(
           `${headerLocation}.schema`,
@@ -363,6 +373,7 @@ function multipartFields(
 function operationParameters(
   value: Record<string, unknown>,
   schemas: Readonly<Record<string, Schema>>,
+  validation: Validation,
   examples: ReadonlySet<string>,
   path: string,
   location: string,
@@ -376,6 +387,7 @@ function operationParameters(
     normalizeParameter(
       parameter,
       schemas,
+      validation,
       examples,
       `${location}.parameters[${index}]`,
     ),
@@ -410,6 +422,7 @@ function requestBody(
   value: Record<string, unknown>,
   method: (typeof methods)[number],
   schemas: Readonly<Record<string, Schema>>,
+  validation: Validation,
   examples: ReadonlySet<string>,
   location: string,
 ): Operation['body'] {
@@ -452,6 +465,7 @@ function requestBody(
       schemas,
       schemaLocation,
       multipart ? 'multipart' : 'request',
+      validation,
     );
     body = multipart
       ? {
@@ -468,6 +482,7 @@ function operationResponses(
   value: Record<string, unknown>,
   method: (typeof methods)[number],
   schemas: Readonly<Record<string, Schema>>,
+  validation: Validation,
   examples: ReadonlySet<string>,
   location: string,
 ): readonly ContractResponse[] {
@@ -506,6 +521,7 @@ function operationResponses(
           schemas,
           `${responseLocation}.content.application/json.schema`,
           'response',
+          validation,
         );
         responseBody = { kind: 'json', schema };
       }
@@ -513,6 +529,7 @@ function operationResponses(
         ? normalizeHeaders(
             response.headers,
             schemas,
+            validation,
             examples,
             `${responseLocation}.headers`,
           )
@@ -530,6 +547,7 @@ function normalizeOperation(
   path: string,
   vocabulary: PolicyVocabulary,
   schemas: Readonly<Record<string, Schema>>,
+  validation: Validation,
   examples: ReadonlySet<string>,
   bearerSchemes: ReadonlySet<string>,
   inheritedSecurity: AuthTransport,
@@ -582,15 +600,24 @@ function normalizeOperation(
   const parameters = operationParameters(
     value,
     schemas,
+    validation,
     examples,
     path,
     location,
   );
-  const body = requestBody(value, method, schemas, examples, location);
+  const body = requestBody(
+    value,
+    method,
+    schemas,
+    validation,
+    examples,
+    location,
+  );
   const responses = operationResponses(
     value,
     method,
     schemas,
+    validation,
     examples,
     location,
   );
@@ -671,14 +698,16 @@ export function buildDescriptor(input: unknown): Descriptor {
       ]),
   );
   const schemaOrder = orderSchemas(schemas);
-  const validatedComponents = schemaValidation();
+  // Share traversal work only within this descriptor. The cache separates
+  // usage checks so request defaults and multipart values cannot weaken responses.
+  const validation = schemaValidation();
   for (const name of schemaOrder)
     validateSchema(
       schemas[name]!,
       schemas,
       `components.schemas.${name}`,
       'component',
-      validatedComponents,
+      validation,
     );
   const paths = record(value.paths, 'paths');
   const operations: Operation[] = [];
@@ -698,6 +727,7 @@ export function buildDescriptor(input: unknown): Descriptor {
             path,
             vocabulary,
             schemas,
+            validation,
             examples,
             bearerSchemes,
             inheritedSecurity,

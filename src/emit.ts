@@ -8,6 +8,7 @@ import {
   member,
   method,
   object,
+  propertyKey,
   source,
 } from './code.js';
 import type { Expression } from './code.js';
@@ -51,6 +52,12 @@ function helperImports(helpers: ReadonlySet<string>): string {
   ].join('\n');
 }
 
+function zodTypeImports(imports: ReadonlySet<string>): string {
+  return imports.size
+    ? `import type { ${[...imports].sort().join(', ')} } from 'zod';`
+    : '';
+}
+
 function renderComponents(
   descriptor: Descriptor,
   selections: readonly { direction: Direction; names: readonly string[] }[],
@@ -75,7 +82,7 @@ function renderComponents(
       );
       return `type ${type} = ${schemaType(schema, direction, target)};
       ${renderer.takeDeclarations()}
-      const ${symbol}: ${validatorType(schema, type, descriptor.schemas)} = ${source(expression, `components.schemas.${name}`)};`;
+      const ${symbol}: ${validatorType(schema, type, descriptor.schemas, renderer.typeImports)} = ${source(expression, `components.schemas.${name}`)};`;
     }),
   );
   return { renderer, declarations: declarations.join('\n') };
@@ -85,6 +92,7 @@ function parameterOptions(
   operation: Operation,
   parameters: Operation['parameters'],
   renderer: SchemaRenderer,
+  headers?: ReadonlyMap<string, Expression>,
 ) {
   const entries: Entries = [];
   let required = operation.body.kind !== 'none';
@@ -98,13 +106,15 @@ function parameterOptions(
     const requiredGroup = group.some((parameter) => parameter.required);
     required ||= requiredGroup;
     const fields: Entries = group.map((parameter, index) => {
-      const schema = renderer.schema(
-        parameter.schema,
-        'request',
-        `${operation.id}.parameters.${parameter.name}`,
-        `${operationScope(operation.id)}_options_${position}_${index}`,
-        true,
-      );
+      const schema =
+        (position === 'header' ? headers?.get(parameter.name) : undefined) ??
+        renderer.schema(
+          parameter.schema,
+          'request',
+          `${operation.id}.parameters.${parameter.name}`,
+          `${operationScope(operation.id)}_options_${position}_${index}`,
+          true,
+        );
       return [
         parameter.name,
         parameter.required ? schema : method(schema, 'optional'),
@@ -135,30 +145,32 @@ function parameterOptions(
   return required ? options : method(options, 'optional');
 }
 
-function requestHeaderSpecs(
-  operation: Operation,
-  renderer: SchemaRenderer,
-): Expression {
-  return object(
+function requestHeaders(operation: Operation, renderer: SchemaRenderer) {
+  const schemas = new Map<string, Expression>();
+  const specs = object(
     operation.parameters
       .filter((parameter) => parameter.in === 'header')
-      .map((header, index) => [
-        header.name.toLowerCase(),
-        object([
-          ['required', literal(header.required)],
-          [
-            'schema',
-            renderer.schema(
-              header.schema,
-              'request',
-              `${operation.id}.headers.${header.name}`,
-              `${operationScope(operation.id)}_header_${index}`,
-              true,
-            ),
-          ],
-        ]),
-      ]),
+      .map((header, index): Entries[number] => {
+        const scope = `${operationScope(operation.id)}_header_${index}`;
+        const location = `${operation.id}.headers.${header.name}`;
+        // Both validation stages use one rule. Bind it before the option
+        // declarations, after any nullable/reference dependencies it needs.
+        const schema = renderer.bind(
+          scope,
+          renderer.schema(header.schema, 'request', location, scope, true),
+          location,
+        );
+        schemas.set(header.name, schema);
+        return [
+          header.name.toLowerCase(),
+          object([
+            ['required', literal(header.required)],
+            ['schema', schema],
+          ]),
+        ];
+      }),
   );
+  return { schemas, specs };
 }
 
 function responseSpecs(
@@ -211,6 +223,7 @@ function operationExpression(
   client: Client,
   renderer: SchemaRenderer,
 ): Expression {
+  const headers = requestHeaders(operation, renderer);
   const parameters = operation.parameters.filter(
     (parameter) =>
       parameter.in !== 'header' ||
@@ -232,8 +245,11 @@ function operationExpression(
         })),
       ),
     ],
-    ['options', parameterOptions(operation, parameters, renderer)],
-    ['headers', requestHeaderSpecs(operation, renderer)],
+    [
+      'options',
+      parameterOptions(operation, parameters, renderer, headers.schemas),
+    ],
+    ['headers', headers.specs],
     ['responses', responseSpecs(operation, renderer)],
   ];
   if (operation.body.kind === 'multipart')
@@ -261,15 +277,14 @@ function renderClient(
       ),
     ]);
     const fields = names
-      .map(
-        (name) => `[${JSON.stringify(name)}]: ${typeSymbol(name, direction)};`,
-      )
+      .map((name) => `${propertyKey(name)}: ${typeSymbol(name, direction)};`)
       .join('\n');
     return `export const ${direction}Schemas = ${source(expression, `client.${client.name}.${direction}Schemas`)};
       export type ${direction === 'request' ? 'Request' : 'Response'}Types = {${fields}};`;
   });
   const emittedSchema = `${banner}
     ${components.usesZod() ? "import { z } from 'zod';" : ''}
+    ${zodTypeImports(components.typeImports)}
     ${helperImports(components.helpers)}
     ${declarations}
     ${schemaMaps.join('\n')}`;
@@ -296,6 +311,7 @@ function renderClient(
   const hasReferences =
     client.requestSchemas.length + client.responseSchemas.length > 0;
   const emittedOperations = `${banner}import { z } from 'zod';
+    ${zodTypeImports(inline.typeImports)}
     ${helperImports(inline.helpers)}
     ${hasReferences ? `import * as schemas from './client.${client.name}.schemas.ts';` : ''}
     ${inline.takeDeclarations()}
@@ -332,7 +348,7 @@ function renderClient(
 function renderExecution(client: Client): string {
   const entries = client.operations.map(
     (operation) =>
-      `[${JSON.stringify(operation.id)}]: defineCall({ operation: operations[${JSON.stringify(operation.id)}], ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
+      `${propertyKey(operation.id)}: defineCall({ operation: operations.${operation.id}, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
   );
   return `${banner}
     import { operations } from './client.${client.name}.operations.ts';
@@ -354,7 +370,7 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     .join(' | ');
   const entries = client.queries.map(
     (operation) =>
-      `[${JSON.stringify(operation.id)}]: defineQuery({ operation: operations[${JSON.stringify(operation.id)}], bodyCache: ${operation.responses.filter((response) => response.status >= 200 && response.status < 300).every((response) => response.body.kind !== 'none')}, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
+      `${propertyKey(operation.id)}: defineQuery({ operation: operations.${operation.id}, bodyCache: ${operation.responses.filter((response) => response.status >= 200 && response.status < 300).every((response) => response.body.kind !== 'none')}, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
   );
   // Removing cursors and transport headers can remove every schema reference
   // from base inputs, even when the ordinary client needs those components.
@@ -392,13 +408,13 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
       inputs.push(
         `const ${name} = ${source(parameterOptions(operation, parameters, renderer), `infiniteQueries.${client.name}.${operation.id}`)};`,
       );
-      const op = `operations[${JSON.stringify(operation.id)}]`;
+      const op = `operations.${operation.id}`;
       infiniteTypes.push(
-        `[${JSON.stringify(operation.id)}]: InfiniteQueryFactoryFor<typeof ${op}, z.input<typeof ${name}>, ${JSON.stringify(binding.items)}${offset ? ', number' : ''}>;`,
+        `${propertyKey(operation.id)}: InfiniteQueryFactoryFor<typeof ${op}, z.input<typeof ${name}>, ${JSON.stringify(binding.items)}${offset ? ', number' : ''}>;`,
       );
       if (offset)
-        return `[${JSON.stringify(operation.id)}]: defineOffsetQuery({ operation: ${op}, input: ${name}, offset: ${JSON.stringify(binding.offset)}, fields: ${JSON.stringify({ offset: binding.responseOffset, limit: binding.responseLimit, total: binding.total, items: binding.items })}, page: page => ({ offset: page[${JSON.stringify(binding.responseOffset)}], limit: page[${JSON.stringify(binding.responseLimit)}], total: page[${JSON.stringify(binding.total)}], items: page[${JSON.stringify(binding.items)}] }), bodyCache: true, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
-      return `[${JSON.stringify(operation.id)}]: defineInfiniteQuery({ operation: ${op}, input: ${name}, cursor: ${JSON.stringify(binding.cursor)}, nextCursor: page => page[${JSON.stringify(binding.nextCursor)}], items: page => page[${JSON.stringify(binding.items)}], bodyCache: true, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
+        return `${propertyKey(operation.id)}: defineOffsetQuery({ operation: ${op}, input: ${name}, offset: ${JSON.stringify(binding.offset)}, fields: ${JSON.stringify({ offset: binding.responseOffset, limit: binding.responseLimit, total: binding.total, items: binding.items })}, page: page => ({ offset: page[${JSON.stringify(binding.responseOffset)}], limit: page[${JSON.stringify(binding.responseLimit)}], total: page[${JSON.stringify(binding.total)}], items: page[${JSON.stringify(binding.items)}] }), bodyCache: true, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
+      return `${propertyKey(operation.id)}: defineInfiniteQuery({ operation: ${op}, input: ${name}, cursor: ${JSON.stringify(binding.cursor)}, nextCursor: page => page[${JSON.stringify(binding.nextCursor)}], items: page => page[${JSON.stringify(binding.items)}], bodyCache: true, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
     },
   );
   const infinite = client.infiniteQueries.length > 0;
@@ -420,6 +436,7 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     `import { ${factories.join(', ')} } from './query-runtime.ts';`,
     `import type { ${types.join(', ')} } from './query-runtime.ts';`,
     ...(infinite ? ["import { z } from 'zod';"] : []),
+    zodTypeImports(renderer.typeImports),
     ...(usesReferences
       ? [`import * as schemas from './client.${client.name}.schemas.ts';`]
       : []),
@@ -468,6 +485,7 @@ function renderStandalone(
   );
   return `${banner}
     ${renderer.usesZod() ? "import { z } from 'zod';" : ''}
+    ${zodTypeImports(renderer.typeImports)}
     ${helperImports(renderer.helpers)}
     ${declarations}
     ${renderer.takeDeclarations()}

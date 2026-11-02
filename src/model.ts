@@ -151,13 +151,13 @@ export type Client = {
   readonly responseSchemas: readonly string[];
 };
 
-export type CursorQueryBinding = Readonly<{
+type CursorQueryBinding = Readonly<{
   cursor: string;
   nextCursor: string;
   items: string;
 }>;
 
-export type OffsetQueryBinding = Readonly<{
+type OffsetQueryBinding = Readonly<{
   offset: string;
   responseOffset: string;
   responseLimit: string;
@@ -167,7 +167,7 @@ export type OffsetQueryBinding = Readonly<{
 
 export type InfiniteQueryBinding = CursorQueryBinding | OffsetQueryBinding;
 
-export type InfiniteQuery = Readonly<{
+type InfiniteQuery = Readonly<{
   operation: Operation;
   binding: InfiniteQueryBinding;
 }>;

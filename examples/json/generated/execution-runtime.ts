@@ -161,7 +161,7 @@ function assertSuccess<R extends Responses>(
   }
 }
 
-export function throwIfAborted(signal: AbortSignal): void {
+function throwIfAborted(signal: AbortSignal): void {
   if (!signal.aborted) return;
   // oxlint-disable-next-line typescript/only-throw-error -- AbortSignal reasons can be any value; cancellation preserves them exactly.
   throw cancellationReason(signal);
@@ -502,7 +502,8 @@ export function executionConfig<Execute extends (...args: never[]) => unknown>(
   label = 'execution',
 ) {
   const { namespace, execute, mapCancellation } = config;
-  executionNamespace(namespace, `${label} namespace`);
+  if (typeof namespace !== 'string' || namespace.length === 0)
+    throw new TypeError(`${label} namespace must be a nonempty string`);
   if (typeof execute !== 'function')
     throw new TypeError(`${label} executor must be a function`);
   if (mapCancellation !== undefined && typeof mapCancellation !== 'function')
@@ -512,10 +513,4 @@ export function executionConfig<Execute extends (...args: never[]) => unknown>(
     execute,
     ...(mapCancellation ? { mapCancellation } : {}),
   };
-}
-
-export function executionNamespace(value: string, location: string): string {
-  if (typeof value !== 'string' || value.length === 0)
-    throw new TypeError(`${location} must be a nonempty string`);
-  return value;
 }

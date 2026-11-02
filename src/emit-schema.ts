@@ -89,6 +89,7 @@ export function schemaRenderer(
   target?: Client['target'],
 ) {
   const helpers = new Set<string>();
+  const typeImports = new Set<string>();
   const declarations: string[] = [];
   let usesZod = false;
   const zod = (name: string, args: readonly Expression[] = []): Expression => {
@@ -238,7 +239,7 @@ export function schemaRenderer(
       const name = `${scope}_part${index++}`;
       const type = `type_${name}`;
       declarations.push(`type ${type} = ${schemaType(value, direction, target, typeReference)};
-        const ${name}: ${validatorType(value, type, schemas)} = ${source(expression, location)};`);
+        const ${name}: ${validatorType(value, type, schemas, typeImports)} = ${source(expression, location)};`);
       return identifier(name);
     };
     return build(value, location, bindRoot);
@@ -246,6 +247,11 @@ export function schemaRenderer(
   return {
     schema,
     helpers,
+    typeImports,
+    bind: (name: string, expression: Expression, location: string) => {
+      declarations.push(`const ${name} = ${source(expression, location)};`);
+      return identifier(name);
+    },
     usesZod: () => usesZod,
     takeDeclarations: () => declarations.splice(0).join('\n'),
   };

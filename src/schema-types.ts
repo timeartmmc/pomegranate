@@ -1,4 +1,5 @@
 import { fail } from './diagnostics.js';
+import { propertyKey } from './code.js';
 import type { Client, Direction, Schema } from './model.js';
 import { resolveSchema } from './schemas.js';
 
@@ -35,7 +36,7 @@ export function schemaType(
       return `{${Object.entries(schema.properties)
         .map(([name, value]) => {
           const required = schema.required.includes(name);
-          return `[${JSON.stringify(name)}]${required ? '' : '?'}: ${child(value)}${required ? '' : ' | undefined'};`;
+          return `${propertyKey(name)}${required ? '' : '?'}: ${child(value)}${required ? '' : ' | undefined'};`;
         })
         .join('\n')}}`;
     case 'array':
@@ -70,11 +71,15 @@ export function validatorType(
   schema: Schema,
   name: string,
   schemas: Readonly<Record<string, Schema>>,
+  imports: Set<string>,
 ): string {
   // A named structural type stops inference expanding through every reference.
   // Arrays retain their specialized validator API: $ref siblings use native
   // .min/.max checks to reject oversized inputs before validating their items.
-  return resolveSchema(schema, schemas).kind === 'array'
-    ? `import('zod').ZodArray<import('zod').ZodType<${name}[number], ${name}[number]>>`
-    : `import('zod').ZodType<${name}, ${name}>`;
+  imports.add('ZodType');
+  if (resolveSchema(schema, schemas).kind === 'array') {
+    imports.add('ZodArray');
+    return `ZodArray<ZodType<${name}[number], ${name}[number]>>`;
+  }
+  return `ZodType<${name}, ${name}>`;
 }
