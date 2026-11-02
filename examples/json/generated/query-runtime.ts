@@ -40,7 +40,7 @@ import type {
   ProtocolIssue,
 } from './runtime.ts';
 import { validateOptions } from './runtime.ts';
-import type { z } from 'zod';
+import type * as z from 'zod';
 import { shareQueryData } from './query-sharing.ts';
 
 import {

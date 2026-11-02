@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import { fail } from './diagnostics.js';
 import type { Constraints, Scalar, Schema } from './model.js';
 import { dateTime, multipleOf, patternTest } from './runtime.js';

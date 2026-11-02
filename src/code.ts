@@ -104,3 +104,21 @@ export function source(expression: Expression, location: string): string {
     );
   return expression.source;
 }
+
+export function pureInitializer(
+  expression: Expression,
+  location: string,
+): string {
+  // Only generated schema/operation construction and fresh aggregate freezing
+  // use this boundary. They allocate validators, closures and plain metadata;
+  // they never parse input or invoke application callbacks. Keep argument
+  // construction inside the IIFE so removing it also removes nested allocations.
+  // Do not mark arbitrary calls pure: runtime validation can have visible effects.
+  return source(
+    {
+      source: `/* @__PURE__ */ (() => (${expression.source}))()`,
+      depth: expression.depth + 3,
+    },
+    location,
+  );
+}

@@ -114,6 +114,10 @@ Bound schema structure and generated validator expression complexity before
 entering native formatting. Excess complexity receives a contract diagnostic;
 annotation values such as defaults are not generated expressions.
 
+Terminal reference resolution is cached within each normalized descriptor.
+Intermediate defaults and sibling constraints still receive context-specific
+validation; compiling a mutable input document again creates a fresh descriptor.
+
 Use one versioned metadata format: document-level `x-pom-policy` declares policy,
 and operation-level `x-pom` selects it. Applications adapt to this format. Keep
 project names, exception names, auth providers, and package aliases out of the
@@ -161,6 +165,12 @@ validation. Project each selected client with only the transitive schemas needed
 by its requests and responses, retaining direction-specific validation. A client
 must not import another client's operation or schema modules. Shared generic
 runtime code is independent of client membership.
+
+Selected query modules reference individual operation and schema declarations.
+Bundlers can remove unused declarations without changing the shared instances or
+frozen full-client aggregates. Only audited validator/operation construction and
+fresh aggregate freezing carry purity annotations; parsing and application
+callbacks remain observable runtime work.
 
 Surfaces control the generated import boundary. They are not authorization
 boundaries, and generating a bearer requirement does not obtain or verify a token.

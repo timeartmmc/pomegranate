@@ -22,7 +22,9 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-import { z } from 'zod';
+// Keep Zod's individual exports visible to bundlers. Its named `z` object
+// retains unrelated validators when bundled through generated runtime helpers.
+import * as z from 'zod';
 
 export function patternTest(pattern: string): (value: string) => boolean {
   const expression = new RegExp(pattern, 'u');

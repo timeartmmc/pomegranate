@@ -30,6 +30,11 @@ positive and expected-error cases through actual consumer compilation. Generated
 modules are excluded from lint and use the pinned formatter's explicit options,
 independent of host configuration.
 
+Bundle regressions use the pinned esbuild dependency and repository Bun version.
+They compare minified browser ESM output and execute the retained contracts,
+including sparse ordinary/cursor/offset queries and browser/native multipart.
+Size assertions cover retention behavior; runtime timings have no CI thresholds.
+
 ## Required coverage
 
 Test observable guarantees and meaningful failure paths across these boundaries:
@@ -108,7 +113,8 @@ binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Us
 `node scripts/benchmark-query-sharing.ts` for sharing comparisons. Timings are
 local evidence, never machine-dependent CI thresholds. Keep dated results separate
 from current usage; the source checkout retains the
-[execution/query integration record](md/history/2026-11-01-execution-integration.txt).
+[execution/query integration record](md/history/2026-11-01-execution-integration.txt)
+and [generation optimization record](md/history/2026-11-01-generation-optimizations.txt).
 
 Application adoption needs its own parity/integration checks and declared time
 and memory budgets. Measure generated/retained bundle size, typecheck, parsing,

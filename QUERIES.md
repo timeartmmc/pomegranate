@@ -29,6 +29,13 @@ as your framework adapter, including persistence adapters that share Query Core.
 Clients without selected queries need neither TanStack nor React and do not
 require a query-library upgrade for executable-client adoption.
 
+Query modules reference their configured operation selections directly, allowing
+bundlers to remove unrelated operations and schemas. Each factory retains its
+complete configured selection. Importing the full `operations` registry or using
+`createClient` retains that client's complete API. Bundle savings depend on the
+application and bundler; generation still validates every declaration and emits
+the complete selected client surfaces.
+
 TypeScript environments without DOM libraries must supply platform declarations
 for `AbortSignal` and `VoidFunction`. Node types provide `AbortSignal`; if needed,
 add `interface VoidFunction { (): void; }` in a global `.d.ts` file.

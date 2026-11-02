@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { symlink, writeFile } from 'node:fs/promises';
+import { rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { compile, ContractError } from '../dist/index.js';
 import { buildDescriptor } from '../dist/descriptor.js';
+import { normalizeSchema, resolveSchema } from '../dist/schemas.js';
 import { entry } from './assertions.ts';
+import { generatedWorkspace } from './generated-workspace.ts';
 import { temporary } from './helpers.ts';
 import type { StandaloneModule } from './runtime-types.ts';
 import { schemaFixture } from './schema-fixture.ts';
@@ -14,14 +16,78 @@ import type { Schema } from './schema-helpers.ts';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 
-function forwardAliases() {
+function forwardAliases(count = 10000) {
   const schemas: Record<string, Schema> = { Leaf: { type: 'string' } };
-  for (let index = 0; index < 10000; index++)
+  for (let index = 0; index < count; index++)
     schemas[`Alias${String(index).padStart(5, '0')}`] = ref(
-      index === 9999 ? 'Leaf' : `Alias${String(index + 1).padStart(5, '0')}`,
+      index === count - 1
+        ? 'Leaf'
+        : `Alias${String(index + 1).padStart(5, '0')}`,
     );
   return schemas;
 }
+
+void test('terminal resolution traverses shared aliases once per normalized table', () => {
+  const descriptor = buildDescriptor(documentWith(forwardAliases(512)));
+  const leaf = entry(descriptor.schemas, 'Leaf');
+  let reads = 0;
+  const schemas = new Proxy(descriptor.schemas, {
+    get(target, key, receiver): unknown {
+      reads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  for (const schema of Object.values(descriptor.schemas))
+    assert.equal(resolveSchema(schema, schemas), leaf);
+  // Count table lookups rather than elapsed time: resolving each suffix must
+  // take linear total work, including when aliases appear before their target.
+  assert.ok(reads <= 512, `${reads} lookups for 512 aliases`);
+});
+
+void test('terminal resolution separates tables even for the same reference node', () => {
+  const reference = normalizeSchema(ref('Leaf'), 'shared.$ref');
+  const text = buildDescriptor(documentWith({ Leaf: { type: 'string' } }));
+  const list = buildDescriptor(
+    documentWith({ Leaf: { type: 'array', items: { type: 'integer' } } }),
+  );
+  assert.equal(resolveSchema(reference, text.schemas).kind, 'string');
+  assert.equal(resolveSchema(reference, list.schemas).kind, 'array');
+  assert.equal(resolveSchema(reference, text.schemas).kind, 'string');
+});
+
+void test('recompiling mutable input preserves alias siblings and specialized array validation', async (t) => {
+  const document = documentWith({
+    Root: { ...ref('Middle'), maxLength: 3 },
+    Middle: { ...ref('Leaf'), minLength: 2 },
+    Leaf: { type: 'string', pattern: '^[a-z]+$' },
+  });
+  const selection = {
+    clients: [],
+    standalone: { input: { schema: ref('Root').$ref, usage: 'request' } },
+  } as const;
+  const textFiles = await compile(document, selection);
+  Object.assign(document.components, {
+    schemas: {
+      Root: { ...ref('Middle'), maxItems: 3 },
+      Middle: { ...ref('Leaf'), minItems: 2 },
+      Leaf: { type: 'array', items: { type: 'integer', minimum: 1 } },
+    },
+  });
+  const arrayFiles = await compile(document, selection);
+  for (const [files, accepted, rejected] of [
+    [textFiles, 'abc', ['a', 'abcd', 'AB', [1, 2]]],
+    [arrayFiles, [1, 2], [[1], [1, 2, 3, 4], [0, 2], 'ab']],
+  ] as const) {
+    const root = await generatedWorkspace(files);
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const { schema } = (await import(
+      pathToFileURL(join(root, 'standalone.input.ts')).href
+    )) as StandaloneModule;
+    assert.deepEqual(schema.parse(accepted), accepted);
+    for (const value of rejected)
+      assert.equal(schema.safeParse(value).success, false);
+  }
+});
 
 function documentWith(schemas: Record<string, Schema>) {
   const document = schemaFixture();

@@ -1,0 +1,76 @@
+POM GENERATION OPTIMIZATIONS — 2026-11-01
+
+Dated local evidence for the three adopted optimization proposals. Current
+behavior belongs to ARCHITECTURE.md and QUERIES.md; initializer/import/cache
+rationale lives beside the owning compiler code. Other generation proposals
+remain decisions or separate capability milestones.
+
+Baseline: checkout 90955119d8551b9a00cbd267813cabfa62a92ec3 (0.3.0).
+Measurements: Node 26.12.1, Zod 4.6.7, esbuild 0.27.7, browser ESM,
+ES2022, minification, Node default gzip. Synthetic inputs only; these results
+establish no application, device, or production performance result.
+
+Terminal alias resolution
+
+For 10,000 forward aliases ending in a string, three-run local medians:
+
+Selection                Baseline       Cache only
+Leaf only                1,059.38 ms        18.67 ms
+Whole alias chain        2,045.28 ms        41.58 ms
+
+Six complete output maps were byte-identical after the cache-only change:
+example, schema/standalone, browser/native multipart, execution, cursor queries,
+and offset queries. The cache stores terminal schemas by normalized table and
+reference node. Contextual validation still visits intermediate constraints and
+defaults. Deterministic lookup-count coverage establishes linear shared-chain
+resolution without a timing threshold. Tests also cover reused reference nodes
+across tables, repeated compilation of mutable inputs, specialized array
+validators, exact missing-reference/cycle diagnostics, and contextual defaults.
+No ordinary-contract timing improvement is claimed.
+
+Retained selected-query bundles
+
+The existing query fixture contributes four operations. addUnusedOperations in
+test/bundle-fixture.ts adds unique response schemas, aliases, regex constraints,
+headers and nested containers. Only readItem is selected. Baseline imports the
+named Zod object; the namespace control changes only that import. Candidate adds
+individual operation/schema references and audited pure initializer boundaries.
+
+Extra unused ops   Variant       Minified bytes   Gzip bytes
+0                  Baseline            476,205      100,472
+0                  Namespace           114,818       34,356
+0                  Candidate           111,712       33,650
+100                Baseline            582,721      110,211
+100                Namespace           215,211       43,902
+100                Candidate           111,712       33,631
+500                Baseline          1,016,454      142,358
+500                Namespace           623,469       74,961
+500                Candidate           111,712       33,670
+
+The import-only control reduces gzip by about 66% on the four-operation fixture.
+The sparse change reduces gzip by about 55% against the namespace-only control
+with 500 extra operations. Generated source increases from 1,840,954 to 2,058,955
+bytes in that case: named declarations and initializer boundaries trade source
+size for removable unused construction. Full client consumers retain their full
+operation set. These fixtures differ from the original proposal measurements;
+the original exact byte counts are not asserted as a universal result.
+
+Revalidation and regression coverage
+
+test/bundle.test.ts compares namespace/named Zod imports with complete schema
+acceptance checks, then checks sparse/full ordinary queries, cursor and offset
+queries in envelope/body modes, shared alias/operation instances, frozen
+aggregates, and browser/native multipart with esbuild and Bun. Added unused
+contracts must disappear from sparse bundles while full aggregates retain and
+validate all 100 added operations. The canonical checks also own declarations,
+minimum peers, browser execution, output ownership, and packed execution after
+compiler removal. CONTRIBUTING.md owns their commands and required coverage.
+
+Local verification completed with Node 26.12.1 and pinned Bun 1.4.3:
+bun ci and bun run verify passed. All 684 tests passed, including Chromium and
+the nine bundling regressions; formatting, strict types, type-aware lint, example
+drift/execution and the packed install passed. The packed install used Zod 4.6.6,
+Query Core 5.104.5 and TypeScript 5.7.3, and ran source and emitted JavaScript
+after removing the compiler. The checkout snapshot remained unchanged through
+verification. This is local verification, not a claim that the CI Node matrix
+or any application migration has completed.

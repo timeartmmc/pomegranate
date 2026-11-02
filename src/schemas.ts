@@ -788,16 +788,39 @@ export function orderSchemas(
   return ordered;
 }
 
+// A normalized schema table belongs to one descriptor and is never mutated.
+// Cache only terminal resolution: usage checks must still visit intermediate
+// defaults and sibling constraints. Weak keys release the cache with its table,
+// and compiling the same mutable input again creates a separate normalized table.
+const terminalSchemas = new WeakMap<
+  Readonly<Record<string, Schema>>,
+  WeakMap<Schema, Schema>
+>();
+
 export function resolveSchema(
   schema: Schema,
   schemas: Readonly<Record<string, Schema>>,
 ): Schema {
   // orderSchemas rejects cycles before any contract context resolves a schema.
-  let resolved = schema;
+  if (schema.kind !== 'ref') return schema;
+  let cache = terminalSchemas.get(schemas);
+  if (!cache) {
+    cache = new WeakMap();
+    terminalSchemas.set(schemas, cache);
+  }
+  const aliases: Schema[] = [];
+  let resolved: Schema = schema;
   while (resolved.kind === 'ref') {
+    const known = cache.get(resolved);
+    if (known) {
+      resolved = known;
+      break;
+    }
     if (!Object.hasOwn(schemas, resolved.name))
       fail(resolved.location, `unresolved reference ${resolved.name}`);
+    aliases.push(resolved);
     resolved = schemas[resolved.name]!;
   }
+  for (const alias of aliases) cache.set(alias, resolved);
   return resolved;
 }

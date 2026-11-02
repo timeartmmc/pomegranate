@@ -9,7 +9,7 @@ import {
   member,
   method,
   object,
-  source,
+  pureInitializer,
   spread,
 } from './code.js';
 import type { Expression } from './code.js';
@@ -239,7 +239,7 @@ export function schemaRenderer(
       const name = `${scope}_part${index++}`;
       const type = `type_${name}`;
       declarations.push(`type ${type} = ${schemaType(value, direction, target, typeReference)};
-        const ${name}: ${validatorType(value, type, schemas, typeImports)} = ${source(expression, location)};`);
+        const ${name}: ${validatorType(value, type, schemas, typeImports)} = ${pureInitializer(expression, location)};`);
       return identifier(name);
     };
     return build(value, location, bindRoot);
@@ -249,7 +249,9 @@ export function schemaRenderer(
     helpers,
     typeImports,
     bind: (name: string, expression: Expression, location: string) => {
-      declarations.push(`const ${name} = ${source(expression, location)};`);
+      declarations.push(
+        `const ${name} = ${pureInitializer(expression, location)};`,
+      );
       return identifier(name);
     },
     usesZod: () => usesZod,

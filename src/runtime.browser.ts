@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-import { z } from 'zod';
+import * as z from 'zod';
 
 // Zod's file validator dereferences File even where it is absent. Report an
 // ordinary validation failure there, while keeping this browser type isolated.
