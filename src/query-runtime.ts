@@ -761,13 +761,11 @@ export function defineOffsetQuery<
         offsetIssues(config.page(page), offset, config.fields),
       nextPageParam: (page, offset) => {
         const data = config.page(page);
-        // Metadata can also come from application cache updates. Recheck before
-        // arithmetic; advancing from the response survives retained-page eviction.
+        // Optimistic cache edits can temporarily invalidate server metadata.
+        // Stop paging until a valid refetch; throwing here breaks Query Core's
+        // observer updates. Incoming responses still fail through responseIssues.
         const issues = offsetIssues(data, offset, config.fields);
-        if (issues.length)
-          throw new TypeError(
-            `invalid offset pagination metadata: ${issues.map((issue) => issue.message).join('; ')}`,
-          );
+        if (issues.length) return undefined;
         const next = data.offset + data.items.length;
         return data.items.length > 0 && next < data.total ? next : undefined;
       },

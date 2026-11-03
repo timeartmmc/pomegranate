@@ -161,8 +161,8 @@ function assertSuccess<R extends Responses>(
   }
 }
 
-function throwIfAborted(signal: AbortSignal): void {
-  if (!signal.aborted) return;
+function throwIfAborted(signal: AbortSignal, aborted: boolean): void {
+  if (!aborted) return;
   // oxlint-disable-next-line typescript/only-throw-error -- AbortSignal reasons can be any value; cancellation preserves them exactly.
   throw cancellationReason(signal);
 }
@@ -227,14 +227,14 @@ export function prepareExecution<Value>(
   scope: CancellationScope,
   mapCancellation?: CancellationMapper,
 ): Value {
+  if (signal.aborted)
+    cancelExecution(signal, context, scope, false, mapCancellation);
   let value!: Value;
   let rejection: Rejection | undefined;
-  if (!signal.aborted) {
-    try {
-      value = prepare();
-    } catch (error) {
-      rejection = { error };
-    }
+  try {
+    value = prepare();
+  } catch (error) {
+    rejection = { error };
   }
   if (signal.aborted)
     cancelExecution(signal, context, scope, false, mapCancellation, rejection);
@@ -371,14 +371,20 @@ export async function executeRequest<
   mapCancellation?: CancellationMapper,
 ): Promise<Success<R>> {
   let identity = scope;
-  if (signal.aborted)
+  // Platform signals are monotonic. Latch observations so a nonconforming
+  // polyfill cannot skip validation and later reopen the success path.
+  let aborted = false;
+  const isAborted = (): boolean => (aborted ||= signal.aborted);
+  if (isAborted())
     cancelExecution(signal, context, identity, false, mapCancellation);
+  if (request === undefined)
+    throw new TypeError('execution requires a prepared request');
   let accepting = true;
   let executorInvoked = false;
   // Raw executors never use receipt tracking. Allocate it only on inspection.
   let accepted: WeakMap<object, ProtocolResult<R>> | undefined;
   let inspected: WeakSet<object> | undefined;
-  let success!: Success<R>;
+  let success: Success<R> | undefined;
   let rejection: Rejection | undefined;
   try {
     identity = { ...scope };
@@ -387,7 +393,7 @@ export async function executeRequest<
     const parseResponse = identity.operation.parseResponse;
     const interpret = (observed: ObservedResponse): ProtocolResult<R> => {
       const result = parseResponse(observed);
-      if (signal.aborted || isFailure(result)) return result;
+      if (isAborted() || isFailure(result)) return result;
       const issues = responseIssues?.(result as Success<R>);
       return issues?.length
         ? Object.freeze({
@@ -403,7 +409,7 @@ export async function executeRequest<
     const validateResponse = (
       observed: ObservedResponse,
     ): ValidatedResponse<R> => {
-      throwIfAborted(signal);
+      throwIfAborted(signal, isAborted());
       if (!accepting)
         throw new TypeError('response validation invocation has completed');
       if (observed === null || typeof observed !== 'object')
@@ -414,13 +420,13 @@ export async function executeRequest<
         );
       (inspected ??= new WeakSet()).add(observed);
       const result = interpret(observed);
-      throwIfAborted(signal);
+      throwIfAborted(signal, isAborted());
       const validated = inspectResponse(result);
       (accepted ??= new WeakMap()).set(validated, result);
       return validated;
     };
     // Scope/parser getters can abort while being captured above.
-    throwIfAborted(signal);
+    throwIfAborted(signal, isAborted());
     let returned: ObservedResponse | ValidatedResponse<R>;
     try {
       executorInvoked = true;
@@ -432,7 +438,7 @@ export async function executeRequest<
       // Close before consuming even a rejected executor outcome.
       accepting = false;
     }
-    if (!signal.aborted) {
+    if (!isAborted()) {
       let result: ProtocolResult<R>;
       if (
         returned !== null &&
@@ -454,7 +460,7 @@ export async function executeRequest<
         // Public tags and extra transport metadata never attest parsed data.
         result = interpret(returned as ObservedResponse);
       }
-      if (!signal.aborted) {
+      if (!isAborted()) {
         assertSuccess(result, identity);
         success = result;
       }
@@ -468,7 +474,7 @@ export async function executeRequest<
     inspected = undefined;
   }
   // Mapper failures are outside the catch and therefore cannot be mapped twice.
-  if (signal.aborted)
+  if (isAborted())
     cancelExecution(
       signal,
       context,
@@ -481,6 +487,8 @@ export async function executeRequest<
     // oxlint-disable-next-line typescript/only-throw-error -- Preserve application rejection identity, including non-Error values.
     throw rejection.error;
   }
+  if (success === undefined)
+    throw new TypeError('execution completed without a validated response');
   return success;
 }
 

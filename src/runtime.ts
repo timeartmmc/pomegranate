@@ -480,6 +480,12 @@ function arrayLength(input: readonly unknown[]): number | undefined {
     : undefined;
 }
 
+function arrayItem(input: readonly unknown[], index: number): unknown {
+  // A hole is missing JSON data, even if another library polluted a prototype.
+  // Keep own accessors observable, with one value read after the ownership check.
+  return Object.hasOwn(input, index) ? input[index] : undefined;
+}
+
 export function list<T>(
   input: unknown,
   issues: Issues,
@@ -498,7 +504,7 @@ export function list<T>(
   const output: T[] = [];
   for (let index = 0; index < length; index++) {
     const before = issues.length;
-    const element: unknown = input[index];
+    const element = arrayItem(input, index);
     const value = items(element, issues);
     if (value === invalid) {
       rejected(issues, before);
@@ -512,7 +518,8 @@ function* arrayEntries(
   input: unknown[],
   length: number,
 ): Generator<readonly [number, unknown]> {
-  for (let index = 0; index < length; index++) yield [index, input[index]];
+  for (let index = 0; index < length; index++)
+    yield [index, arrayItem(input, index)];
 }
 
 export function map<T>(

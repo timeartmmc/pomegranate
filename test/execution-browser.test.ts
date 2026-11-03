@@ -190,10 +190,11 @@ void test('one application executor serves real Chromium calls, uploads and moun
     'POST',
     'PUT',
   ]);
-  assert.equal(result.requests, 56);
-  assert.equal(result.reads, 56);
+  // Each of the four mounted matrix cases now restores an optimistic offset page.
+  assert.equal(result.requests, 60);
+  assert.equal(result.reads, 60);
   assert.equal(result.effects, 1);
-  assert.equal(result.scopedValidations, 20);
+  assert.equal(result.scopedValidations, 22);
   assert.deepEqual(result.mixedInvalidations, ['raw/cursor', 'scoped/offset']);
   assert.deepEqual(result.mountedCombinations, [
     'raw/envelope/ordinary',

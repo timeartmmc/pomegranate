@@ -368,6 +368,69 @@ export async function runExecutionBrowser() {
             matrix().cursor.isSuccess &&
             matrix().offset.isSuccess,
         );
+        // Optimistic inserts can overfill a server page. Mounted hooks must
+        // remain usable and stop paging until invalidation restores metadata.
+        const offsetRequests = requests;
+        await act(async () => {
+          if (body) {
+            const key = pages.listRecords.body().key(offsetArgs);
+            const previous = cache.getQueryData(key);
+            check(previous, 'body offset cache');
+            cache.setQueryData(key, {
+              ...previous,
+              pages: previous.pages.map((page) => ({
+                ...page,
+                entries: [...page.entries, { id: 'optimistic' }],
+              })),
+            });
+          } else {
+            const key = pages.listRecords.key(offsetArgs);
+            const previous = cache.getQueryData(key);
+            check(previous, 'envelope offset cache');
+            cache.setQueryData(key, {
+              ...previous,
+              pages: previous.pages.map((page) => {
+                check(page.status === 200, 'initial offset success');
+                return {
+                  ...page,
+                  data: {
+                    ...page.data,
+                    entries: [...page.data.entries, { id: 'optimistic' }],
+                  },
+                };
+              }),
+            });
+          }
+        });
+        await settled(() => matrix().offset.data?.length === 2);
+        equal(
+          matrix().offset.hasNextPage,
+          false,
+          'optimistic offset paging stops',
+        );
+        await act(async () => {
+          await matrix().offset.fetchNextPage();
+        });
+        equal(requests, offsetRequests, 'stopped paging sends no request');
+        equal(
+          matrix().offset.fetchStatus,
+          'idle',
+          'optimistic offset query stays idle',
+        );
+        await act(async () => {
+          await cache.invalidateQueries(
+            pages.listRecords.invalidationFilter({ context }),
+          );
+        });
+        await settled(
+          () =>
+            matrix().offset.data?.length === 1 && !matrix().offset.isFetching,
+        );
+        equal(
+          matrix().offset.hasNextPage,
+          true,
+          'valid refetch restores offset paging',
+        );
         const item = matrix().ordinary.data;
         check(item, 'matrix ordinary data');
         equal(

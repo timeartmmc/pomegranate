@@ -6,6 +6,11 @@ import {
   isCancelledError,
   skipToken,
 } from '@tanstack/query-core';
+import type {
+  InfiniteData,
+  InfiniteQueryObserverOptions,
+  QueryKey,
+} from '@tanstack/query-core';
 import { setImmediate } from 'node:timers/promises';
 import { runtimeInput } from './assertions.ts';
 import { dehydrateJson } from './query-hydration.ts';
@@ -45,6 +50,111 @@ const startOf = (url: string) =>
   Number(new URL(url, 'https://synthetic.invalid').searchParams.get('start'));
 
 export const offsetChecks = {
+  'optimistic inserts stop offset paging without breaking writes, observers or invalidation':
+    async (module) => {
+      for (const scoped of [false, true]) {
+        let calls = 0;
+        const queries = module.createInfiniteQueries({
+          namespace: `optimistic-offset-${scoped}`,
+          execute: async (request, execution) => {
+            calls++;
+            const start = startOf(request.url);
+            const observed = offsetPage(start, 10, [
+              String(start),
+              String(start + 1),
+            ]);
+            return scoped ? execution.validateResponse(observed) : observed;
+          },
+        });
+        async function check<Data, Key extends QueryKey>(
+          prepared: InfiniteQueryObserverOptions<
+            Data,
+            Error,
+            InfiniteData<Data, number>,
+            Key,
+            number
+          >,
+          append: (page: Data) => Data,
+          count: (page: Data) => number,
+        ) {
+          const cache = client();
+          const options = {
+            ...prepared,
+            staleTime: Infinity,
+            gcTime: Infinity,
+          };
+          const queryKey: QueryKey = options.queryKey;
+          const initial = await cache.fetchInfiniteQuery(options);
+          const observer = new InfiniteQueryObserver(cache, options);
+          const unsubscribe = observer.subscribe(() => {});
+          try {
+            const first = initial.pages[0]!;
+            const optimistic = { ...initial, pages: [append(first)] };
+            assert.doesNotThrow(() => cache.setQueryData(queryKey, optimistic));
+            assert.equal(
+              count(first),
+              2,
+              'the optimistic update must be immutable',
+            );
+            assert.equal(observer.getCurrentResult().hasNextPage, false);
+            const before = calls;
+            await observer.fetchNextPage({ throwOnError: true });
+            assert.equal(
+              calls,
+              before,
+              'inconsistent cached metadata must not dispatch',
+            );
+            assert.equal(cache.getQueryState(queryKey)?.fetchStatus, 'idle');
+            assert.equal(
+              count(
+                cache.getQueryData<InfiniteData<Data, number>>(queryKey)!
+                  .pages[0]!,
+              ),
+              3,
+            );
+            await cache.invalidateQueries({ queryKey, exact: true });
+            assert.equal(observer.getCurrentResult().hasNextPage, true);
+            assert.equal(
+              count(
+                cache.getQueryData<InfiniteData<Data, number>>(queryKey)!
+                  .pages[0]!,
+              ),
+              2,
+            );
+            await observer.fetchNextPage({ throwOnError: true });
+            assert.deepEqual(
+              cache.getQueryData<InfiniteData<Data, number>>(queryKey)!
+                .pageParams,
+              [0, 2],
+            );
+            assert.equal(cache.getQueryState(queryKey)?.fetchStatus, 'idle');
+          } finally {
+            unsubscribe();
+            cache.clear();
+          }
+        }
+        await check(
+          queries.listRecords.options(offsetArgs()),
+          (page) => {
+            assert.ok(page.status === 200);
+            return {
+              ...page,
+              data: {
+                ...page.data,
+                entries: [...page.data.entries, { id: 'local' }],
+              },
+            };
+          },
+          (page) => page.data.entries.length,
+        );
+        await check(
+          queries.listRecords.body().options(offsetArgs()),
+          (page) => ({ ...page, entries: [...page.entries, { id: 'local' }] }),
+          (page) => page.entries.length,
+        );
+      }
+    },
+
   'offset pages start at zero, advance by actual item count and preserve snapshots and statuses':
     async (module) => {
       const cache = client();

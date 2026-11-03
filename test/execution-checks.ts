@@ -578,6 +578,62 @@ export const executionChecks = {
         reason,
       );
     },
+
+  'nonmonotonic signal getters cannot bypass preparation or complete without validation':
+    async (module) => {
+      for (const scoped of [false, true]) {
+        for (const targetRead of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+          const reason = new Error('Transient abort');
+          const mapped = new Error('Mapped abort');
+          let reads = 0;
+          let attempts = 0;
+          let mappings = 0;
+          const signal = {
+            get aborted() {
+              return ++reads === targetRead;
+            },
+            reason,
+            addEventListener() {},
+            removeEventListener() {},
+          };
+          const client = module.createClient({
+            namespace: 'signal-getter',
+            execute: async (request, execution) => {
+              attempts++;
+              assert.ok(
+                request,
+                'an executor must always receive a built request',
+              );
+              const observed = json(200, { id: 'item', label: 'Validated' });
+              return scoped ? execution.validateResponse(observed) : observed;
+            },
+            mapCancellation: (event) => {
+              mappings++;
+              assert.equal(event.reason, reason);
+              assert.equal(event.executorInvoked, attempts > 0);
+              return { error: mapped };
+            },
+          });
+          const args =
+            targetRead === 2
+              ? { ...item(), input: { path: { id: 123 } }, signal }
+              : { ...item(), signal };
+          try {
+            const result = await runtimeInput(client.readItem.call, args);
+            assert.ok(result, 'a call must never resolve undefined');
+            assert.equal(result.kind, 'success');
+            assert.ok(
+              reads < targetRead,
+              'an observed abort cannot become success',
+            );
+          } catch (error) {
+            assert.equal(error, mapped);
+            assert.equal(mappings, 1);
+          }
+          if (targetRead === 2) assert.equal(attempts, 0);
+        }
+      }
+    },
 } satisfies Readonly<
   Record<
     string,
@@ -596,12 +652,37 @@ export async function verifyExecutions(
 
 export async function verifyExecutionParsing(
   module: Module,
-  _schemas: typeof import('./.generated/execution/client.consumer.schemas.ts'),
+  schemas: typeof import('./.generated/execution/client.consumer.schemas.ts'),
   transport: Pick<
     typeof import('../examples/json/transport.ts'),
     'createExecutor' | 'execute'
   >,
 ) {
+  const sparse = ['user'];
+  sparse.length = 2;
+  assert.equal(Object.hasOwn(Object.prototype, '1'), false);
+  Object.defineProperty(Object.prototype, '1', {
+    value: 'staff',
+    writable: true,
+    configurable: true,
+  });
+  try {
+    const input = command().input;
+    assert.throws(
+      () =>
+        module.operations.createWidget.build({
+          ...input,
+          body: { ...input.body, values: sparse },
+        }),
+      module.RequestValidationError,
+    );
+    assert.equal(
+      schemas.responseSchemas.JsonMap.safeParse({ roles: sparse }).success,
+      false,
+    );
+  } finally {
+    Reflect.deleteProperty(Object.prototype, '1');
+  }
   let parses = 0;
   let reads = 0;
   let successes = 0;

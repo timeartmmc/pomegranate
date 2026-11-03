@@ -142,6 +142,7 @@ function literals(
   if (!Array.isArray(raw) || raw.length === 0)
     fail(`${location}.enum`, 'expected a nonempty array');
   const result: Scalar[] = [];
+  const seen = new Set<Scalar>();
   for (const item of raw) {
     const matches =
       kind === 'null'
@@ -151,7 +152,8 @@ function literals(
           : typeof item === kind;
     if ((!matches && !(nullable && item === null)) || !scalarValue(item))
       fail(location, `literal must match type ${kind}`);
-    if (result.includes(item)) fail(location, 'duplicate literal');
+    if (seen.has(item)) fail(location, 'duplicate literal');
+    seen.add(item);
     result.push(item);
   }
   return result;
@@ -597,11 +599,14 @@ function validateUnion(
       );
     return branch.name;
   });
+  // Enumerating targets inside the membership loop makes large unions quadratic.
+  const mappedNames = Object.values(mapping);
+  const targets = new Set(mappedNames);
   if (
     new Set(names).size !== names.length ||
-    Object.values(mapping).length !== names.length ||
-    new Set(Object.values(mapping)).size !== names.length ||
-    names.some((name) => !Object.values(mapping).includes(name))
+    mappedNames.length !== names.length ||
+    targets.size !== names.length ||
+    names.some((name) => !targets.has(name))
   )
     fail(
       `${location}.discriminator.mapping`,

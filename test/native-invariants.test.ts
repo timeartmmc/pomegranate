@@ -152,6 +152,56 @@ void test('invalid observed lengths and effective bounds reject before item read
   }
 });
 
+void test('array holes cannot inherit prototype values in typed parsing or JSON copying', () => {
+  const sparse = ['user'];
+  sparse.length = 2;
+  assert.equal(Object.hasOwn(sparse, 1), false);
+  assert.equal(Object.hasOwn(Object.prototype, '1'), false);
+  Object.defineProperty(Object.prototype, '1', {
+    value: 'staff',
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+  try {
+    for (const registry of [schemas.requestSchemas, schemas.responseSchemas]) {
+      assert.equal(registry.ArrayMax.safeParse(sparse).success, false);
+      assert.equal(registry.AnyMap.safeParse({ roles: sparse }).success, false);
+      assert.deepEqual(registry.ArrayMax.parse(['user', 'staff']), [
+        'user',
+        'staff',
+      ]);
+    }
+    assert.throws(
+      () => operations.checkArrayMax.build({ body: sparse }),
+      RequestValidationError,
+    );
+    assert.throws(
+      () => operations.checkAnyMap.build({ body: { roles: sparse } }),
+      RequestValidationError,
+    );
+    const own = ['user'];
+    let reads = 0;
+    Object.defineProperty(own, '1', {
+      get() {
+        reads++;
+        return 'staff';
+      },
+    });
+    assert.deepEqual(schemas.requestSchemas.ArrayMax.parse(own), [
+      'user',
+      'staff',
+    ]);
+    assert.equal(
+      reads,
+      1,
+      'own array accessors remain supported and read once',
+    );
+  } finally {
+    Reflect.deleteProperty(Object.prototype, '1');
+  }
+});
+
 void test('arbitrary JSON uses the same observed-count policy and detaches repeated references', () => {
   for (const parser of [
     schemas.requestSchemas.AnyMap,

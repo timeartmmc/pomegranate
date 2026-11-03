@@ -34,6 +34,105 @@ async function rejected(promise: Promise<unknown>): Promise<unknown> {
 }
 
 export const integrationChecks = {
+  'transient query cancellation stays closed across profiles and cache representations':
+    async (_module, queries) => {
+      for (const scoped of [false, true]) {
+        let attempts = 0;
+        let mappings = 0;
+        const reason = new Error('Transient query abort');
+        const mapped = new Error('Mapped query abort');
+        const config: Parameters<Queries['createQueries']>[0] = {
+          namespace: 'query-signal-getters',
+          execute: async (request, execution) => {
+            attempts++;
+            assert.ok(request);
+            const observed = response(
+              200,
+              request.operationId === 'readItem'
+                ? { id: 'item', label: 'Validated' }
+                : request.operationId === 'listItems'
+                  ? {
+                      results: [{ id: 'item', label: 'Validated' }],
+                      continuation: null,
+                    }
+                  : {
+                      entries: [{ id: 'item' }],
+                      start: 0,
+                      size: 2,
+                      count: 1,
+                      next: null,
+                    },
+            );
+            return scoped ? execution.validateResponse(observed) : observed;
+          },
+          mapCancellation: (event) => {
+            mappings++;
+            assert.equal(event.reason, reason);
+            assert.equal(event.executorInvoked, attempts > 0);
+            return { error: mapped };
+          },
+        };
+        const ordinary = queries.createQueries(config);
+        const infinite = queries.createInfiniteQueries(config);
+        const cursorArgs = {
+          context: args().context,
+          input: { path: { collection: 'widgets' } },
+        };
+        const offsetArgs = {
+          context: args().context,
+          input: { path: { category: 'widgets' } },
+        };
+        const options = [
+          ordinary.readItem.options(args()),
+          ordinary.readItem.body().options(args()),
+          infinite.listItems.options(cursorArgs),
+          infinite.listItems.body().options(cursorArgs),
+          infinite.listRecords.options(offsetArgs),
+          infinite.listRecords.body().options(offsetArgs),
+        ];
+        const client = new QueryClient();
+        try {
+          for (const option of options)
+            for (let abortAt = 1; abortAt <= 12; abortAt++) {
+              attempts = 0;
+              mappings = 0;
+              let reads = 0;
+              const signal = {
+                get aborted() {
+                  return ++reads === abortAt;
+                },
+                reason,
+              };
+              const execution = {
+                client,
+                queryKey: option.queryKey,
+                signal,
+                meta: undefined,
+                direction: 'forward',
+                pageParam:
+                  'initialPageParam' in option
+                    ? option.initialPageParam
+                    : undefined,
+              };
+              try {
+                const result = await runtimeInput(option.queryFn, execution);
+                assert.ok(result !== undefined);
+                assert.ok(
+                  reads < abortAt,
+                  'an observed query abort cannot become data',
+                );
+                assert.equal(mappings, 0);
+              } catch (error) {
+                assert.equal(error, mapped);
+                assert.equal(mappings, 1);
+              }
+            }
+        } finally {
+          client.clear();
+        }
+      }
+    },
+
   'scoped validation exposes frozen inspections and hands off mutable data':
     async (module) => {
       let expired: (() => unknown) | undefined;
