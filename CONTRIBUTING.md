@@ -1,8 +1,8 @@
 # Contributing
 
-Use Node.js 26.x and the Bun version pinned in `package.json`. Install the locked
-development dependencies and the Chromium headless shell, then run the complete
-verification command from the repository root:
+## Verify the checkout
+
+Use Node.js 26.x and the Bun version pinned in `package.json`:
 
 ```sh
 bun ci
@@ -10,113 +10,96 @@ bunx playwright install --with-deps --only-shell chromium
 bun run verify
 ```
 
-Bun owns dependency installation, script dispatch, and tarball packaging;
-`bun.lock` is the sole lockfile. Keep development Node types on Node 26. CI runs
-this command on Node 26 and the advertised Node 22.18.0 and 24.0.0 minimums.
-Consumer requirements belong in the [README](README.md#use-pom-in-a-project).
+Use Bun for installation, scripts, and packaging; `bun.lock` is the sole lockfile.
+Keep development Node types on Node 26. CI runs `verify` on Node 26 and
+both advertised consumer minimums, Node 22.18.0 and 24.0.0. Consumer setup belongs
+in the [README](README.md#quick-start).
 
 `verify` checks formatting, builds the package, prepares generated test signatures,
-then runs strict types, type-aware lint, compiler/runtime tests, Chromium
-integration, example drift/execution, and an isolated packed install. Keep CI and
-this command aligned. Tests use Node's runner with a 30-second default timeout.
+then runs strict types, type-aware lint, Node tests, Chromium integration,
+example drift/execution, and an isolated packed install. Keep CI and this command
+aligned. Node tests have a 30-second default timeout.
 
-Use Oxlint for JavaScript/TypeScript linting and Oxfmt for supported-file
-formatting. Enforce both through `verify`. Strict types and lint cover compiler,
-example, tests, fixture helpers, scripts, and dependency declarations. Tests use
-`noEmit` and `erasableSyntaxOnly`; Node executes their TypeScript directly.
-`test:prepare` writes real signatures to ignored `test/.generated` directories;
-runtime tests generate fresh temporary outputs. Consumer type fixtures retain
-positive and expected-error cases through actual consumer compilation. Generated
-modules are excluded from lint and use the pinned formatter's explicit options,
-independent of host configuration.
+Use **Oxlint** for JavaScript/TypeScript linting and **Oxfmt** for supported-file
+formatting. Both are required by `verify`. Strict types and lint cover compiler,
+example, tests, helpers, scripts, and dependency declarations. Tests use `noEmit`
+and `erasableSyntaxOnly`; Node executes their TypeScript directly. Generated
+modules use the pinned formatter with explicit options and are excluded from lint.
+Keep necessary lint exceptions local and explain the behavior they preserve.
 
-Bundle regressions use the pinned esbuild dependency and repository Bun version.
-They compare minified browser ESM output and execute the retained contracts,
-including sparse ordinary/cursor/offset queries and browser/native multipart.
-Size assertions cover retention behavior; runtime timings have no CI thresholds.
+For focused checks after changing compiler source, rebuild first. Before running
+`typecheck` or `lint` separately, also run `bun run test:prepare` so ignored
+`test/.generated` signatures match the compiler. Runtime tests generate fresh
+temporary outputs.
 
-## Required coverage
+## Make a change
 
-Test observable guarantees and meaningful failure paths across these boundaries:
+Read [Architecture](ARCHITECTURE.md) before changing contract interpretation or
+generated behavior. Change generated files through their input or emitter. To
+refresh the synthetic example:
 
-- Contract interpretation: accepted values, rejected neighboring forms, scalar
-  contradictions, defaults, maps, constrained references, tagged unions, nullable
-  values, and agreement between types and validators. `schema-oracle.test.ts`
-  compares supported cases with Ajv2020 without rewriting references or `oneOf`.
-  Ajv is a development dependency; generated validation uses the native runtime.
-- Input and selection: equivalent JSON/YAML, shared YAML policy, BOMs, duplicate
-  keys, malformed UTF-8, security inheritance, unsupported unselected operations,
-  and transitive client/standalone projection.
-- Output ownership: complete rendering before writes, clean builds, deterministic
-  bytes, read-only drift, protected inputs, parent aliases, symlinks, modified or
-  unrelated files, stale cleanup, and interrupted-generation recovery.
-- Execution: every supported method, required/optional inputs, JSON and complete
-  browser/native multipart bodies, exact statuses, scoped error provenance,
-  snapshots, and application-owned recovery, retries, deadlines, and session fencing.
-- Queries: canonical identities, complete-context filters, skip transitions,
-  typed errors including registered `unknown` errors, hydration, failed-refresh
-  retention, and independent envelope/body caches across all six families.
-- Pagination: encoded and empty cursors, retained cycles, failed later pages,
-  fetch/ensure/prefetch APIs, whole-list refetch, eviction, concurrency, zero-origin
-  offsets, short/empty pages, shrinking totals, matching offsets, and safe arithmetic.
-- Sharing: equal/changed selections, deep JSON, special map/header names,
-  prototypes, property flags, key order, cycles, repeated references, unsupported
-  selections, and preservation of inputs.
+```sh
+bun run build
+bun run example:generate
+bun run example:check
+bun run example:run
+```
 
-Execution/cache changes must cover raw/scoped executors with ordinary, cursor,
-and offset factories in envelope/body modes. Check one body read, JSON parse and
-schema pass per inspected response; complete validation inside controlled attempt
-and total budgets; frozen inspection isolation with mutable final bodies;
-single-use evidence; foreign/copied handles; callback expiry; parser/context
-capture; and cleanup after every outcome. Cancellation includes pre-abort, late
-success/rejection, falsy reasons, undefined rejection, mapper failure, and the
-difference between a mapped query-function error and Query Core cancellation.
+Review the generated diff. Use `bun run format` for human-authored source and
+documentation, then run `bun run verify` before submitting a change. Preserve
+concurrent work and avoid broad rewrites of unrelated files.
 
-Body-cache coverage includes every success status, bodyless exclusion, JSON null,
-bound pagination failures, typed cold writers, immutable writes, hydration, and
-central sharing before options exist. Operation-wide invalidation must span all
-six known families and complete contexts. Coexisting caches make independent
-requests and do not synchronize direct writes.
+Review dependency updates manually. New dependency, runtime, and tooling versions
+must have been published for at least six full days. `bunfig.toml` enforces that
+age for newly resolved npm packages; it does not change existing lockfile entries.
 
-Chromium tests use real Fetch against a local synthetic server and mount React
-query, infinite-query, and mutation hooks. Cover render counts, readiness,
-identity changes, scoped invalidation, failed refetches, special maps, and
-cancellation with late results. Run the raw/scoped and envelope/body combinations;
-older envelope-only browser success does not cover those paths.
+## Verification expectations
 
-## Installed consumers and declarations
+Test observable guarantees and meaningful failure paths. A schema or protocol
+feature needs accepted cases, rejected neighboring forms, agreement between types
+and validators, and an installed-consumer check when the public API changes.
+Output changes need drift, ownership, and recovery coverage. Avoid tests that only
+repeat emitted text. Keep detailed cases in tests and fixtures.
 
-The packed consumer installs through npm with strict engine/peer checks, minimum
-Query Core, TypeScript 5.7.3, and Node 22 types, with no schema library installed. Source tests use pinned
-development dependencies. Verify core and execution-only output before installing
-TanStack. Run generated TypeScript on Node and Bun and emitted JavaScript on Node
-after removing the compiler, formatter, and YAML parser. No sibling checkout or
-source symlink may supply the runtime.
+Check the affected boundaries together:
+
+- Input and contract interpretation: JSON/YAML equivalence, malformed input,
+  security inheritance, validation before selection, and transitive projection.
+- Validation: scalar and container rules, references, constraints, defaults,
+  structural limits, exact types, useful issues, and checked parser returns.
+  The schema oracle compares supported cases with Ajv2020, a development dependency.
+- Output: deterministic complete rendering, read-only drift, protected inputs,
+  aliases and symlinks, conflicts, stale cleanup, and interrupted generation.
+- Execution: input snapshots, raw/scoped responses, exact statuses, error
+  provenance, single-use evidence, callback cleanup, cancellation, and complete
+  browser/native uploads.
+- Queries: identity, skip transitions, context filters, error guards, sharing,
+  hydration, and ordinary/cursor/offset pagination in envelope/body modes.
+
+Exercise execution and cache changes across raw/scoped executors and both stored
+representations. Chromium tests use real Fetch against a local synthetic server
+and mounted React query, infinite-query, and mutation hooks. Include failure,
+cancellation, late-result, and immutable-cache-update behavior where affected.
+Bundle regressions compare minified browser ESM and execute retained contracts;
+size assertions cover retention, while runtime timings have no CI thresholds.
+
+### Installed consumers and declarations
+
+The packed check installs through npm with strict engine and peer checks,
+TypeScript 5.7.3, Node 22 types, and minimum Query Core. Core and execution-only
+outputs run before TanStack is installed. Generated TypeScript runs on Node and
+Bun, and emitted JavaScript runs on Node after removing the compiler, formatter,
+and YAML parser. No sibling checkout or source symlink may supply runtime code.
 
 Compile native uploads without DOM libraries or browser file globals. Query-only
-ordinary/cursor/offset output must need no AbortController, Node, or DOM types;
-supply the platform signal, callback, and URL declarations explicitly. Keep
-dependency declaration checking enabled and supply `VoidFunction` where needed.
+output must compile without AbortController, Node, or DOM types when its platform
+declarations are supplied. Keep dependency declaration checking enabled.
 
-Emit declarations for generated modules and inferred application exports of
-clients, adapters, factories, options, keys, filters, guards, and sharing helpers.
-Typecheck a separate consumer that resolves no original generated sources.
-Include reusable scoped adapters across independent outputs, explicitly annotated
-raw/bodyless `Execution` adapters, readonly inspection edits, and body-cache APIs.
-Repeat with the packed minimum dependencies. Verify packaged/generated licenses,
-allowed inventory, clean `dist`, and `noPropertyAccessFromIndexSignature`.
-
-Parser changes must retain checked return bodies, exact contract types, the
-`parse`/`safeParse` facade, useful aggregate diagnostics, and component-local names.
-Check observed array counts and effective bounds before any item read, including
-aliases and arbitrary JSON. Keep wide objects, large literal enums, long aliases,
-and corrupted-return type controls covered on both supported TypeScript lines.
-`wide-declarations.ts` also compiles generated modules with `isolatedDeclarations`
-and checks that wrong fixed-object, wide-object and literal returns produce type
-errors. The same checks run against the installed minimum TypeScript dependency.
-Wide publication coverage includes 1,024-field objects, 2,048-member literal enums,
-schema registries and inferred client/query wrappers, with producer sources removed
-before downstream checking.
+Emit declarations for generated modules and inferred application exports, then
+check a separate consumer without the original sources. Cover reusable adapters,
+inspection types, cache APIs, wide objects and enums, and `isolatedDeclarations`
+on both supported TypeScript lines. The packed check also verifies licenses,
+allowed inventory, and clean builds.
 
 ## Measurements and adoption
 
@@ -140,84 +123,49 @@ reports outside this public checkout. Select queries independently of direct cal
 when selected, verify one compatible Query Core resolution across framework and
 persistence adapters in the consumer lockfile.
 
-## Make a change
+## Public documentation and local notes
 
-The source checkout's [sprint proposal](SPRINT_PROPOSAL.txt) owns the proposed
-mutation and nullable-cursor milestones. [Future proposals](FUTURE_PROPOSALS.txt)
-hold deferred capabilities and decisions; neither document describes shipped work.
+Keep proposals, sprint plans, working notes, and private consumer reports in
+`.local/`, outside Git and the npm package. Existing root proposal files are also
+ignored. Do not link public docs to local notes. The coordination board lives
+under Git metadata and stays local; keep its entries short and human.
 
-This repository keeps only `main`. Review dependency updates manually;
-automatic dependency-update pull requests are disabled.
-Select new dependency, runtime, and tooling versions only after they have been
-published for at least six full days. `bunfig.toml` enforces this for newly
-resolved npm packages; existing lockfile entries are unchanged by the age gate.
+Public docs describe current behavior or durable requirements. Keep dated
+measurement evidence separate from those rules. Use synthetic public fixtures;
+real contracts, exporters, application patches, credentials, environment files,
+and private repository history stay outside the public repository and package.
+Before making repository history public, inspect it too: untracking a file does
+not remove its earlier revisions.
 
-Read [architecture and requirements](ARCHITECTURE.md) before changing contract
-interpretation or generated behavior. Change generated files through their
-owning input or emitter. For the synthetic example:
-
-```sh
-bun run build
-bun run example:generate
-bun run example:check
-bun run example:run
-```
-
-Review the generated diff. Run `bun run format` for human-authored source and
-documentation as needed, then run `bun run verify`. Tests import the built
-package; rebuild before a focused `bun run test` after changing source.
-Rebuild and run `bun run test:prepare` before invoking `typecheck` or `lint`
-separately so their generated signatures match the compiler.
-
-Add tests for observable behavior and meaningful failure paths. A new schema or
-protocol feature needs positive coverage, a rejected neighboring form, agreement
-between emitted types and validators, and an installed-consumer check when it
-changes the public API. Output changes need drift and ownership tests. Avoid
-tests that only repeat emitter text.
-
-Use synthetic public fixtures. Application repositories own real schemas,
-exporters, scalar corpora, transports, and integration checks. A compiler test
-does not establish that an application integration is ready.
+Use the [README](README.md#further-reading) as the documentation map. Update the
+page responsible for a topic and link to it from other guides.
 
 ## Before publication
 
-Consumers install released versions from npm and record the compiler version
-and integrity in their lockfile. Use a locally packed tarball to verify
-unreleased changes. Regenerate the complete output set with the selected
-compiler and its declared runtime dependencies; never mix generated
-modules from different compiler builds. An upgrade includes reviewing generated
-API changes, adapting every affected caller, and running consumer parity and
-integration checks. `pom check` verifies bytes for the installed compiler, not
-compatibility with an earlier generated API.
-
-The package is MIT licensed and configured for public npm distribution as
-`pomegranate-compiler`. Authenticate an npm account that can publish that
-package, and choose an unpublished package version before packing. Verify the
-release commit with the complete canonical checks and required consumer checks.
-Then inspect and publish the same packed artifact:
+Run the complete canonical checks and required consumer checks against the
+release commit. Choose an unpublished package version and authenticate an npm
+account allowed to publish `pomegranate-compiler`. Pack, inspect, verify, and
+publish the same artifact:
 
 ```sh
-bun pm pack --filename /tmp/pomegranate-compiler-0.4.0.tgz
-node scripts/verify-package.ts /tmp/pomegranate-compiler-0.4.0.tgz
-bun publish --dry-run --access public /tmp/pomegranate-compiler-0.4.0.tgz
-bun publish --access public /tmp/pomegranate-compiler-0.4.0.tgz
+bun pm pack --filename /tmp/pomegranate-compiler.tgz
+node scripts/verify-package.ts /tmp/pomegranate-compiler.tgz
+bun publish --dry-run --access public /tmp/pomegranate-compiler.tgz
+bun publish --access public /tmp/pomegranate-compiler.tgz
 ```
 
-Use the selected version in the filename. Confirm the registry's version and
-integrity after publishing. A GitHub release and an npm release are separate
-publication steps; neither replaces verification of the packed install.
+Inspect the actual archive inventory before publication. Confirm the registry's
+version and integrity afterward. GitHub and npm releases are separate steps.
+For unreleased consumer testing, stop after packing and verifying, then install
+the local tarball instead of the registry version.
 
-The package includes [LICENSE](LICENSE). The copied runtime helpers carry its
-complete notice into generated output; retain that notice when redistributing
-them. The installed-package check verifies both the packaged license and the
-generated helper notices. Generated schemas and application inputs remain
-application-owned.
+Consumers record compiler version and integrity in their lockfile. An upgrade
+regenerates the complete output set with that compiler and its declared runtime
+dependencies, reviews API changes, adapts affected callers, and runs application
+parity/integration checks. `pom check` verifies generated bytes, not compatibility
+with an earlier API.
 
-The initial standalone implementation uses earlier application-specific compilers
-as behavioral references; its source modules are newly authored. Preserve
-accurate source provenance and any required notices when publishing.
-
-Inspect the actual `bun pm pack` inventory before publication. Keep application
-contracts, private repository history, credentials, environment files, and local
-paths out of the public repository and distribution.
-If reusable source is adapted, preserve the notices its license requires.
+The package is [MIT licensed](LICENSE). Copied runtime helpers carry its complete
+notice into generated output; retain it when redistributing them. Generated
+schemas and application inputs remain application-owned. Preserve source
+provenance and required notices when adapting reusable code.

@@ -137,6 +137,7 @@ try {
   assert.ok(paths.includes('dist/execution-runtime.ts'));
   assert.ok(paths.includes('dist/call-runtime.ts'));
   assert.ok(paths.includes('LICENSE'));
+  assert.ok(paths.includes('REFERENCE.md'));
   assert.ok(!paths.includes(staleModule));
   for (const path of paths) {
     assert.ok(
@@ -145,6 +146,7 @@ try {
           'package.json',
           'LICENSE',
           'README.md',
+          'REFERENCE.md',
           'QUERIES.md',
           'EXECUTION.md',
           'ARCHITECTURE.md',

@@ -1,15 +1,15 @@
 # Query integration
 
-See [checkout status](README.md#checkout-status) for release availability.
-Factories default to success-envelope
-storage and can explicitly select API-body storage.
+Query factories generate TanStack options, cache keys, filters, and pagination
+helpers around an application executor. They store success envelopes by default;
+API-body storage is an explicit choice.
 
-Query factories are an optional adoption separate from executable clients.
+Query factories are optional and independent of executable clients.
 Applications can use generated calls with their existing cache keys, readers,
 writers, and mutation effects. Adopt factory keys only with an explicit migration
 of every affected cache access.
 
-## Optional query options
+## Ordinary queries
 
 Select bodyless GET or HEAD operations per client with `queries` in configuration
 or `CompileOptions`, for example:
@@ -48,17 +48,11 @@ Cancellation also supports native signals without `throwIfAborted` or `reason`;
 the default behavior preserves a provided reason and uses an error named
 `AbortError` when none is available.
 
-Supply an application `QueryExecutor` as `executeRaw` below. It receives the
-prepared request and `{ signal, context, validateResponse }`, and can return raw
-`{ status, headers, body }` HTTP evidence with body text or an inspection handle
-from the callback. It owns credentials, merged-header validation,
-transport headers, deadlines, and retries. Forward the signal to the transport.
-Use the frozen context snapshot to bind transport values and session checks to
-the same identity as the key, rather than reading changed application state.
-The example's `createExecutor` serves this raw interface and executable clients
-through one configuration. Its legacy `execute` entry returns a parsed result.
-See [executable clients](EXECUTION.md) for sharing an executor with direct calls,
-writes and uploads.
+Supply an application `QueryExecutor` as `executeRaw` below. It accepts bodyless
+requests and shares the [executor contract](EXECUTION.md#one-application-executor)
+with direct calls, including raw response evidence, scoped validation,
+credentials, merged-header validation, retries, and deadlines. The checkout's
+`examples/json/transport.ts` demonstrates `createExecutor` for calls and queries.
 
 ```ts
 import { createQueries } from './generated/client.consumer.queries.ts';
@@ -75,58 +69,20 @@ const options = queries.getWidget.options(args);
 const key = queries.getWidget.key(args);
 ```
 
-For Fetch transports, this single-attempt adapter returns raw response evidence:
-
-```ts
-import type { QueryExecutor } from './generated/client.consumer.queries.ts';
-
-function fetchExecutor(
-  baseUrl: string | URL,
-  headersFor: (
-    ...args: Parameters<QueryExecutor>
-  ) => Promise<Record<string, string>>,
-): QueryExecutor {
-  return async (request, execution) => {
-    const headers = request.validateHeaders({
-      ...request.headers,
-      ...(await headersFor(request, execution)),
-    });
-    const response = await fetch(new URL(request.url, baseUrl), {
-      method: request.method,
-      headers,
-      signal: execution.signal,
-      redirect: 'error',
-    });
-    const observedHeaders: [string, string][] = [];
-    response.headers.forEach((value, name) => {
-      observedHeaders.push([name, value]);
-    });
-    return {
-      status: response.status,
-      headers: Object.fromEntries(observedHeaders),
-      body: await response.text(),
-    };
-  };
-}
-```
-
-Create `executeRaw` with an explicit base URL and an application `headersFor`
-callback. That callback receives the request policy and frozen cache context;
-it must enforce the application's session checks and supply credentials and
-transport headers before sending. For a bearer operation, include `Authorization`.
-The adapter validates the merged headers and forwards cancellation. It sends once;
-implement the application's deadline and retry policy around this attempt.
+### Keys and context
 
 Pass `options` to `QueryClient.fetchQuery` or a query hook. The key carries result
 types for cache access. Namespace the API origin and contract version explicitly;
 include every response-changing user/session, tenant, locale, or transport value
-in the required nonsecret `context`. Its values are finite JSON scalars; numeric
-`-0` becomes `0` in both the key and executor snapshot so JSON cache hydration
-preserves identity. Keys include the validated URL and endpoint headers, so
-supply credentials through the executor rather than endpoint inputs. Treat
-generated keys as opaque.
+in the required nonsecret `context`. Context follows the
+[execution context rules](EXECUTION.md#context-and-snapshots), including scalar
+normalization, so JSON hydration preserves identity. Keys include the validated
+URL and endpoint headers, so supply credentials through the executor rather than
+endpoint inputs. Treat generated keys as opaque.
 `cacheScope` above is a nonsecret cache revision, never a bearer token or session
 credential. Change it when the response's user or session identity changes.
+
+### Waiting for inputs
 
 Factories validate real inputs immediately and snapshot inputs and context.
 For a hook waiting on required inputs, pass TanStack's `skipToken` as `input`:
@@ -151,6 +107,8 @@ running it. Supply real input on a later render to enable the query. The returne
 options retain response inference and a typed cache key in either state.
 `key(args)` accepts real inputs only. Setting `enabled: false` with real input
 still validates that input immediately.
+
+### Invalidation
 
 To invalidate every input variant in the factory's cache family, pass its public
 filter to the query client:
@@ -185,7 +143,9 @@ matches the complete context and the same namespace, client, and operation acros
 the six families below, including JSON-hydrated keys. Unknown key formats do not
 match. Preserve its returned predicate when adding application filters; it has no
 single-family `queryKey` or common stored-data type. Use family-specific keys for
-typed data reads and writes. Existing `filter` behavior is unchanged.
+typed data reads and writes. `filter` remains scoped to its family.
+
+### Errors and cancellation
 
 Query functions forward cancellation, reject late results after cancellation,
 and set `retry: false` so the executor owns the retry budget. By default, success
@@ -211,18 +171,16 @@ try {
 }
 ```
 
-The guard recognizes failures validated by the same generated operation, client,
-and namespace, including across recreated factories. Ordinary and infinite
-factories for that same operation recognize each other's failures. A manually
-constructed, copied, serialized, or independently generated error does not carry
-this provenance. Transport errors propagate without being classified as response
-failures; malformed executor evidence rejects with `TypeError`. The broad
-`QueryResponseError` class remains available for shared error handling.
+Error provenance, transport failures, and malformed executor evidence follow the
+[shared failure rules](EXECUTION.md#failures-and-application-effects). Ordinary
+and infinite factories for the same generated operation, client, and namespace
+recognize each other's validated failures. `QueryResponseError` remains available
+for broad response-error handling.
 
-Client and query configurations accept the same optional `mapCancellation` and
-execution validation callback; [executable clients](EXECUTION.md#validation-inside-recovery-and-deadlines)
-owns those contracts. TanStack handles its own query cancellations and can replace
-the query function's mapped rejection with its cancellation result.
+Client and query configurations accept the same optional `mapCancellation`,
+described under [cancellation mapping](EXECUTION.md#cancellation-mapping).
+TanStack handles its own query cancellations and can replace the query function's
+mapped rejection with its cancellation result.
 
 ## Choose cache storage once per operation
 
@@ -278,11 +236,10 @@ Options use POM's `shareQueryData` function for structural sharing. Equal plain
 data trees reuse their previous references; changed trees reuse equal children.
 Sharing preserves every map and header key, including `__proto__` and
 `constructor: null`, plus prototypes, property flags, and key order.
-Deep JSON is processed iteratively without a call-stack depth limit. Comparisons
-take time proportional to the inspected data and cost more than TanStack's default
-sharing. Appending pages can retain existing page references without inspecting
-their contents again. Measure large responses and expensive selections in the
-application.
+Deep JSON is processed iteratively without a call-stack depth limit. Sharing
+inspects compared data; measure its time and allocations on application workloads.
+Appending pages can retain existing page references without inspecting their
+contents again.
 
 Selections containing class instances, accessors, sparse arrays, symbol or
 nonenumerable fields, cycles, or repeated object references keep the new value
@@ -291,8 +248,7 @@ avoid redraws on unchanged refetches; observers of loading or timestamp fields
 can still update. Preserve the generated key, query function, retry, and
 structural-sharing settings when adding application options. Applications own
 freshness, enabled conditions, selection, and cancellation or removal of old
-session caches. Mutation and cache-effect bindings are not generated. Forward cursor and offset pagination
-is available through the infinite factories below.
+session caches. Mutation and cache-effect bindings are not generated.
 
 On TanStack 5.104.5, `useQueries({ combine })` applies its own structural sharing
 and ignores the per-query setting. Keep arbitrary JSON maps out of combined
@@ -319,7 +275,7 @@ direct writes do not validate response schemas or create validation handles;
 applications own their sources and compatibility. Keep cache updates immutable
 even though returned body types are mutable.
 
-## Infinite queries
+## Cursor pagination
 
 Bind forward cursor pagination explicitly in configuration or `CompileOptions`:
 
@@ -343,7 +299,7 @@ response must have a fixed JSON object body with a required nullable string
 `continuation` field and a required array `results` field. Component references
 are supported. Bindings name top-level fields; nested paths, tagged-union page
 objects, numeric cursors, backward pagination, and bodyless
-success responses receive diagnostics or remain outside this profile.
+success responses are unsupported.
 
 This selection adds `createInfiniteQueries` to `client.consumer.queries.ts` and
 uses the same executor and runtime dependencies as ordinary queries. Either
@@ -389,8 +345,9 @@ pages and cycles. TanStack's `maxPages` option can evict that history; applicati
 that enable eviction own the resulting limit on cycle detection.
 
 With default envelope storage and no `select`, data is `{ pages, pageParams }`:
-each page is its exact-status validated success envelope, and page parameters are strings or the initial
-`null`. Keys retain these types through cache access and JSON hydration. Use
+each page is its exact-status validated success envelope, and page parameters are
+strings or the initial `null`. Keys retain these types through cache access and
+JSON hydration. Use
 `key(args)` for a real request and `filter({ context })` or
 `filter({ allContexts: true })` for infinite-cache invalidation. Ordinary query
 filters and infinite query filters address their own cache families.
@@ -414,7 +371,7 @@ directly to `fetchInfiniteQuery`, `ensureInfiniteQueryData`, and
 context is a frozen snapshot. The map-preservation and hydration limits above apply
 to infinite caches too.
 
-### Numeric offsets
+## Numeric offsets
 
 For a response shaped like `{ items, total, limit, offset }`, select an offset
 binding instead of a cursor binding:
@@ -443,8 +400,8 @@ fields required: integer offset, limit and total, and an array of items.
 Component references are supported. Nested fields and mixed cursor/offset
 bindings receive diagnostics.
 
-Use the same `createInfiniteQueries`, `options`, `items`, `key`, `body`, `filter`, and `invalidationFilter`
-methods as for cursors. Base inputs exclude the request offset. The first request
+Use the same factory methods as for cursors. Base inputs exclude the request
+offset. The first request
 explicitly sends `0` with `initialPageParam: 0`; all cached `pageParams` remain
 numbers, including through declaration emission and JSON hydration. Supply page
 size and other query parameters as ordinary base inputs when needed. OpenAPI
@@ -465,3 +422,9 @@ status and headers; previous successful pages remain available. Each subsequent
 request also passes the ordinary request schema's constraints. Invalid numeric
 page parameters fail before transport. Offset, cursor, and ordinary query filters
 address separate cache families, even for the same initial URL.
+
+Direct cache writes can temporarily make a page's offset metadata inconsistent,
+for example by inserting an item beyond its declared limit. That page stops
+forward pagination until a valid refetch or cache update restores the bounds.
+Incoming HTTP responses still receive the full metadata checks above. Use
+invalidation to refresh server page boundaries after such edits.

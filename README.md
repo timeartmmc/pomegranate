@@ -1,127 +1,99 @@
 # Pomegranate
 
-Pomegranate (POM) compiles a strict subset of OpenAPI 3.1 documents in JSON or
-YAML into TypeScript request builders, native validators, and response validation
-keyed by HTTP status.
-Applications own the transport and the meaning of their authentication, retry,
-and timeout policy. Optional executable clients and query factories delegate
-execution to an application-supplied executor; POM provides no transport.
+Pomegranate (POM) compiles a supported subset of OpenAPI 3.1 JSON or YAML into
+TypeScript request builders, native validators, and response parsers keyed by
+HTTP status. Optional executable clients and TanStack Query factories use an
+application-supplied executor. Applications own transport, authentication,
+retries, and deadlines.
 
-POM supports JSON and multipart requests, declared bearer transport requirements, and selected
-client surfaces, with a synthetic example and an isolated installed-package
-check. It uses one explicit operation-policy format across the owner's projects.
-The package is [MIT licensed](LICENSE).
+Generated core and execution modules have no package runtime dependencies.
+Validators use local runtime files copied into the output. Query modules also
+require Query Core. The compiler is a development dependency.
 
-## Checkout status
+## Quick start
 
-This documentation follows the 0.4.0 source checkout. Use a matching compiler version
-and regenerate the complete output set when upgrading. For unreleased changes,
-use a locally packed checkout; [Contributing](CONTRIBUTING.md#before-publication)
-owns that workflow.
-[Executable clients](EXECUTION.md) and [query integration](QUERIES.md) own usage.
-Compiler verification does not establish a complete application migration.
-
-## Use POM in a project
-
-The compiler supports Node.js 22.18+ on the 22.x line, and Node.js 24 or newer.
-Generated validators use the copied local runtime without a schema-library
-dependency. Install the compiler as a development dependency:
+Use Node.js 22.18+ on the 22.x line, or Node.js 24 or newer. Install with npm or
+Bun:
 
 ```sh
 npm install --save-dev pomegranate-compiler
 ```
 
-npm and Bun can both install the published package. Bun is needed for this
-repository's contributor workflow; `bun pm pack` builds a local tarball for
-testing unreleased changes in place of the registry package.
-
-Create `pom.json` beside your exported `openapi.json`:
+Create `pom.json` beside your exported contract:
 
 ```json
 {
   "version": 2,
   "openapi": "./openapi.json",
   "output": "./generated",
-  "clients": ["consumer", "staff"]
+  "clients": ["consumer"]
 }
 ```
 
-Paths resolve from the real configuration file's directory. `clients` selects
-declared surface identities directly. The package installs the `pom` executable.
-A symlinked output parent, such as macOS `/tmp`, is supported. The output
-directory itself and generated target files cannot be symlinks.
-For a YAML export, set `openapi` to a `.yaml` or `.yml` file; configuration stays
-JSON. OpenAPI filenames with other extensions are read as JSON.
-Input and configuration must be regular UTF-8 files of at most 32 MiB each.
-Devices and named pipes are rejected. Malformed byte sequences fail before
-outputs change.
-Generate or check the complete output set:
+The contract must declare [operation policy and surface membership](REFERENCE.md#operation-policy).
+Use a `.yaml` or `.yml` input path for YAML; configuration stays JSON. Paths
+resolve from the configuration file's real directory.
 
 ```sh
 npx --package=pomegranate-compiler pom generate --config pom.json
 npx --package=pomegranate-compiler pom check --config pom.json
 ```
 
-Generated sources use explicit relative `.ts` imports and erasable TypeScript
-syntax. Supported Node versions, Bun, and TypeScript-aware bundlers can consume
-them directly. For direct Node execution, place them in an ES module package
-with `"type": "module"`. CommonJS packages need a separate ES module boundary or
-a compilation/bundling step; Node does not convert these sources to CommonJS.
-Use ES2022 runtime APIs and library declarations, plus declarations for the target
-platform. The emit `target` may be ES2020 or newer for bigint syntax; lowering it
-does not supply missing runtime APIs. The example uses ES2022 for both.
-When emitting JavaScript with TypeScript 5.7 or newer, enable
-`rewriteRelativeImportExtensions` to produce `.js` imports. For a bundler-only
-`noEmit` typecheck, use `allowImportingTsExtensions`. Core and execution-only generated modules have no package runtime dependencies;
-optional query modules need Query Core. Deployed applications do not need the compiler.
-Generated modules support `isolatedDeclarations`. Application exports inferred
-from them still need the annotations required by that TypeScript option.
+Generate the complete output set with one compiler version. `check` reports drift
+without writing files. Keep `.pom-manifest.json` with generated artifacts and
+exclude generated files from application formatter rewrites. This guide describes
+the source checkout; use a [local tarball](CONTRIBUTING.md#before-publication) to
+try changes that have not been released.
 
-For programmatic use in development tooling, pass a parsed OpenAPI `document`:
+Generated sources use ES modules, explicit `.ts` imports, and erasable TypeScript.
+Supported Node versions and Bun can run them directly in a package with
+`"type": "module"`; TypeScript-aware bundlers can also consume them. See
+[generated TypeScript](REFERENCE.md#generated-typescript) for compilation and
+platform requirements.
+
+## Use the generated API
+
+Request builders validate inputs and prepare a relative URL, headers, policy,
+and body. For the synthetic example:
 
 ```ts
-import { compile, runProject } from 'pomegranate-compiler';
+import { operations } from './generated/client.consumer.ts';
 
-const files = await compile(document, { clients: ['consumer'] });
-const result = await runProject('./pom.json', { check: true });
+const request = operations.getWidget.build({
+  path: { widgetId: 'demo/widget' },
+});
 ```
 
-`compile` returns a map of generated filenames to source strings without writing
-outputs. `runProject` reads the configuration and uses the same output ownership
-checks as the CLI; omit `{ check: true }` to generate files. In check mode,
-`result.clean` reports whether the output agrees with the inputs, and
-`result.changes` describes any drift. Both APIs validate the complete input before
-selecting clients.
+The application sends the request and passes observed status, headers, and raw
+body text to `request.parseResponse`. The result distinguishes validated success,
+declared HTTP failure, and protocol failure. See the
+[request and response API](REFERENCE.md#build-and-validate-a-request) for a complete
+example, transport headers, uploads, and validation behavior.
 
-The OpenAPI document declares a versioned vocabulary of application-owned labels:
+Choose the integration needed by the application:
 
-```json
-{
-  "x-pom-policy": {
-    "version": 2,
-    "auth": {
-      "public": { "transport": "none" },
-      "session": { "transport": "bearer" },
-      "partnerStaff": { "transport": "bearer" }
-    },
-    "retry": ["never"],
-    "timeout": ["interactive"],
-    "surfaces": ["consumer", "staff"]
-  }
-}
-```
+- [Executable clients](EXECUTION.md) add typed `call` methods and error guards,
+  using one application executor for reads, writes, and uploads.
+- [Query integration](QUERIES.md) adds typed keys, filters, cache options, and
+  forward cursor or offset pagination. It is selected independently of direct
+  calls and requires an explicit cache migration in an existing application.
+- [Standalone validators](REFERENCE.md#standalone-validators) validate selected
+  component schemas outside HTTP operations.
 
-Each operation selects labels and nonempty surface membership, for example
-`"x-pom": { "auth": "session", "retry": "never", "timeout": "interactive", "surfaces": ["consumer"] }`.
-The auth binding must agree with the operation's effective OpenAPI security.
-Generated requests expose `policy.auth` as `{ label, transport }`; applications
-resolve tokens and enforce the label's meaning. Retry and timeout labels remain
-opaque. No label authorizes a request, enables retries, or sets a numeric deadline.
+## Supported contracts
+
+POM supports JSON and multipart requests, exact response statuses, bearer or
+public security, selected client surfaces, and a restricted schema vocabulary.
+Unsupported features fail with a location-specific diagnostic before outputs
+change. General unions, recursive or external schema references, optional request
+bodies, and non-bearer authentication schemes are unsupported. The
+[contract reference](REFERENCE.md#supported-vocabulary) defines the complete
+supported vocabulary and limits.
 
 ## Run the example
 
-From this repository's checkout, use a supported Node.js version and the Bun
-version pinned in `package.json`:
+From a checkout, use a supported Node.js version and the Bun version pinned in
+`package.json`:
 
 ```sh
 bun ci
@@ -131,411 +103,21 @@ bun run example:check
 bun run example:run
 ```
 
-The demo injects a synthetic response and makes no network request. It prints:
+The example makes no network request. It uses an injected response, synthetic
+credentials, direct calls, and a selected query with one executor. It prints:
 
 ```text
 POST /api/widgets/demo%2Fwidget/preparations → 202 synthetic-123
 ```
 
-`examples/json/openapi.json` declares distinct `200` and `202` success bodies,
-distinct error bodies, required headers, a `true` constant, and bodyless HEAD and
-OPTIONS operations. It also demonstrates inherited bearer security, public
-overrides, and separate consumer/staff surfaces. `demo.ts` uses direct calls and a
-selected query with one executor configuration. `transport.ts` shows application-owned
-token resolution with a synthetic token and a raw response boundary shared with
-its parsed transport entry. The transport accepts
-an explicit base URL so Node and browser Fetch can resolve generated relative
-paths. It sends once; applications must implement their actual authentication,
-deadlines, retries, cancellation, and error handling.
+`examples/json/transport.ts` demonstrates serialization and token resolution;
+applications supply their own policy, recovery, deadlines, and session checks.
 
-## Security and client boundaries
+## Further reading
 
-POM recognizes inline `type: "http"`, `scheme: "bearer"` security schemes by their
-semantics. Scheme names are arbitrary, scheme comparison ignores case, and
-`bearerFormat` is only an annotation. A supported bearer requirement names one
-declared scheme with an empty role array, such as `security: [{ WidgetSession: [] }]`.
+- [Contract and configuration](REFERENCE.md): input vocabulary, validation,
+  generated TypeScript, programmatic compilation, and output recovery.
+- [Architecture](ARCHITECTURE.md): ownership, compiler boundaries, and design constraints.
+- [Contributing](CONTRIBUTING.md): verification, measurements, dependencies, and publication.
 
-An operation inherits document security when its own `security` field is absent.
-Its own `[]` or `[{}]` declares public access; absence at both levels also means
-no security requirement. Alternatives, combined schemes, optional bearer access,
-and nonempty role requirements are rejected explicitly. The generated code never
-obtains credentials or sends Authorization headers.
-
-Every operation must name at least one declared surface. Surface names match
-`[a-z][a-z0-9_-]{0,62}`. Unknown or duplicate names and selected surfaces without
-operations fail generation. An internal-only operation can belong to a declared
-surface omitted from `clients`.
-
-Each selected surface gets a `client.<surface>.ts` entry and its own operation
-and schema modules, with one shared runtime. There is no all-operations entry.
-The selection name `d` uses `_d` in filenames to avoid TypeScript declaration-file
-interpretation; its policy and cache identity stays `d`. The same filename rule
-applies to standalone roots.
-Client modules contain only schemas reachable from that client's request and
-response contracts, including transitive references. All operations, schemas,
-and security declarations are validated before selection, so an unsupported
-unselected operation still fails generation. Surfaces control generated imports;
-the server remains responsible for authorization.
-
-Client entries export `RequestTypes` and `ResponseTypes`, indexed by their
-reachable component names, for example `ResponseTypes['Widget']`.
-
-For a non-HTTP payload, add an explicit root to configuration:
-
-```json
-{
-  "standalone": {
-    "message": { "schema": "#/components/schemas/Widget", "usage": "response" }
-  }
-}
-```
-
-This emits `standalone.message.ts` with `schema`, `Input`, and `Output` exports
-and all transitive schema dependencies. Request roots reject unknown fields;
-response roots strip them and forbid defaults. `clients` may be empty when at
-least one standalone root is selected. The complete input still receives
-validation, including operations excluded from output.
-
-## Build and validate a request
-
-For the synthetic contract, generated usage looks like this:
-
-```ts
-import { operations } from './generated/client.consumer.ts';
-
-const request = operations.prepareWidget.build({
-  path: { widgetId: 'demo/widget' },
-  headers: { 'Idempotency-Key': 'demo-attempt-1' },
-  body: { acknowledged: true, label: 'Example widget' },
-});
-
-const result = request.parseResponse({
-  status: 202,
-  headers: {
-    'Content-Type': 'application/json',
-    'X-Request-ID': 'example-request',
-  },
-  body: JSON.stringify({ state: 'pending', reference: 'synthetic-123' }),
-});
-
-if (result.kind === 'success' && result.status === 202) {
-  console.log(result.data.reference); // Inferred as string.
-}
-```
-
-Builders validate immediately and return a relative URL, endpoint headers,
-selected policy, and a validated body when declared. The application serializes
-that body, adds transport headers, validates the merged headers with
-`request.validateHeaders(headers)`, sends the request, and supplies response status,
-headers, and raw body text to `parseResponse`.
-Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and occupy an
-entire segment. Path values cannot be empty, `.` or `..`.
-
-Configuration may name declared request headers in `transportHeaders`, for
-example `"transportHeaders": ["X-Origin"]`. These headers are absent from builder
-options and supplied by the application. The merged-header validator enforces
-all declared header schemas and requiredness, accepts other valid HTTP headers,
-rejects duplicate names ignoring case, and returns normalized lowercase names.
-
-Declared headers use a Fetch-compatible vocabulary across clients. Endpoint
-contracts reject transport-owned request headers such as `Host`, `Origin`, and
-`Proxy-*`/`Sec-*` names. Response declarations reject `Set-Cookie` and
-`Set-Cookie2`, which browser Fetch hides.
-
-Form query arrays use repeated keys (`tag=one&tag=two`); an optional empty array
-adds no keys. Required empty arrays fail validation because this encoding cannot
-represent their required presence. Other array serialization styles are rejected.
-Optional nullable primitive query parameters omit `null` and `undefined`, while
-preserving `0`, `false`, empty strings allowed by the schema, and literal `"null"`
-text. Non-null values still satisfy the declared constraints and formats.
-Required nullable query parameters, nullable query arrays, and nullable array
-items are unsupported. Optional nullable string headers also omit `null` and
-`undefined`; required nullable headers are unsupported.
-
-Multipart clients require an explicit target, for example
-`"targets": { "web": "browser", "mobile": "native" }` for those selected clients.
-A required `multipart/form-data` body is a fixed object of strings, files, and
-file arrays. Files use `type: "string"` with `format: "binary"` or
-`contentMediaType: "application/octet-stream"`. Browser inputs require `File`;
-native inputs use `{ uri: string, name?: string, mediaType?: string }`, with
-nonempty strings. Every client requires its platform's `URLSearchParams` global
-and TypeScript declaration. Browser upload modules also require `File`. A native
-program can omit DOM libraries when its platform types supply `URLSearchParams`
-(the verification suite uses Node types); compile only its client entry and
-dependencies, excluding browser modules from a mixed-target output.
-
-Prepared uploads have `bodyKind: "multipart"`, the complete validated `body`, and
-a `multipart` field inventory (`name`, `kind`, `multiple`, `required`). Applications
-resolve native references and serialize every field, repeating parts for file
-arrays. Required file arrays cannot be empty; optional empty arrays omit parts.
-The application owns file access, `FormData`, progress, and fresh retry bodies.
-Let the transport set multipart Content-Type and its boundary. POM neither reads
-files nor serializes uploads. Multipart names must be ASCII HTTP tokens; text
-values must contain well-formed Unicode and use CRLF pairs for line breaks.
-Builders reject isolated CR or LF instead of silently normalizing text: FormData
-would expand those characters after schema validation, changing lengths, patterns,
-or literal values. Already paired CRLF text is preserved. Nested objects, nullable files, custom
-part encodings, and binary values in JSON or standalone validators are unsupported.
-
-Requests reject unknown fields in fixed objects. Responses strip additive fields
-from fixed objects while rejecting missing required fields, changed types, and
-unknown enum values. Declared dynamic maps validate and preserve their entries.
-An object schema without `properties` entries or `additionalProperties`, such as
-`{ "type": "object" }`, accepts and preserves any JSON members, as in JSON Schema.
-Declare `additionalProperties: false` for an object that must be empty.
-Fixed objects validate structural fields, including fields supplied by class
-instances or prototypes, and return fresh plain objects. Data on
-`Object.prototype` never supplies a field or an unknown request key, so
-prototype pollution through data, such as an unsafe merge, cannot fill a missing
-value. Accessors installed there run application code and are not covered.
-Dynamic maps require plain records.
-Schema registries and standalone `schema` exports expose `parse(unknown)` and
-`safeParse(unknown)`. `parse` returns the named output type or throws
-`ValidationError`; `safeParse` returns `{ success: true, data }` or
-`{ success: false, error }`. Errors expose `issues` with `path` and `message`.
-Generated `RequestTypes`, `ResponseTypes`, and standalone `Input`/`Output` are
-plain contract types. Validators do not expose Zod fluent methods, `z.infer`,
-Zod error utilities, or the Standard Schema interface. Regenerate the complete
-output set and adapt schema-library-specific calls when upgrading.
-
-Pass `parseResponse` numeric `status`, raw text `body`, and a plain `headers`
-record with string values. Incorrect JavaScript evidence types throw `TypeError`
-before protocol validation.
-Results discriminate on `kind` and the exact declared `status`:
-
-- `success`: a declared 2xx response with validated `data`.
-- `error`: a declared non-2xx response with validated `data`.
-- `protocol`: an undeclared status or invalid headers, media type, or body, with
-  `issues` and no `data`. The observed status and normalized headers remain
-  available; `validatedHeaders` contains independently valid declared headers.
-
-Schema failures include a validator message and a `path` relative to the body
-or headers. Other protocol issues may omit `path`.
-
-A body valid under `200` does not pass under `202` unless both declare it.
-Bodyless responses require empty text and expose `data: undefined`.
-
-## Optional executable clients
-
-Add `"executionClients": ["consumer"]` to generate `createClient` from
-`client.consumer.ts` and `client.consumer.execute.ts`. Every operation on the
-selected surface gets a typed `call` and `isError` guard:
-
-```ts
-const client = createClient({
-  namespace: 'widgets-api-v1',
-  execute: executeRaw,
-});
-const response = await client.getWidget.call({
-  context: { sessionRevision: 'one', locale: 'en' },
-  input: { path: { widgetId: 'demo/widget' } },
-  signal,
-});
-```
-
-Calls validate requests before execution and return exact-status success
-envelopes; declared HTTP failures and protocol failures reject. One executor
-supporting none, JSON and multipart bodies can also serve selected query
-factories. Executors can return raw evidence or validate inside their recovery
-and deadline scope through the supplied callback. Execution alone needs no package runtime dependency.
-See [executable clients](EXECUTION.md) for inspection handles, cancellation mapping,
-error compatibility, uploads and ownership.
-
-## Optional query integration
-
-Select bodyless GET/HEAD operations with `queries`, or forward cursor- or offset-paginated
-GET operations with `infiniteQueries`. POM emits factories using an application
-executor, validated cache identities, cancellation, and exact-status response
-validation. Factories default to envelope storage; `.body()` explicitly selects
-API-body storage when every success has a body. Choose one representation per
-operation centrally. These modules also require `@tanstack/query-core` 5.104.5 or newer
-within 5.x. See [query integration](QUERIES.md) for configuration, React examples,
-cache ownership, pagination rules, and TanStack integration limits.
-
-## Supported vocabulary
-
-| Surface     | Current support                                                                                                                                                                                                 |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration and policy                                                                                                      |
-| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; ASCII operation identifiers; whole-segment path placeholders                                                                                                      |
-| Parameters  | Primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
-| Bodies      | Required JSON or multipart request bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                          |
-| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                 |
-| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                   |
-| Formats     | String `date`, `date-time`, and `uuid`; values remain strings without coercion                                                                                                                                  |
-
-JSON inputs and configuration accept one leading UTF-8 byte-order mark and
-reject duplicate decoded object keys. YAML files use a single YAML 1.2 core
-document with JSON-compatible values. Mapping keys are strings, including
-unquoted numeric response statuses. Scalar values keep their YAML types:
-quote string values such as `version: "1"` and the type name in
-`type: [string, "null"]`.
-
-YAML anchors and aliases support shared values with at most 1,000,000 expanded
-nodes, counting mapping keys, values, and collections. Repeated small anchors
-are allowed within that budget. Cycles, forward aliases, duplicate keys,
-unsupported tags or directives, non-finite numbers, and bare merge keys fail
-with diagnostics. Quote `"<<"` when it is a literal mapping key. YAML collections,
-including through aliases, are limited to 256 nested levels; the existing schema
-nesting limits also apply. YAML input uses the same contract validation and
-generated format as JSON input.
-
-Descriptive metadata is checked for location and structure and does not change
-generated files:
-
-| Location                                                 | Accepted metadata                                                                         |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `info.license`                                           | Required string `name`; optional string `identifier` or `url`, mutually exclusive         |
-| Schemas, including `$ref` siblings                       | `example` as a JSON value; `examples` as an array of JSON values; both may coexist        |
-| Parameters, response headers, JSON/multipart media types | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive |
-| Operations, parameters, response headers, schemas        | Boolean `deprecated`; deprecated declarations remain generated                            |
-
-Example Objects accept string `summary` and `description`, and a JSON `value` or
-string `externalValue`, mutually exclusive. Named examples may reference
-`#/components/examples/<name>`; component examples and aliases are validated,
-including unused entries, with missing targets and cycles rejected. Component
-example names match `[A-Za-z0-9._-]+`. Example references may add string `summary`
-and `description` annotations.
-
-Example values are documentation data, not schema rules, and are not checked
-against their associated schemas. POM checks metadata shapes rather than SPDX
-expressions or URI syntax, and never fetches license URLs or external example
-values. Unknown keywords and unrelated `x-…` extensions remain rejected.
-
-Supported schema composition is deliberately limited:
-
-- `anyOf` has two branches: a schema and `null`, or `string` and `integer`.
-- Nullable schemas accept `"type": ["string", "null"]` with any supported
-  non-null type and `"null"` in either order. Exactly two distinct type names
-  are required. Scalar `enum` and `const` still restrict accepted values,
-  including whether `null` is accepted. Existing parameter and multipart
-  restrictions still apply.
-- `oneOf` uses component references without sibling constraints or defaults and
-  requires an explicit discriminator mapping. Each branch requires the
-  discriminator field with a distinct string literal; the mapping must cover
-  every branch exactly once.
-- Objects with fixed properties use `additionalProperties: false` or omission.
-  Pure maps set `additionalProperties` to a schema or `true` for arbitrary JSON
-  values. Mixing fixed properties with dynamic entries is unsupported.
-- Local `$ref` schemas may add string, numeric, or array constraints appropriate
-  to the referenced type. Other semantic siblings are rejected.
-
-Component schema names match `[A-Za-z0-9._-]+`, including hyphens, dots, and
-leading digits. References, discriminator mappings, and generated schema maps
-preserve the exact names. `__proto__`, `prototype`, and `constructor` remain
-reserved names.
-
-Request `default` values are annotations: they do not fill omitted fields,
-change requiredness, or replace explicit `undefined`. Defaults in response
-schemas are rejected, including through references, maps, and union branches.
-
-Schemas support at most 128 structural levels, including structure behind
-references. Pure aliases add no levels. Each inline schema is limited to 32
-levels; use component references for deeper structures. Named types and typed
-aggregate validators keep inference from expanding through every level.
-Generated expressions have a separate 128-level complexity limit. Excess
-nesting receives a location-specific diagnostic before formatting or writing.
-Default annotations do not add schema or expression levels; YAML document
-limits still apply to their values.
-
-Numbers use finite JavaScript numeric values. Integer validation checks
-integrality without adding an implicit safe-integer range; declare required
-bounds in the schema. `multipleOf` uses their decimal spelling, including
-scientific notation, without an epsilon tolerance.
-
-Inline scalar `enum` members and `const` values must satisfy applicable bounds,
-patterns, formats, and `multipleOf` rules. Null-only literals remove the non-null
-branch after sibling syntax checks. Other numeric branches reject empty
-finite-number and integer intervals. Reference constraints may narrow an existing
-enum; empty literal intersections and contradictory bounds also fail across
-reference chains. These checks diagnose supported contradictions without
-attempting general schema satisfiability analysis.
-
-`date-time` requires a calendar date, seconds, and a `Z` or `±HH:MM` timezone.
-Fractional seconds and lowercase `t`/`z` are accepted without changing the input
-text. Timestamps with leap seconds are unsupported.
-`uuid` validates case-insensitive hexadecimal `8-4-4-4-12` syntax without adding
-version or variant restrictions; braces and URN prefixes are rejected.
-
-Arrays observe their length once and check all effective bounds, including
-reference constraints, before reading items. Parsing visits exactly that many
-positions and returns a fresh dense array. Later growth is ignored; positions
-removed during parsing still undergo item validation. Arbitrary JSON arrays use
-the same policy.
-
-Path and query names/values must contain well-formed Unicode. Header values use
-HTTP byte characters, permit internal horizontal tabs, and reject other ASCII
-controls or leading/trailing SP/HTAB so transport serialization preserves them.
-Header names must be ASCII HTTP tokens. Declarations reserve `__proto__`,
-`prototype`, and `constructor` regardless of casing. JSON responses require a single
-valid `application/json` Content-Type value; quoted parameters are supported.
-
-Fixed schema property and parameter names that belong to `Object.prototype`,
-such as `toString`, `valueOf`, or `hasOwnProperty`, are unsupported. These names are legal
-in OpenAPI; POM rejects them explicitly to preserve request type inference and
-runtime omission behavior. Dynamic maps preserve their own JSON keys, including
-`__proto__` and `constructor`.
-
-Unsupported semantics stop generation with a location-specific diagnostic before
-outputs change. For example, adding `format: "email"` to the example's
-`components.schemas.WidgetId` produces:
-
-```text
-POM: components.schemas.WidgetId.format: unsupported format; expected date, date-time or uuid
-```
-
-External or recursive references, general unions and other type arrays, objects
-mixing fixed properties with dynamic entries, other formats, response defaults,
-optional request bodies, path-level parameters, status ranges/default responses,
-non-bearer or referenced security schemes
-remain unsupported. See
-[architecture and next needs](ARCHITECTURE.md) for the adoption boundaries.
-
-## Generated output
-
-Shared runtime helpers are authored in POM and copied once into each output set;
-they are not customized for every operation. Generated definitions import those
-local helpers. Keep this self-contained delivery model when adding execution or
-cache capabilities; a separate runtime package is not required.
-
-Generation uses the package's pinned formatter and writes a complete set of
-modules with `.pom-manifest.json`. Exclude these files from application formatter
-rewrites and use `pom check` to verify their canonical bytes.
-Generated source is limited to 32 MiB before formatting; larger selections fail
-before writing. YAML anchors can make a small input describe a much larger output.
-Select fewer clients or standalone roots when a selection exceeds the limit.
-
-Generated bytes use LF line endings. Preserve them in Git, including on Windows;
-for an output directory named `generated`, add `generated/** text eol=lf` to the
-consumer's `.gitattributes`. Line-ending conversion causes drift on checkout.
-
-The manifest records owned files and their content hashes. Generation updates
-unchanged owned files, removes unchanged stale files, and preserves unrelated
-files. An existing target without ownership or an edited generated file causes
-a conflict. Keep the manifest with generated artifacts.
-Inventory names must be distinct ignoring ASCII case, including on
-case-sensitive filesystems; aliases are rejected before outputs change.
-Changing the client selection uses this same inventory to remove unchanged
-outputs for previously selected clients.
-
-`check` is read-only, including when output is missing or invalid. CLI exit codes
-are `0` for success, `1` for drift or an input/execution failure, and `2` for
-invalid command usage. Bare `pom` and `pom --help` print usage and exit `0`.
-
-Generation stages the complete output and records its prior and intended states
-in `.pom-journal.json` before replacing files individually. It publishes the
-manifest last, then removes the journal. A valid pending journal lets the next
-`generate` finish the interrupted output set before applying the current inputs.
-Recovery accepts only recorded prior or intended file states and preserves
-conflicting edits. `check` reports interrupted output without recovering it.
-
-An interruption can leave a `.pom-lock` directory. Confirm that the writer has
-stopped before removing a leftover lock, then retry generation with the journal
-intact. Generation checks lock ownership before publishing and cleaning up.
-If recovery evidence is invalid or files conflict, preserve uncertain files and
-generate into a fresh directory, or restore a known matching output set and
-manifest before retrying. An absent manifest alone does not authorize replacing
-existing target files.
-
-[Contributing](CONTRIBUTING.md) owns development checks and publication guidance.
-[Architecture](ARCHITECTURE.md) owns requirements and future application adoption.
+Pomegranate is [MIT licensed](LICENSE).

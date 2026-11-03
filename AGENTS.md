@@ -4,7 +4,8 @@ Pomegranate (POM) compiles a supported OpenAPI vocabulary into TypeScript, nativ
 validators, request builders, and protocol helpers. It is an independent tool
 used by personal projects and intended for a public GitHub repository.
 
-Read [README.md](README.md) for current usage and limitations,
+Read [README.md](README.md) for an introduction,
+[REFERENCE.md](REFERENCE.md) for supported contracts and usage,
 [ARCHITECTURE.md](ARCHITECTURE.md) for boundaries and requirements, and
 [CONTRIBUTING.md](CONTRIBUTING.md) for verification and publication guidance.
 
@@ -17,6 +18,8 @@ Read [README.md](README.md) for current usage and limitations,
   publish, or deploy without an explicit request.
 - The local agent coordination board is open. Use it to coordinate active
   implementation, review, and documentation work; keep entries and findings concise.
+- Keep proposals, sprint plans, and working notes in ignored `.local/` storage.
+  Never track or package them, or link to them from public documentation.
 
 ## Boundaries
 

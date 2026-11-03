@@ -5,3 +5,12 @@ dist/
 examples/json/.build/
 .env
 test/.generated/
+
+# Proposals and working notes stay local.
+/.local/
+/notes/
+/proposals/
+/*PROPOSAL*
+/*proposal*
+/NOTES.md
+/NOTES.txt

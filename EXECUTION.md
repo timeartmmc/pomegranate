@@ -1,6 +1,7 @@
 # Executable clients
 
-See [checkout status](README.md#checkout-status) for release availability.
+Executable clients add typed calls around an application executor. For manual
+request construction and response parsing, use the [contract reference](REFERENCE.md).
 
 ## Selection and calls
 
@@ -17,13 +18,10 @@ Select surfaces explicitly in configuration or `CompileOptions`:
 Every execution surface must also appear in `clients`. Unknown, unselected or
 duplicate names fail before writing. Omission or `[]` disables execution output.
 Each selected surface gets `client.<surface>.execute.ts` and an explicit
-`createClient` export from its client entry. Its operations and schema maps stay
-independently usable. Execution alone uses the copied local validation runtime and imports no
-TanStack, React, or schema-library dependency.
-`call-runtime.ts` holds direct-call construction, while `execution-runtime.ts`
-shares response interpretation and error identity with queries. Native direct
+`createClient` export from its client entry. Its operations and schema maps remain
+independently usable. Execution has no package runtime dependencies. Native direct
 calls need platform declarations and implementations for `AbortController` and
-`AbortSignal`; query-only generation retains its existing declaration requirements.
+`AbortSignal`; [query-only requirements](QUERIES.md#ordinary-queries) are separate.
 
 ```ts
 import { createClient } from './generated/client.consumer.ts';
@@ -76,15 +74,15 @@ validates merged headers with `request.validateHeaders`, serializes the prepared
 body and forwards the signal to its transport. POM invokes this executor once;
 the executor owns recovery, retries, deadlines, locale and session fencing. A
 broad executor can serve direct calls, ordinary queries and both infinite query
-profiles without casts. Existing bodyless `QueryExecutor` implementations remain
-valid for queries.
+profiles without casts. `QueryExecutor` accepts only bodyless requests and is
+sufficient for query-only integrations.
 
 For raw execution, read the final body once and return its evidence. POM parses JSON
 and applies the exact-status response schema once after the executor returns.
-The JSON example's `createExecutor` shows
-this boundary and forwards cancellation. Its legacy parsed `execute` entry
-delegates to the same raw path. Returning domain data or reconstructing status and
-headers from a discarded parsed success is unsupported.
+The JSON example's `createExecutor` shows this boundary and forwards
+cancellation. Its parsed `execute` helper uses the same raw path. Returning domain
+data or reconstructing status and headers from a discarded parsed success is
+unsupported.
 Application recovery may observe and validate additional HTTP denials before the
 final response; that does not make the whole attempt sequence one response.
 
@@ -97,10 +95,12 @@ policy. The adapter must preserve the correspondence between the transport's
 completed response and the handle it returns. This needs no additional POM
 transport interface or per-endpoint bridge.
 
+### Context and snapshots
+
 Context is always required, including for writes and bodyless calls. Use nonsecret
 finite JSON scalars for every response-changing session revision, tenant, locale
 or transport value. Records must contain enumerable own data properties.
-Normalization matches query context: names are sorted and numeric `-0` becomes
+Names are sorted and numeric `-0` becomes
 `0`, including in the frozen executor snapshot. Never put credentials in context.
 The executor must use the snapshot for session and locale checks rather than
 rereading mutable application state.
@@ -215,9 +215,9 @@ cooperative; the executor must settle and forward its signal to network I/O.
 ## Failures and application effects
 
 Declared HTTP failures and protocol failures reject with `ResponseError`.
-`ResponseError` is the same constructor as the existing `QueryResponseError`,
-including its `name: 'QueryResponseError'`, constructor shape and `instanceof`
-behavior. Use the operation's guard to recover its declared failure types:
+`ResponseError` and `QueryResponseError` name the same constructor, with
+`name: 'QueryResponseError'` and shared `instanceof` behavior. Use the operation's
+guard to recover its declared failure types:
 
 ```ts
 try {
@@ -247,23 +247,14 @@ persistence, session-cache removal, product transformations and side effects.
 POM infers none of these from operation names or HTTP methods. Keep domain
 wrappers that still serve an application purpose.
 
-## Uploads and queries
+## Uploads and pagination
 
-Multipart selection still requires a browser or native target. Executable upload
-inputs preserve every declared text, file and repeated-file field. Browser
-inputs require `File`; native inputs require `{ uri, name?, mediaType? }` and
-compile without DOM libraries when platform types supply the standard globals.
-The application uses `request.multipart` and the complete validated body to
-create its platform body. It owns file access, progress and fresh body creation
-for every retry. POM does not construct `FormData` or open a native URI.
+Executable uploads use the same [multipart inputs and target requirements](REFERENCE.md#multipart-requests)
+as request builders. The executor receives the complete validated body and
+`request.multipart` inventory; the application serializes them for its platform.
+The JSON example transport handles bodyless and JSON requests, not uploads.
 
-`test/multipart-fixture.ts` supplies the synthetic upload contract, while
-`test/execution-browser-app.ts` exercises a single generic executor that switches
-only on body kind for real uploads, writes and mounted queries. The isolated
-package check generates and runs these public synthetic contracts after removing
-the compiler. The JSON example focuses on reads, writes and selected queries.
-
-Query keys, readiness and skip conditions, filters, sharing and pagination remain
-query concerns. Pagination metadata is checked before a page becomes successful
-cache data. A direct call validates the operation response schema and imposes no
-pagination traversal policy. See [query integration](QUERIES.md) for those APIs.
+Direct calls validate the operation response schema without imposing pagination
+traversal rules. Query factories additionally validate their bound pagination
+metadata before caching a page. See [query integration](QUERIES.md) for keys,
+filters, storage, sharing, and pagination.
