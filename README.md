@@ -14,7 +14,7 @@ The package is [MIT licensed](LICENSE).
 
 ## Checkout status
 
-This documentation follows the source checkout. Use a matching compiler version
+This documentation follows the 0.4.0 source checkout. Use a matching compiler version
 and regenerate the complete output set when upgrading. For unreleased changes,
 use a locally packed checkout; [Contributing](CONTRIBUTING.md#before-publication)
 owns that workflow.

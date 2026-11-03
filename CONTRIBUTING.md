@@ -197,10 +197,10 @@ release commit with the complete canonical checks and required consumer checks.
 Then inspect and publish the same packed artifact:
 
 ```sh
-bun pm pack --filename /tmp/pomegranate-compiler-0.3.0.tgz
-node scripts/verify-package.ts /tmp/pomegranate-compiler-0.3.0.tgz
-bun publish --dry-run --access public /tmp/pomegranate-compiler-0.3.0.tgz
-bun publish --access public /tmp/pomegranate-compiler-0.3.0.tgz
+bun pm pack --filename /tmp/pomegranate-compiler-0.4.0.tgz
+node scripts/verify-package.ts /tmp/pomegranate-compiler-0.4.0.tgz
+bun publish --dry-run --access public /tmp/pomegranate-compiler-0.4.0.tgz
+bun publish --access public /tmp/pomegranate-compiler-0.4.0.tgz
 ```
 
 Use the selected version in the filename. Confirm the registry's version and
