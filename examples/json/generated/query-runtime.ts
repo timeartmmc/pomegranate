@@ -190,7 +190,9 @@ export type QueryFactories<
     : never;
 }>;
 
-export function queryConfig(config: QueryConfig) {
+export function queryConfig(
+  config: QueryConfig,
+): ReturnType<typeof executionConfig<QueryExecutor>> {
   return executionConfig(config, 'query');
 }
 

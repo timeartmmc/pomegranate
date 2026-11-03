@@ -14,11 +14,10 @@ The package is [MIT licensed](LICENSE).
 
 ## Checkout status
 
-This documentation describes version 0.3.0. It adds executable clients,
-numeric-offset pagination, validation inside application execution scopes, and
-explicit body query caches to 0.2.0. Use a matching compiler version and regenerate
-the complete output set when upgrading. For unreleased changes, use a locally
-packed checkout; [Contributing](CONTRIBUTING.md#before-publication) owns that workflow.
+This documentation follows the source checkout. Use a matching compiler version
+and regenerate the complete output set when upgrading. For unreleased changes,
+use a locally packed checkout; [Contributing](CONTRIBUTING.md#before-publication)
+owns that workflow.
 [Executable clients](EXECUTION.md) and [query integration](QUERIES.md) own usage.
 Compiler verification does not establish a complete application migration.
 
@@ -53,8 +52,9 @@ A symlinked output parent, such as macOS `/tmp`, is supported. The output
 directory itself and generated target files cannot be symlinks.
 For a YAML export, set `openapi` to a `.yaml` or `.yml` file; configuration stays
 JSON. OpenAPI filenames with other extensions are read as JSON.
-Input and configuration files must use UTF-8. Malformed byte sequences fail
-before outputs change.
+Input and configuration must be regular UTF-8 files of at most 32 MiB each.
+Devices and named pipes are rejected. Malformed byte sequences fail before
+outputs change.
 Generate or check the complete output set:
 
 ```sh
@@ -64,13 +64,18 @@ npx --package=pomegranate-compiler pom check --config pom.json
 
 Generated sources use explicit relative `.ts` imports and erasable TypeScript
 syntax. Supported Node versions, Bun, and TypeScript-aware bundlers can consume
-them directly.
-They use ES2022 runtime APIs; TypeScript targets must be ES2020 or newer for
-bigint literals. The example uses ES2022 target and library declarations.
+them directly. For direct Node execution, place them in an ES module package
+with `"type": "module"`. CommonJS packages need a separate ES module boundary or
+a compilation/bundling step; Node does not convert these sources to CommonJS.
+Use ES2022 runtime APIs and library declarations, plus declarations for the target
+platform. The emit `target` may be ES2020 or newer for bigint syntax; lowering it
+does not supply missing runtime APIs. The example uses ES2022 for both.
 When emitting JavaScript with TypeScript 5.7 or newer, enable
 `rewriteRelativeImportExtensions` to produce `.js` imports. For a bundler-only
 `noEmit` typecheck, use `allowImportingTsExtensions`. Core and execution-only generated modules have no package runtime dependencies;
 optional query modules need Query Core. Deployed applications do not need the compiler.
+Generated modules support `isolatedDeclarations`. Application exports inferred
+from them still need the annotations required by that TypeScript option.
 
 For programmatic use in development tooling, pass a parsed OpenAPI `document`:
 
@@ -163,6 +168,9 @@ surface omitted from `clients`.
 
 Each selected surface gets a `client.<surface>.ts` entry and its own operation
 and schema modules, with one shared runtime. There is no all-operations entry.
+The selection name `d` uses `_d` in filenames to avoid TypeScript declaration-file
+interpretation; its policy and cache identity stays `d`. The same filename rule
+applies to standalone roots.
 Client modules contain only schemas reachable from that client's request and
 response contracts, including transitive references. All operations, schemas,
 and security declarations are validated before selection, so an unsupported
@@ -272,9 +280,15 @@ part encodings, and binary values in JSON or standalone validators are unsupport
 Requests reject unknown fields in fixed objects. Responses strip additive fields
 from fixed objects while rejecting missing required fields, changed types, and
 unknown enum values. Declared dynamic maps validate and preserve their entries.
+An object schema without `properties` entries or `additionalProperties`, such as
+`{ "type": "object" }`, accepts and preserves any JSON members, as in JSON Schema.
+Declare `additionalProperties: false` for an object that must be empty.
 Fixed objects validate structural fields, including fields supplied by class
-instances or prototypes, and return fresh plain objects. Dynamic maps require
-plain records.
+instances or prototypes, and return fresh plain objects. Data on
+`Object.prototype` never supplies a field or an unknown request key, so
+prototype pollution through data, such as an unsafe merge, cannot fill a missing
+value. Accessors installed there run application code and are not covered.
+Dynamic maps require plain records.
 Schema registries and standalone `schema` exports expose `parse(unknown)` and
 `safeParse(unknown)`. `parse` returns the named output type or throws
 `ValidationError`; `safeParse` returns `{ success: true, data }` or
@@ -487,6 +501,13 @@ cache capabilities; a separate runtime package is not required.
 Generation uses the package's pinned formatter and writes a complete set of
 modules with `.pom-manifest.json`. Exclude these files from application formatter
 rewrites and use `pom check` to verify their canonical bytes.
+Generated source is limited to 32 MiB before formatting; larger selections fail
+before writing. YAML anchors can make a small input describe a much larger output.
+Select fewer clients or standalone roots when a selection exceeds the limit.
+
+Generated bytes use LF line endings. Preserve them in Git, including on Windows;
+for an output directory named `generated`, add `generated/** text eol=lf` to the
+consumer's `.gitattributes`. Line-ending conversion causes drift on checkout.
 
 The manifest records owned files and their content hashes. Generation updates
 unchanged owned files, removes unchanged stale files, and preserves unrelated

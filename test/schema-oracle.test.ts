@@ -259,6 +259,27 @@ const cases: SchemaCase[] = [
       [{ entry: { enabled: 0 } }, false],
     ],
   },
+  {
+    // No properties and no additionalProperties: JSON Schema admits any members.
+    name: 'FreeFormObject',
+    schema: { type: 'object' },
+    samples: [
+      [{}, true],
+      [{ plan: 'pro', seats: 40, nested: { tags: ['a', null] } }, true],
+      [json('{"__proto__":{"admin":true}}'), true],
+      [[], false],
+      ['text', false],
+      [null, false],
+    ],
+  },
+  {
+    name: 'FreeFormProperties',
+    schema: { type: 'object', properties: {} },
+    samples: [
+      [{ plan: 'pro' }, true],
+      [[], false],
+    ],
+  },
   ...compositionCases,
 ];
 

@@ -84,7 +84,7 @@ const cases: readonly ResponseCase[] = [
   {
     name: 'empty object',
     status: 207,
-    schema: { type: 'object' },
+    schema: { type: 'object', additionalProperties: false },
     body: '{}',
     expected: {},
     invalid: '[]',

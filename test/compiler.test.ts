@@ -390,11 +390,22 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     (d) => {
       Object.assign(preparation(d).requestBody, {
         content: {
-          'multipart/form-data': { schema: { type: 'object' } },
+          'multipart/form-data': {
+            schema: { type: 'object', additionalProperties: false },
+          },
         },
       });
     },
     /multipart clients require an explicit/,
+  ],
+  [
+    'free-form multipart object',
+    (d) => {
+      Object.assign(preparation(d).requestBody, {
+        content: { 'multipart/form-data': { schema: { type: 'object' } } },
+      });
+    },
+    /multipart requires a fixed object of text and file fields/,
   ],
   [
     'nullable required array',

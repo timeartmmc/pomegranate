@@ -499,7 +499,11 @@ export function executionConfig<Execute extends (...args: never[]) => unknown>(
     mapCancellation?: CancellationMapper;
   }>,
   label = 'execution',
-) {
+): {
+  namespace: string;
+  execute: Execute;
+  mapCancellation?: CancellationMapper;
+} {
   const { namespace, execute, mapCancellation } = config;
   if (typeof namespace !== 'string' || namespace.length === 0)
     throw new TypeError(`${label} namespace must be a nonempty string`);

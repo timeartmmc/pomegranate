@@ -337,3 +337,105 @@ void test('nullable constraints report their useful branch without expected-null
       ]);
   }
 });
+
+void test('many constraint failures in a nullable container fail instead of throwing', () => {
+  // Above V8's call argument limit: union branches must not spread issues.
+  const count = 200_000;
+  const entries = Object.fromEntries(
+    Array.from({ length: count }, (_, index) => [`key${index}`, 'x']),
+  );
+  for (const registry of [schemas.requestSchemas, schemas.responseSchemas]) {
+    const result = registry.NullableMap.safeParse(entries);
+    assert.equal(result.success, false);
+    if (!result.success) assert.equal(result.error.issues.length, count);
+  }
+  assert.throws(
+    () => operations.checkNullableMap.build({ body: entries }),
+    RequestValidationError,
+  );
+  const response = operations.checkNullableMap
+    .build({ body: null })
+    .parseResponse({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entries),
+    });
+  assert.equal(response.kind, 'protocol');
+});
+
+void test('a field read once proves presence even if its accessor removes the key', () => {
+  const removing = () => {
+    const input = { kind: 'text' };
+    Object.defineProperty(input, 'value', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        Reflect.deleteProperty(input, 'value');
+        return 'ok';
+      },
+    });
+    return input;
+  };
+  for (const registry of [schemas.requestSchemas, schemas.responseSchemas])
+    assert.deepEqual(registry.TaggedText.parse(removing()), {
+      kind: 'text',
+      value: 'ok',
+    });
+});
+
+void test('Object.prototype never supplies fields, tags or unknown request keys', () => {
+  const text = { kind: 'text', value: 'ok' };
+  // Simulate prototype pollution by another library; removed in finally.
+  for (const [key, value] of [
+    ['kind', 'text'],
+    ['value', 'polluted'],
+  ] as const)
+    Object.defineProperty(Object.prototype, key, {
+      value,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+  try {
+    for (const registry of [schemas.requestSchemas, schemas.responseSchemas]) {
+      assert.equal(
+        registry.TaggedText.safeParse({ kind: 'text' }).success,
+        false,
+      );
+      assert.equal(registry.Tagged.safeParse({ value: 'ok' }).success, false);
+      assert.deepEqual(registry.Tagged.parse(text), text);
+    }
+    // Own undeclared keys stay strict; polluted keys are not request input.
+    assert.equal(
+      schemas.requestSchemas.TaggedText.safeParse({ ...text, extra: true })
+        .success,
+      false,
+    );
+    const request = operations.checkNullableTagged.build({ body: null });
+    const response = request.parseResponse({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"kind":"text"}',
+    });
+    assert.equal(response.kind, 'protocol');
+  } finally {
+    for (const key of ['kind', 'value'])
+      Reflect.deleteProperty(Object.prototype, key);
+  }
+  // Other prototypes remain structural sources, including class accessors,
+  // and their enumerable keys still count as strict request input.
+  class Text {
+    value = 'ok';
+    get kind() {
+      return 'text' as const;
+    }
+  }
+  for (const registry of [schemas.requestSchemas, schemas.responseSchemas])
+    assert.deepEqual(registry.TaggedText.parse(new Text()), text);
+  assert.equal(
+    schemas.requestSchemas.TaggedText.safeParse(
+      Object.create({ ...text, extra: true }),
+    ).success,
+    false,
+  );
+});

@@ -7,6 +7,21 @@ import { parseJson } from '../dist/json.js';
 import { json } from './assertions.ts';
 import { fileSnapshot, fixture, temporary } from './helpers.ts';
 
+void test('long JSON strings and escaped keys do not exhaust the scanner stack', () => {
+  const text = 'a'.repeat(8_400_000);
+  assert.deepEqual(parseJson(JSON.stringify({ text }), 'large.json'), { text });
+  const key = 'x'.repeat(8_400_000);
+  assert.throws(
+    () => parseJson(`{"${key}": 1, "${key}": 2}`, 'large-key.json'),
+    (error) =>
+      error instanceof ContractError && error.message.includes('duplicate key'),
+  );
+  const escaped = '\\"'.repeat(100_000);
+  assert.deepEqual(parseJson(JSON.stringify({ escaped }), 'escapes.json'), {
+    escaped,
+  });
+});
+
 void test('JSON duplicate detection compares decoded keys within each object', () => {
   for (const source of [
     '{"key": 1, "key": 2}',

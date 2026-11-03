@@ -4,9 +4,15 @@ export function parseJson(source: string, path: string): unknown {
   const start = source.charCodeAt(0) === 0xfeff ? 1 : 0;
   const body = source.slice(start);
   const location = (offset: number): string => {
-    const prefix = source.slice(0, offset);
-    const line = 1 + (prefix.match(/\n/g)?.length ?? 0);
-    return `${path}:${line}:${offset - prefix.lastIndexOf('\n')}`;
+    let line = 1;
+    let column = 1;
+    for (let index = 0; index < offset; index++) {
+      if (source[index] === '\n') {
+        line++;
+        column = 1;
+      } else column++;
+    }
+    return `${path}:${line}:${column}`;
   };
   let document: unknown;
   try {
@@ -29,11 +35,26 @@ export function parseJson(source: string, path: string): unknown {
   // JSON.parse owns syntax and value interpretation, but discards duplicate
   // members before a reviver can see them. Scan the already-valid token stream
   // to reject that ambiguity without changing values or recursively walking
-  // deeply nested annotation data. Strings are consumed whole, including escapes.
-  const tokens = /"(?:[^"\\]|\\[\s\S])*"|[{}[\]:,]/g;
+  // deeply nested annotation data. Scan strings iteratively: a repeated regexp
+  // group can exhaust the engine stack on an otherwise valid long string.
   const stack: { keys?: Set<string>; keyExpected: boolean }[] = [];
-  for (const match of body.matchAll(tokens)) {
-    const token = match[0];
+  for (let index = 0; index < body.length; index++) {
+    const token = body[index];
+    if (token === '"') {
+      const begin = index++;
+      while (body[index] !== '"') index += body[index] === '\\' ? 2 : 1;
+      const frame = stack[stack.length - 1];
+      if (!frame?.keys || !frame.keyExpected) continue;
+      const key = JSON.parse(body.slice(begin, index + 1)) as string;
+      if (frame.keys.has(key))
+        fail(
+          location(start + begin),
+          `invalid JSON: duplicate key ${JSON.stringify(key)}`,
+        );
+      frame.keys.add(key);
+      frame.keyExpected = false;
+      continue;
+    }
     if (token === '{') {
       stack.push({ keys: new Set(), keyExpected: true });
     } else if (token === '[') {
@@ -45,17 +66,6 @@ export function parseJson(source: string, path: string): unknown {
       if (!frame?.keys) continue;
       if (token === ',') frame.keyExpected = true;
       else if (token === ':') frame.keyExpected = false;
-      else if (frame.keyExpected) {
-        const key = JSON.parse(token) as string;
-        if (frame.keys.has(key)) {
-          fail(
-            location(start + match.index),
-            `invalid JSON: duplicate key ${JSON.stringify(key)}`,
-          );
-        }
-        frame.keys.add(key);
-        frame.keyExpected = false;
-      }
     }
   }
   return document;

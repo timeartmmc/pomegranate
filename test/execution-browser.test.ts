@@ -74,6 +74,8 @@ void test('one application executor serves real Chromium calls, uploads and moun
         response.writeHead(status, {
           'Content-Type': 'application/json',
           'X-Request-ID': 'browser',
+          // Equal-refetch assertions compare the complete response envelope.
+          Date: 'Mon, 02 Nov 2026 00:00:00 GMT',
         });
         response.end(JSON.stringify(data));
       };

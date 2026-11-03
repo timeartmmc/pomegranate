@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  defineOperation,
   invalid,
   report,
+  RequestValidationError,
   validator,
   ValidationError,
   map,
@@ -12,7 +14,7 @@ import {
   list,
   formats,
 } from '../dist/runtime.js';
-import type { Issues } from '../dist/runtime.js';
+import type { Invalid, Issues, Parse } from '../dist/runtime.js';
 import { browserFile } from '../dist/runtime.browser.js';
 void test('native facade rejects either invalid returns or recorded issues', () => {
   assert.equal(
@@ -56,6 +58,71 @@ void test('native facade preserves nested failure paths and aggregate item issue
       result.error.issues.map((issue) => issue.path),
       [[0], [1]],
     );
+});
+
+void test('every consumer fails and names an issue when a parser rejects silently', () => {
+  // A defective parser returns invalid without recording why. No consumer may
+  // treat that as success, an omitted item, or an absent header.
+  const silent = (): Invalid => invalid;
+  const containers: [Parse<unknown>, unknown, (string | number)[]][] = [
+    [(input, issues) => list(input, issues, silent), [1], [0]],
+    [(input, issues) => map(input, issues, silent), { entry: 1 }, ['entry']],
+    [(input, issues) => union(input, issues, silent, silent), 1, []],
+    [silent, 1, []],
+  ];
+  for (const [parse, input, path] of containers) {
+    const result = validator(parse).safeParse(input);
+    assert.equal(result.success, false);
+    if (!result.success)
+      assert.deepEqual(result.error.issues, [
+        { path, message: 'invalid value' },
+      ]);
+  }
+  const noOptions: Parse<undefined> = (input, issues) =>
+    input === undefined ? undefined : report(issues, 'expected none', true);
+  const silentText: Parse<string> = silent;
+  const definition = {
+    operationId: 'silent',
+    method: 'GET',
+    path: '/silent',
+    bodyKind: 'none',
+    policy: {
+      auth: { label: 'public', transport: 'none' },
+      retry: 'never',
+      timeout: 'interactive',
+    },
+    parameters: [],
+    options: noOptions,
+    headers: { 'x-required': { required: true, schema: silentText } },
+    responses: {
+      200: {
+        bodyKind: 'json',
+        headers: { 'x-trace': { required: true, schema: silentText } },
+        schema: silent,
+      },
+    },
+  } as const;
+  const request = defineOperation(definition).build();
+  const response = request.parseResponse({
+    status: 200,
+    headers: { 'Content-Type': 'application/json', 'X-Trace': 'trace' },
+    body: '{}',
+  });
+  assert.equal(response.kind, 'protocol');
+  if (response.kind === 'protocol')
+    assert.deepEqual(response.issues, [
+      { part: 'headers', path: ['x-trace'], message: 'invalid value' },
+      { part: 'body', path: [], message: 'invalid value' },
+    ]);
+  assert.throws(
+    () => request.validateHeaders({ 'X-Required': 'value' }),
+    RequestValidationError,
+  );
+  const silentOptions: Parse<undefined> = silent;
+  assert.throws(
+    () => defineOperation({ ...definition, options: silentOptions }).build(),
+    RequestValidationError,
+  );
 });
 
 void test('browser File rejection is a type failure', () => {

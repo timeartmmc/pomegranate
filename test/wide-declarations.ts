@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { commandError } from './assertions.ts';
@@ -168,6 +168,69 @@ export async function verifyWideDeclarations(
     }
   }
   await typecheck();
+  // Generated modules must also publish without inference across files. The
+  // application wrapper above deliberately exercises ordinary inferred exports.
+  const parserConfig = join(directory, 'parser-types.json');
+  await writeFile(
+    parserConfig,
+    JSON.stringify({
+      compilerOptions: {
+        ...options,
+        declaration: true,
+        emitDeclarationOnly: true,
+        isolatedDeclarations: true,
+        rewriteRelativeImportExtensions: true,
+        rootDir: 'wide-generated',
+        outDir: 'parser-types',
+        noUnusedLocals: false,
+      },
+      include: ['wide-generated/*.ts'],
+    }),
+  );
+  const checkParsers = () =>
+    promisify(execFile)(process.execPath, [compiler, '-p', parserConfig], {
+      cwd: directory,
+      timeout: 30_000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  await checkParsers();
+  const parserFile = join(
+    directory,
+    'wide-generated/client.consumer.schemas.ts',
+  );
+  const originalSource = await readFile(parserFile, 'utf8');
+  const literalStart = originalSource.indexOf(
+    'export function parse_LargeLiteral_request(',
+  );
+  assert.ok(literalStart >= 0);
+  const literalReturn = originalSource.indexOf('return input;', literalStart);
+  assert.ok(literalReturn >= 0);
+  const corruptions = [
+    originalSource.replace(
+      'return { id: v0, label: v1 };',
+      'return { id: 123, label: v1 };',
+    ),
+    originalSource.replace('field0: v0,', 'field0: 123,'),
+    originalSource.slice(0, literalReturn) +
+      'return "undeclared";' +
+      originalSource.slice(literalReturn + 'return input;'.length),
+  ];
+  try {
+    for (const corrupted of corruptions) {
+      assert.notEqual(
+        corrupted,
+        originalSource,
+        'negative control must change a parser return',
+      );
+      await writeFile(parserFile, corrupted);
+      await assert.rejects(checkParsers(), (error: unknown) => {
+        const failure = commandError(error);
+        return failure.code === 2 && /error TS2322/.test(failure.stdout);
+      });
+    }
+  } finally {
+    await writeFile(parserFile, originalSource);
+  }
   await rm(join(directory, 'wide-generated'), { recursive: true });
   await rm(join(directory, 'wide-wrapper.ts'));
   await writeFile(

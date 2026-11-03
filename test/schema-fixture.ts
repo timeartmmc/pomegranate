@@ -37,7 +37,7 @@ export function schemaFixture() {
     Empty: { type: 'object', additionalProperties: false },
     EmptyContainers: object({
       child: ref('Empty'),
-      inline: { type: 'object', properties: {} },
+      inline: { type: 'object', properties: {}, additionalProperties: false },
       array: { type: 'array', items: ref('Empty') },
       map: { type: 'object', additionalProperties: ref('Empty') },
     }),

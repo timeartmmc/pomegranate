@@ -111,6 +111,9 @@ Parser changes must retain checked return bodies, exact contract types, the
 Check observed array counts and effective bounds before any item read, including
 aliases and arbitrary JSON. Keep wide objects, large literal enums, long aliases,
 and corrupted-return type controls covered on both supported TypeScript lines.
+`wide-declarations.ts` also compiles generated modules with `isolatedDeclarations`
+and checks that wrong fixed-object, wide-object and literal returns produce type
+errors. The same checks run against the installed minimum TypeScript dependency.
 Wide publication coverage includes 1,024-field objects, 2,048-member literal enums,
 schema registries and inferred client/query wrappers, with producer sources removed
 before downstream checking.

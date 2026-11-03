@@ -295,6 +295,15 @@ function normalizeObject(
             ),
     };
   }
+  // JSON Schema admits any members when an object declares neither properties
+  // nor additionalProperties. As a closed fixed object it would strip all
+  // response data and reject every request member. additionalProperties: false
+  // declares an object that must be empty.
+  if (
+    Object.keys(properties).length === 0 &&
+    !Object.hasOwn(value, 'additionalProperties')
+  )
+    return { kind: 'map', values: true };
   return {
     kind: 'object',
     properties: normalized,

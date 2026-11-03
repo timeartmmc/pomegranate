@@ -370,6 +370,85 @@ try {
     '.bin',
     process.platform === 'win32' ? 'pom.cmd' : 'pom',
   );
+  const dPolicy = {
+    auth: 'public',
+    retry: 'never',
+    timeout: 'interactive',
+    surfaces: ['d'],
+  };
+  const dDocument = {
+    openapi: '3.1.0',
+    info: {
+      title: 'Synthetic naming and long input',
+      version: '1',
+      description: 'x'.repeat(8_400_000),
+    },
+    'x-pom-policy': {
+      version: 2,
+      auth: { public: { transport: 'none' } },
+      retry: ['never'],
+      timeout: ['interactive'],
+      surfaces: ['d'],
+    },
+    components: { schemas: { Payload: { type: 'object' } } },
+    paths: {
+      '/value': {
+        get: {
+          operationId: 'read',
+          'x-pom': dPolicy,
+          responses: {
+            200: {
+              description: 'Value',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Payload' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  await writeFile(join(consumer, 'd-openapi.json'), JSON.stringify(dDocument));
+  await writeFile(
+    join(consumer, 'd-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './d-openapi.json',
+      output: './d-generated',
+      clients: ['d'],
+      standalone: {
+        d: { schema: '#/components/schemas/Payload', usage: 'response' },
+      },
+    }),
+  );
+  await run(binary, ['generate', '--config', join(consumer, 'd-pom.json')]);
+  await run(binary, ['check', '--config', join(consumer, 'd-pom.json')]);
+  await writeFile(
+    join(consumer, 'd-types.json'),
+    JSON.stringify({
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        strict: true,
+        types: [],
+        declaration: true,
+        emitDeclarationOnly: true,
+        isolatedDeclarations: true,
+        rewriteRelativeImportExtensions: true,
+        rootDir: 'd-generated',
+        outDir: 'd-types',
+      },
+      include: ['d-generated/*.ts'],
+    }),
+  );
+  await run(process.execPath, [
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+    '-p',
+    join(consumer, 'd-types.json'),
+  ]);
   await writeFile(
     join(consumer, 'query-openapi.json'),
     JSON.stringify(infiniteFixture()),
@@ -908,6 +987,13 @@ try {
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
+    import {operations as dOperations} from './d-generated/client._d.ts';
+    import {schema as dSchema} from './d-generated/standalone._d.ts';
+    const dValue = {value: 'kept', nested: {count: 1}};
+    assert.deepEqual(dSchema.parse(dValue), dValue);
+    const dResult = dOperations.read.build().parseResponse({status:200, headers:{'Content-Type':'application/json'}, body:JSON.stringify(dValue)});
+    assert.equal(dResult.kind, 'success');
+    assert.deepEqual(dResult.data, dValue);
     import * as executionModule from './execution-generated/client.consumer.ts';
     import * as executionQueries from './execution-generated/client.consumer.queries.ts';
     import * as executionStaff from './execution-generated/client.staff.ts';

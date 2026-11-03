@@ -63,6 +63,14 @@ function fatalSince(issues: Issues, start: number): boolean {
   return false;
 }
 
+// Parsers record an issue before returning `invalid`. Consumers still treat
+// either signal as failure and name a missing issue, so a parser defect cannot
+// become success, a dropped array item or a silently absent header.
+function rejected(issues: Issues, start: number): Invalid {
+  if (issues.length === start) report(issues, 'invalid value', true);
+  return invalid;
+}
+
 export type ValidationIssue = Readonly<{
   path: readonly (string | number)[];
   message: string;
@@ -99,9 +107,12 @@ export function validator<T>(run: Parse<T>): Validator<T> {
   const safeParse = (input: unknown): SafeParseResult<T> => {
     const issues: Issues = [];
     const data = run(input, issues);
-    return data === invalid || issues.length > 0
-      ? { success: false, error: new ValidationError(validationIssues(issues)) }
-      : { success: true, data };
+    if (data !== invalid && issues.length === 0) return { success: true, data };
+    rejected(issues, 0);
+    return {
+      success: false,
+      error: new ValidationError(validationIssues(issues)),
+    };
   };
   return Object.freeze({
     safeParse,
@@ -122,7 +133,37 @@ export function objectValue(input: unknown, issues: Issues): object | Invalid {
 }
 
 // Fixed fields use TypeScript's structural semantics: inherited and accessor
-// fields count. Read once, then test presence: an accessor may change membership.
+// fields count, except from Object.prototype. Contract fields cannot use its
+// names, so a key held there is prototype pollution rather than input.
+// A value already read proves presence unless Object.prototype could have
+// supplied it. One read of that key is the measured cheapest test (an `in` or
+// own-key test costs more per field); the chain walk is the rare path.
+// This covers polluted data. An accessor installed there is application code,
+// which could equally replace these builtins; gating reads costs ~14% per field.
+function present(source: object, key: string, value: unknown): boolean {
+  if (value !== undefined)
+    return (
+      Reflect.get(Object.prototype, key) === undefined || holds(source, key)
+    );
+  return key in source && holds(source, key);
+}
+
+// Whether an input object before Object.prototype owns the key. A key reported
+// only by a proxy trap stays present unless Object.prototype owns it. Bound
+// the walk: a proxy can report an unending prototype chain.
+function holds(source: object, key: string): boolean {
+  let holder: object | null = source;
+  for (let depth = 0; holder !== null && depth < 1024; depth++) {
+    if (holder === Object.prototype) break;
+    if (Object.hasOwn(holder, key)) return true;
+    holder = Reflect.getPrototypeOf(holder);
+  }
+  return !Object.hasOwn(Object.prototype, key);
+}
+
+// Read once. A value that was read proves presence, so validation and output
+// use that one value even if its accessor then removes the key; an undefined
+// read still tests membership.
 export function field<T>(
   source: object,
   key: string,
@@ -132,12 +173,12 @@ export function field<T>(
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
   const result = parse(value, issues);
-  const present = key in source;
   if (result === invalid) {
+    rejected(issues, start);
     within(issues, start, key);
     return invalid;
   }
-  return present
+  return present(source, key, value)
     ? result
     : report(issues, 'expected a required property', true, [key]);
 }
@@ -150,12 +191,19 @@ export function optionalField<T>(
 ): T | undefined | Absent | Invalid {
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
-  const result = value === undefined ? undefined : parse(value, issues);
-  if (!(key in source)) {
+  // The common absent case costs one membership test, as an explicit
+  // undefined still needs an input holder.
+  if (value === undefined)
+    return key in source && holds(source, key) ? undefined : absent;
+  const result = parse(value, issues);
+  if (!present(source, key, value)) {
     issues.length = start;
     return absent;
   }
-  if (result === invalid) within(issues, start, key);
+  if (result === invalid) {
+    rejected(issues, start);
+    within(issues, start, key);
+  }
   return result;
 }
 
@@ -176,9 +224,11 @@ export function unknownKeys(
   }
   const extra: string[] = [];
   // Strict request objects reject enumerable inherited keys too, as for...in
-  // reports them. Own __proto__ data is an unknown key like any other.
+  // reports them, except keys held only by Object.prototype: it is never input.
+  // Own __proto__ data is an unknown key like any other.
   // oxlint-disable-next-line guard-for-in -- inherited enumerable keys are input.
-  for (const key in source) if (!keys.has(key)) extra.push(key);
+  for (const key in source)
+    if (!keys.has(key) && holds(source, key)) extra.push(key);
   if (extra.length === 0) return false;
   report(
     issues,
@@ -451,8 +501,10 @@ export function list<T>(
     const before = issues.length;
     const element: unknown = input[index];
     const value = items(element, issues);
-    if (value === invalid) within(issues, before, index);
-    else output.push(value);
+    if (value === invalid) {
+      rejected(issues, before);
+      within(issues, before, index);
+    } else output.push(value);
   }
   return issues.length === start ? output : invalid;
 }
@@ -477,8 +529,10 @@ export function map<T>(
   for (const [name, value] of Object.entries(input)) {
     const before = issues.length;
     const parsed = values(value, issues);
-    if (parsed === invalid) within(issues, before, name);
-    else entries.push([name, parsed]);
+    if (parsed === invalid) {
+      rejected(issues, before);
+      within(issues, before, name);
+    } else entries.push([name, parsed]);
   }
   return issues.length === start ? Object.fromEntries(entries) : invalid;
 }
@@ -502,15 +556,18 @@ export function union<T>(
   const second: Issues = [];
   const b = right(input, second);
   if (b !== invalid && second.length === 0) return b;
+  const start = issues.length;
   const leftFatal = fatalSince(first, 0);
   if (leftFatal !== fatalSince(second, 0)) {
-    issues.push(...(leftFatal ? second : first));
-    return invalid;
+    // Copy one at a time. A spread call has an engine argument limit, so many
+    // constraint failures would otherwise throw RangeError instead of failing.
+    for (const issue of leftFatal ? second : first) issues.push(issue);
+    return rejected(issues, start);
   }
   for (const [index, branch] of [first, second].entries())
     for (const { path, message } of branch)
       report(issues, `union branch ${index + 1}: ${message}`, true, path);
-  return invalid;
+  return rejected(issues, start);
 }
 
 export function taggedUnion<T>(
@@ -525,7 +582,9 @@ export function taggedUnion<T>(
     return report(issues, 'expected an object', true);
   const tag: unknown = Reflect.get(input, propertyName);
   const parse =
-    typeof tag === 'string' && Object.hasOwn(cases, tag)
+    typeof tag === 'string' &&
+    Object.hasOwn(cases, tag) &&
+    present(input, propertyName, tag)
       ? cases[tag]
       : undefined;
   if (parse === undefined)
@@ -751,6 +810,20 @@ export type PreparedRequest<
         }>
       : Readonly<{ bodyKind: 'none' }>);
 
+type RequestBody<O> =
+  NonNullable<O> extends { body: infer Value } ? Value : never;
+
+export interface Operation<
+  O extends RequestParts | undefined,
+  R extends Responses,
+  B extends BodyKind,
+> {
+  readonly build: (
+    ...args: undefined extends O ? [options?: O] : [options: O]
+  ) => PreparedRequest<R, B, RequestBody<O>>;
+  readonly parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
+}
+
 export class RequestValidationError extends Error {
   readonly operationId: string;
   readonly issues: readonly ValidationIssue[];
@@ -907,7 +980,8 @@ function declaredHeaders(
       if (raw === undefined && !header.required) continue;
       const problems: Issues = [];
       const parsed = header.schema(raw, problems);
-      if (parsed === invalid || problems.length > 0)
+      if (parsed === invalid || problems.length > 0) {
+        rejected(problems, 0);
         for (const detail of validationIssues(problems)) {
           issues.push({
             ...detail,
@@ -915,7 +989,7 @@ function declaredHeaders(
             path: [name, ...detail.path],
           });
         }
-      else if (!invalidFields.has(name) && validHeaderValue(parsed))
+      } else if (!invalidFields.has(name) && validHeaderValue(parsed))
         validated[name] = parsed;
       else
         issues.push({
@@ -985,9 +1059,11 @@ function responseParser<R extends Responses>(
         const problems: Issues = [];
         const parsed = spec.schema(decoded, problems);
         if (parsed !== invalid && problems.length === 0) data = parsed;
-        else
+        else {
+          rejected(problems, 0);
           for (const detail of validationIssues(problems))
             issues.push({ part: 'body', ...detail });
+        }
       }
     }
     if (issues.length > 0) {
@@ -1134,13 +1210,15 @@ function headerValidator(
       if (headers[name] === undefined && !spec.required) continue;
       const problems: Issues = [];
       const parsed = spec.schema(headers[name], problems);
-      if (parsed === invalid || problems.length > 0)
+      if (parsed === invalid || problems.length > 0) {
+        rejected(problems, 0);
         for (const detail of validationIssues(problems)) {
           issues.push({
             ...detail,
             path: ['headers', name, ...detail.path],
           });
         }
+      }
     }
     if (issues.length) throw new RequestValidationError(operationId, issues);
     return frozenHeaders(headers);
@@ -1154,8 +1232,10 @@ export function validateOptions<O>(
 ): O {
   const issues: Issues = [];
   const parsed = schema(input, issues);
-  if (parsed === invalid || issues.length > 0)
+  if (parsed === invalid || issues.length > 0) {
+    rejected(issues, 0);
     throw new RequestValidationError(operationId, validationIssues(issues));
+  }
   return parsed;
 }
 
@@ -1163,7 +1243,7 @@ export function defineOperation<
   const O extends RequestParts | undefined,
   const R extends Responses,
   const B extends BodyKind,
->(definition: Definition<O, R, B>) {
+>(definition: Definition<O, R, B>): Operation<O, R, B> {
   const policy = Object.freeze({
     ...definition.policy,
     auth: Object.freeze({ ...definition.policy.auth }),
@@ -1179,10 +1259,9 @@ export function defineOperation<
     definition.operationId,
     definition.headers,
   );
-  type Body = NonNullable<O> extends { body: infer Value } ? Value : never;
   function build(
     ...args: undefined extends O ? [options?: O] : [options: O]
-  ): PreparedRequest<R, B, Body> {
+  ): PreparedRequest<R, B, RequestBody<O>> {
     if (args.length > 1)
       throw new RequestValidationError(definition.operationId, [
         { path: [], message: 'expected at most one options argument' },
@@ -1214,7 +1293,11 @@ export function defineOperation<
     };
     // The generated options schema and bodyKind are emitted together from one
     // descriptor. Their relationship cannot be inferred through this generic.
-    return Object.freeze(request) as unknown as PreparedRequest<R, B, Body>;
+    return Object.freeze(request) as unknown as PreparedRequest<
+      R,
+      B,
+      RequestBody<O>
+    >;
   }
   return Object.freeze({ build, parseResponse });
 }

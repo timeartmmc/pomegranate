@@ -115,8 +115,9 @@ entering native formatting. Excess complexity receives a contract diagnostic;
 annotation values such as defaults are not generated expressions.
 
 Generated validation uses checked named parsers returning a value or an invalid
-sentinel while recording path/message issues in one sink. The public validator
-facade fails on either an invalid return or recorded issues. Named structural
+sentinel while recording path/message issues in one sink. Every consumer, from
+the public facade to protocol bodies, headers and containers, fails on either an
+invalid return or recorded issues, and names a missing issue. Named structural
 contract types remain independent of validation-library inference. Aggregate
 returns, including wide objects and literal enums, must typecheck without
 application-shape assertions or unchecked parser overloads.
@@ -148,7 +149,10 @@ compiler.
 Requests reject unknown fields in fixed objects and invalid values when a builder
 is called. Responses strip additive fields from fixed objects while rejecting
 missing required values, changed types, and unsupported enum values. Declared
-dynamic maps validate and preserve every entry. Prepared JSON bodies and native
+dynamic maps validate and preserve every entry; an object declaring neither
+properties nor additionalProperties is such a map, because JSON Schema admits its
+members. Data on Object.prototype never supplies a fixed field; accessors there
+are application code. Prepared JSON bodies and native
 file references must not retain mutable caller objects. Browser file objects may
 retain identity; their bytes are immutable. Multipart builders retain all
 declared fields. Applications own file access, serialization, progress, and
@@ -203,6 +207,12 @@ Resolve paths from the configuration file, without executable configuration or
 host formatter settings. Render and validate the complete output set before
 writing. Identical supported inputs and compiler versions must produce identical
 bytes.
+Configuration and contract inputs are regular files limited to 32 MiB each;
+bound actual reads as well as the initial file size. Reject non-regular files
+without waiting for a FIFO writer. Reject generated source above 32 MiB before
+entering the formatter. Format modules sequentially to avoid retaining concurrent
+formatter working sets. These limits bound supported inputs and output, not a
+fixed process memory ceiling. YAML's expanded-node and nesting limits also apply.
 
 Resolve existing configured output parents to their real location once, retaining
 any missing directory suffix. Use that canonical output root throughout checking,
