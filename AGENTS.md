@@ -45,6 +45,10 @@ Read [README.md](README.md) for an introduction,
   verification.
 - Test observable guarantees and meaningful failure paths. Exercise the package
   as installed, including a standalone synthetic example, at coherent milestones.
+- Evaluate review findings by a realistic trigger and concrete user impact.
+  Do not pursue impossible or contrived scenarios that offer no meaningful
+  correctness, reliability, usability, or adoption benefit. Keep the maintenance
+  cost of added machinery and tests proportional to that benefit.
 - Keep non-obvious contract and boundary rationale beside the owning code. Use
   types and tests for routine facts; keep necessary lint exceptions local and
   explain the behavior they preserve.

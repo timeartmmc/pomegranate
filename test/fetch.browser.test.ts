@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -12,19 +12,15 @@ import { chromium } from 'playwright';
 import { compile } from '../dist/index.js';
 import { json, present } from './assertions.ts';
 import { fixture } from './helpers.ts';
+import { generatedWorkspace } from './generated-workspace.ts';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 
 void test('generated browser code preserves declared request and response fields through real Fetch', async (t) => {
-  const cache = join(repo, 'node_modules/.cache');
-  await mkdir(cache, { recursive: true });
-  const root = await mkdtemp(join(cache, 'pom-fetch-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  for (const [name, source] of Object.entries(
+  const root = await generatedWorkspace(
     await compile(fixture(), { clients: ['consumer'] }),
-  ))
-    await writeFile(join(root, name), source);
-  await writeFile(join(root, 'package.json'), '{"type":"module"}\n');
+  );
+  t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(
     join(root, 'tsconfig.json'),
     JSON.stringify({

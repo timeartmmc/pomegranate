@@ -88,8 +88,6 @@ export async function runExecutionBrowser() {
   };
   const runtime = { namespace: 'browser-api-v1', execute };
   const client = createClient(runtime);
-  const queries = createQueries(runtime);
-  const infinite = createInfiniteQueries(runtime);
   const uploads = createUploads(runtime);
   const context = { revision: 'browser-one', locale: 'en' };
   const command = (label: string) => ({
@@ -144,64 +142,25 @@ export async function runExecutionBrowser() {
   });
   check(upload.data.count === 6, 'complete multipart upload');
 
-  const cache = new QueryClient({
-    defaultOptions: {
-      queries: {
-        gcTime: Infinity,
-        staleTime: Infinity,
-        structuralSharing: shareQueryData,
-      },
-    },
-  });
+  // Query happy paths are covered by the raw/scoped and envelope/body matrix
+  // below. This mount owns mutation failure, recovery and application effects.
+  const cache = new QueryClient();
   const element = document.createElement('div');
   document.body.append(element);
   const root = createRoot(element);
   let effects = 0;
-  function useHarness() {
-    return {
-      ordinary: useQuery(
-        queries.readItem.options({
-          context,
-          input: { path: { id: 'mounted' } },
-        }),
-      ),
-      cursor: useInfiniteQuery({
-        ...infinite.listItems.options({
-          context,
-          input: { path: { collection: 'items' } },
-        }),
-        select: infinite.listItems.items,
-      }),
-      offset: useInfiniteQuery({
-        ...infinite.listRecords.options({
-          context,
-          input: { path: { category: 'records' } },
-        }),
-        select: infinite.listRecords.items,
-      }),
-      mutation: useMutation({
-        mutationFn: (label: string) => client.createWidget.call(command(label)),
-        onSuccess: () => {
-          effects++;
-        },
-      }),
-    };
+  function useCommandMutation() {
+    return useMutation({
+      mutationFn: (label: string) => client.createWidget.call(command(label)),
+      onSuccess: () => {
+        effects++;
+      },
+    });
   }
-  let latest: ReturnType<typeof useHarness> | undefined;
+  let latest: ReturnType<typeof useCommandMutation> | undefined;
   function Probe() {
-    latest = useHarness();
-    // Track the values this probe observes before a fetch can finish. TanStack
-    // only notifies React about properties read from its tracked result object.
-    return createElement(
-      'output',
-      null,
-      JSON.stringify({
-        ordinary: latest.ordinary.status,
-        cursor: latest.cursor.data,
-        offset: latest.offset.data,
-        mutation: latest.mutation.status,
-      }),
-    );
+    latest = useCommandMutation();
+    return createElement('output', null, latest.status);
   }
   function state() {
     check(latest, 'mounted state');
@@ -212,7 +171,7 @@ export async function runExecutionBrowser() {
     while (!condition()) {
       check(
         performance.now() < deadline,
-        `mounted query timeout: ${description}; ${JSON.stringify({ ordinary: state().ordinary.status, cursor: state().cursor.status, offset: state().offset.status, cursorData: state().cursor.data, offsetData: state().offset.data, next: [state().cursor.hasNextPage, state().offset.hasNextPage], errors: [state().ordinary.error, state().cursor.error, state().offset.error] })}`,
+        `mounted mutation timeout: ${description}; ${state().status}`,
       );
       await act(async () => {
         await new Promise<void>((resolve) => setTimeout(resolve, 5));
@@ -229,45 +188,20 @@ export async function runExecutionBrowser() {
         ),
       );
     });
-    await until(
-      () =>
-        state().ordinary.isSuccess &&
-        state().cursor.isSuccess &&
-        state().offset.isSuccess,
-      'initial responses',
-    );
-    check(
-      state().ordinary.data?.data.label === 'Browser',
-      'mounted ordinary result',
-    );
-    await act(async () => {
-      await state().cursor.fetchNextPage();
-      await state().offset.fetchNextPage();
-    });
-    await until(
-      () =>
-        state().cursor.data?.length === 2 && state().offset.data?.length === 2,
-      'next pages',
-    );
-    const alternate = state().cursor.data?.[1];
-    check(
-      alternate && 'code' in alternate && alternate.code === 2,
-      'exact alternate item type',
-    );
     await act(async () => {
       try {
-        await state().mutation.mutateAsync('Denied');
+        await state().mutateAsync('Denied');
         throw new Error('denial must reject');
       } catch (error) {
         check(client.createWidget.isError(error), 'typed mutation failure');
       }
     });
-    await until(() => state().mutation.isError, 'failed mutation');
+    await until(() => state().isError, 'failed mutation');
     equal(effects, 0, 'denial must not trigger success effects');
     await act(async () => {
-      await state().mutation.mutateAsync('Created');
+      await state().mutateAsync('Created');
     });
-    await until(() => state().mutation.isSuccess, 'successful mutation');
+    await until(() => state().isSuccess, 'successful mutation');
     equal(effects, 1, 'explicit application success callback');
   } finally {
     await act(async () => root.unmount());

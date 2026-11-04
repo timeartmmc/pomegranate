@@ -300,7 +300,7 @@ void test('large constrained literal enums retain checked membership in both dir
   }
 });
 
-void test('literal parsing skips proven scalar rules and emits one failure message per direction', (t) => {
+void test('literal parsing retains runtime patterns and emits one membership failure message per direction', (t) => {
   let checks = 0;
   // oxlint-disable-next-line typescript/unbound-method -- invoke the saved intrinsic with each original RegExp receiver below.
   const original = RegExp.prototype.test;
@@ -335,11 +335,38 @@ void test('literal parsing skips proven scalar rules and emits one failure messa
   }
   assert.equal(
     checks,
-    0,
-    'membership must not repeat the proven pattern check',
+    6,
+    'matching literals retain the consuming engine pattern check',
   );
   // Both directions need the message, but neither success path needs a copy.
   assert.ok((emittedSchemas.match(/expected one of /g) ?? []).length <= 2);
+});
+
+void test('literal patterns follow consuming engine semantics after compiler validation', (t) => {
+  // Unicode property membership can differ between compiler and consumer
+  // versions. Simulate that change after compilation without requiring a
+  // second installed runtime in the ordinary test suite.
+  // oxlint-disable-next-line typescript/unbound-method -- invoke the saved intrinsic with each original RegExp receiver below.
+  const original = RegExp.prototype.test;
+  t.mock.method(
+    RegExp.prototype,
+    'test',
+    function (this: RegExp, input: string) {
+      return this.source === '^v[0-9]+$' && input === 'v1024'
+        ? false
+        : original.call(this, input);
+    },
+  );
+  for (const registry of [schemas.requestSchemas, schemas.responseSchemas]) {
+    const rejected = registry.LargeLiteral.safeParse('v1024');
+    assert.equal(rejected.success, false);
+    if (!rejected.success)
+      assert.deepEqual(rejected.error.issues, [
+        { path: [], message: 'string does not match pattern' },
+      ]);
+    assert.equal(registry.LargeLiteral.parse('v10'), 'v10');
+    assert.equal(registry.LargeLiteralAlias.safeParse('v1024').success, false);
+  }
 });
 
 void test('nullable constraints report their useful branch without expected-null noise', () => {
@@ -433,6 +460,23 @@ void test('a field read once proves presence even if its accessor removes the ke
     });
 });
 
+void test('tagged unions reject a discriminator that changes during branch validation', () => {
+  for (const registry of [schemas.requestSchemas, schemas.responseSchemas]) {
+    let reads = 0;
+    const result = registry.Tagged.safeParse({
+      get kind() {
+        return ++reads === 1 ? 'text' : 'count';
+      },
+      value: 'ok',
+    });
+    assert.equal(result.success, false);
+    if (!result.success)
+      assert.deepEqual(result.error.issues, [
+        { path: ['kind'], message: 'expected "text"' },
+      ]);
+  }
+});
+
 void test('Object.prototype never supplies fields, tags or unknown request keys', () => {
   const text = { kind: 'text', value: 'ok' };
   // Simulate prototype pollution by another library; removed in finally.
@@ -480,8 +524,10 @@ void test('Object.prototype never supplies fields, tags or unknown request keys'
       return 'text' as const;
     }
   }
-  for (const registry of [schemas.requestSchemas, schemas.responseSchemas])
+  for (const registry of [schemas.requestSchemas, schemas.responseSchemas]) {
     assert.deepEqual(registry.TaggedText.parse(new Text()), text);
+    assert.deepEqual(registry.Tagged.parse(new Text()), text);
+  }
   assert.equal(
     schemas.requestSchemas.TaggedText.safeParse(
       Object.create({ ...text, extra: true }),

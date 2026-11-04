@@ -32,6 +32,13 @@ For focused checks after changing compiler source, rebuild first. Before running
 `test/.generated` signatures match the compiler. Runtime tests generate fresh
 temporary outputs.
 
+For a focused local browser check, run `bun run test:browser` after installing
+Chromium with the command above. It rebuilds the compiler and runs
+`test/*.browser.test.ts`: real Fetch, multipart files, cancellation, and mounted
+query-hook integration. These checks use local fixtures and servers. Keep bulk
+schema and cache cases in Node tests; add browser cases for behavior that depends
+on browser APIs or mounted hooks. The complete `verify` command includes both.
+
 ## Make a change
 
 Read [Architecture](ARCHITECTURE.md) before changing contract interpretation or
@@ -108,6 +115,11 @@ binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Us
 `node scripts/benchmark-query-sharing.ts` for sharing comparisons. Timings are
 local evidence, never machine-dependent CI thresholds. Include the source
 revision, toolchain versions and exact command scope when reporting results.
+
+Broader synthetic investigations should measure validation, complete local
+call/cache pipelines, sharing, browser behavior, isolated allocation and peak
+memory, generation, typechecking, retained bundles, and editor responsiveness
+separately. Keep detailed results and reproduction commands with the investigation.
 
 Application adoption needs its own parity/integration checks and declared time
 and memory budgets. Measure generated/retained bundle size, typecheck, parsing,

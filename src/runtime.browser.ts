@@ -24,11 +24,51 @@
 import { report } from './runtime.ts';
 import type { Invalid, Issues } from './runtime.ts';
 
-// File may be absent outside browsers. Report an ordinary validation failure
-// there, while keeping this browser type isolated. Browser files keep their
-// identity: their bytes are immutable.
+function genuineFile(input: unknown): input is File {
+  const FileClass = globalThis.File;
+  const BlobClass = globalThis.Blob;
+  if (
+    typeof FileClass !== 'function' ||
+    typeof BlobClass !== 'function' ||
+    input === null ||
+    typeof input !== 'object'
+  )
+    return false;
+  try {
+    // Bind to the current environment: DOM test setups can replace constructors.
+    if (!(input instanceof FileClass)) return false;
+    let owner: object | null = FileClass.prototype;
+    let metadata: PropertyDescriptor | undefined;
+    // Follow inherited platform getters, excluding root Object metadata.
+    // File and Blob can share the same prototype (for example, in Bun).
+    while (owner !== null) {
+      const parent = Reflect.getPrototypeOf(owner);
+      if (parent === null) break;
+      metadata = Object.getOwnPropertyDescriptor(owner, 'name');
+      if (metadata) break;
+      owner = parent;
+    }
+    // Field-based implementations must own a string data name. Never execute
+    // their input accessor or accept inherited data as File metadata.
+    const own = metadata?.get
+      ? undefined
+      : Object.getOwnPropertyDescriptor(input, 'name');
+    const name: unknown = metadata?.get
+      ? Reflect.get(owner, 'name', input)
+      : own && Object.hasOwn(own, 'value')
+        ? own.value
+        : undefined;
+    if (typeof name !== 'string') return false;
+    const size: unknown = Reflect.get(BlobClass.prototype, 'size', input);
+    return typeof size === 'number' && Number.isInteger(size) && size >= 0;
+  } catch {
+    return false;
+  }
+}
+
+// Genuine browser files keep identity: their native bytes are immutable.
 export function browserFile(input: unknown, issues: Issues): File | Invalid {
-  return typeof File !== 'undefined' && input instanceof File
+  return genuineFile(input)
     ? input
     : report(issues, 'expected a browser File', true);
 }

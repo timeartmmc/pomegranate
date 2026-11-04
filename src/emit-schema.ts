@@ -442,17 +442,27 @@ export function schemaRenderer(
     }
     // Literal outputs come from TypeScript narrowing of the input itself, so
     // the declared literal type is checked and -0 keeps its sign.
-    // Normalization proves every inline literal satisfies its own scalar rules.
-    // Membership therefore completes validation; reference siblings still apply
-    // their separate constraints in refineText/refineNumber.
+    // Normalization proves each inline literal's engine-independent scalar rules.
+    // Keep pattern checks: the consuming engine can use a different Unicode
+    // version and classify a property escape differently from the compiler.
+    // Other rules are stable; reference siblings still apply their refinements.
     const expected = (value.literals ?? []).map((item) => JSON.stringify(item));
     const message = JSON.stringify(
       `expected ${expected.length === 1 ? expected[0] : `one of ${expected.join(', ')}`}`,
     );
+    const patternCheck =
+      value.kind === 'string' && value.pattern !== undefined
+        ? `if (${use('text').source}(input, issues, ${constant(
+            `rules_${name}`,
+            object([['pattern', literal(value.pattern)]]).source,
+            'StringRules',
+          )}) === ${use('invalid').source}) return invalid;`
+        : undefined;
     const body = [
       // Switch narrowing keeps large enums checked without a long flow chain.
       'switch (input) {',
       ...(value.literals ?? []).map((item) => `case ${JSON.stringify(item)}:`),
+      ...(patternCheck ? [patternCheck] : []),
       'return input;',
       `default: return ${use('report').source}(issues, ${message}, true);`,
       '}',

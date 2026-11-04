@@ -223,13 +223,29 @@ integrality without adding an implicit safe-integer range; declare required
 bounds in the schema. `multipleOf` uses their decimal spelling, including
 scientific notation, without an epsilon tolerance.
 
+Patterns use ECMAScript 2024 syntax in Unicode (`u`) mode with Unicode 16.0
+property names, matching the supported Node minimums. Newer syntax, including
+inline flag modifiers and duplicate named capture groups, and newer Unicode
+property names fail compilation even when the compiler's host accepts them.
+Patterns support at most 128 nested capturing groups, noncapturing groups, and
+lookaround assertions, counted together. Escaped parentheses, class characters,
+and sequential groups do not add nesting. Excess nesting receives a dedicated
+diagnostic before the parser can exhaust its ordinary stack budget.
+Generated code uses its runtime's regular expression engine; Unicode character
+classification can change between runtime Unicode versions. Browser and native
+engines must support the pattern features used by their contracts.
+
 Inline scalar `enum` members and `const` values must satisfy applicable bounds,
-patterns, formats, and `multipleOf` rules. Null-only literals remove the non-null
-branch after sibling syntax checks. Other numeric branches reject empty
-finite-number and integer intervals. Reference constraints may narrow an existing
-enum; empty literal intersections and contradictory bounds also fail across
-reference chains. These checks diagnose supported contradictions without
-attempting general schema satisfiability analysis.
+formats, `multipleOf`, and patterns without Unicode property escapes during
+compilation. Matching against `\p{…}` and `\P{…}` patterns is deferred to generated
+runtime validation because Unicode classification varies by engine. These
+patterns also do not remove candidates from compiler reference-intersection
+proofs. Null-only literals remove the non-null branch after sibling syntax
+checks. Other numeric branches reject empty finite-number and integer intervals.
+Reference constraints may narrow an existing enum; empty literal intersections
+and contradictory bounds also fail across reference chains. These checks
+diagnose supported contradictions without attempting general schema
+satisfiability analysis.
 
 `date-time` requires a calendar date, seconds, and a `Z` or `±HH:MM` timezone.
 Fractional seconds and lowercase `t`/`z` are accepted without changing the input
@@ -334,11 +350,20 @@ A required `multipart/form-data` body is a fixed object of strings, files, and
 file arrays. Files use `type: "string"` with `format: "binary"` or
 `contentMediaType: "application/octet-stream"`. Browser inputs require `File`;
 native inputs use `{ uri: string, name?: string, mediaType?: string }`, with
-nonempty strings. Every client requires its platform's `URLSearchParams` global
-and TypeScript declaration. Browser upload modules also require `File`. A native
-program can omit DOM libraries when its platform types supply `URLSearchParams`
-(the verification suite uses Node types); compile only its client entry and
-dependencies, excluding browser modules from a mixed-target output.
+nonempty strings. Browser files must be instances of the environment's current
+`File` constructor, with valid File metadata and Blob backing. Their identity is
+preserved. Native browser, jsdom, and Happy DOM Files are supported when the same
+environment's `File` and `Blob` constructors are installed together; checks follow
+the current constructors when the environment changes. Direct foreign-realm
+Files are unsupported. Browser transfers such as `postMessage` remain supported
+when they produce a receiving-realm File. Proxy support follows the platform's
+File implementation.
+
+Every client requires its platform's `URLSearchParams` global and TypeScript
+declaration. Browser upload modules also require `File` and `Blob`. Native
+programs can omit DOM libraries when their platform types supply `URLSearchParams`
+(the verification suite uses Node types). Compile only the native client entry
+and its dependencies, excluding browser modules from a mixed-target output.
 
 Prepared uploads have `bodyKind: "multipart"`, the complete validated `body`, and
 a `multipart` field inventory (`name`, `kind`, `multiple`, `required`). Applications
@@ -363,10 +388,11 @@ An object schema without `properties` entries or `additionalProperties`, such as
 `{ "type": "object" }`, accepts and preserves any JSON members, as in JSON Schema.
 Declare `additionalProperties: false` for an object that must be empty.
 Fixed objects validate structural fields, including fields supplied by class
-instances or prototypes, and return fresh plain objects. Data on
-`Object.prototype` never supplies a field or an unknown request key, so
-prototype pollution through data, such as an unsafe merge, cannot fill a missing
-value. Accessors installed there run application code and are not covered.
+instances or prototypes, and return fresh plain objects. Discriminator values in
+tagged unions must remain stable during parsing. Data on `Object.prototype`
+never supplies a field or an unknown request key, so prototype pollution through
+data, such as an unsafe merge, cannot fill a missing value. Accessors installed
+there run application code and are not covered.
 Dynamic maps require plain records.
 Schema registries and standalone `schema` exports expose `parse(unknown)` and
 `safeParse(unknown)`. `parse` returns the named output type or throws

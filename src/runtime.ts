@@ -584,20 +584,21 @@ export function taggedUnion<T>(
 ): T | Invalid {
   // The compiler proves that each branch requires its distinct literal tag.
   // Dispatch before parsing: trying every branch repeats nested union work.
+  // The selected branch validates its tag again; callers must keep it stable.
   if (input === null || typeof input !== 'object' || Array.isArray(input))
     return report(issues, 'expected an object', true);
   const tag: unknown = Reflect.get(input, propertyName);
-  const parse =
+  if (
     typeof tag === 'string' &&
     Object.hasOwn(cases, tag) &&
     present(input, propertyName, tag)
-      ? cases[tag]
-      : undefined;
-  if (parse === undefined)
-    return report(issues, 'expected a declared discriminator tag', true, [
-      propertyName,
-    ]);
-  return parse(input, issues);
+  ) {
+    const parse = cases[tag];
+    if (parse !== undefined) return parse(input, issues);
+  }
+  return report(issues, 'expected a declared discriminator tag', true, [
+    propertyName,
+  ]);
 }
 
 export type JsonValue =

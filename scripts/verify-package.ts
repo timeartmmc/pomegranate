@@ -810,7 +810,7 @@ try {
     `
     import assert from 'node:assert/strict';
     import * as pom from 'pomegranate-compiler';
-    import {readFile} from 'node:fs/promises';
+    import {mkdir, readFile, writeFile} from 'node:fs/promises';
     assert.deepEqual(Object.keys(pom).sort(), ['ContractError', 'compile', 'runProject']);
     const document=JSON.parse(await readFile('./openapi.json', 'utf8'));
     const baseline=JSON.parse(await readFile('./openapi-baseline.json', 'utf8'));
@@ -845,6 +845,21 @@ try {
       invalid.components.schemas.Impossible=schema;
       await assert.rejects(pom.compile(invalid,selection),/components.schemas.Impossible/);
     }
+    for (const pattern of ['(?i:abc)', '(?<part>a)|(?<part>b)', '\\\\p{Script=Beria_Erfe}']) {
+      const invalid=structuredClone(document);
+      invalid.components.schemas.UnsupportedPattern={type:'string',pattern};
+      await assert.rejects(pom.compile(invalid,selection), error => {
+        assert.ok(error instanceof pom.ContractError);
+        assert.equal(error.location,'components.schemas.UnsupportedPattern.pattern');
+        assert.match(error.message,/ECMAScript 2024.*Unicode 16\\.0/);
+        return true;
+      });
+    }
+    const portable=structuredClone(document);
+    portable.components.schemas.PortablePattern={type:'string',pattern:'^(?<letter>\\\\p{Script=Todhri})\\\\k<letter>$'};
+    const patterns=await pom.compile(portable,{clients:[],standalone:{pattern:{schema:'#/components/schemas/PortablePattern',usage:'request'}}});
+    await mkdir('./pattern-generated');
+    for (const [name,source] of Object.entries(patterns)) await writeFile('./pattern-generated/'+name,source);
     const files = await pom.compile(document,{clients:['staff']});
     for (const version of ['3.1.0','3.1.1','3.1.2']) {
       document.openapi=version;
@@ -960,6 +975,9 @@ try {
   });
   await rm(join(consumer, 'node_modules/oxfmt'), { recursive: true });
   await rm(join(consumer, 'node_modules/yaml'), { recursive: true });
+  await rm(join(consumer, 'node_modules/@eslint-community/regexpp'), {
+    recursive: true,
+  });
   await run(process.execPath, [
     '--input-type=module',
     '-e',
@@ -968,6 +986,7 @@ try {
     await assert.rejects(import('pomegranate-compiler'), {code:'ERR_MODULE_NOT_FOUND'});
     await assert.rejects(import('oxfmt'), {code:'ERR_MODULE_NOT_FOUND'});
     await assert.rejects(import('yaml'), {code:'ERR_MODULE_NOT_FOUND'});
+    await assert.rejects(import('@eslint-community/regexpp'), {code:'ERR_MODULE_NOT_FOUND'});
   `,
   ]);
   await verifyQueryDeclarations(
@@ -989,6 +1008,9 @@ try {
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
+    import {schema as portablePattern} from './pattern-generated/standalone.pattern.ts';
+    assert.equal(portablePattern.parse('\\u{105C0}\\u{105C0}'),'\\u{105C0}\\u{105C0}');
+    assert.equal(portablePattern.safeParse('aa').success,false);
     import {operations as dOperations} from './d-generated/client._d.ts';
     import {schema as dSchema} from './d-generated/standalone._d.ts';
     const dValue = {value: 'kept', nested: {count: 1}};

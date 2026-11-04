@@ -89,9 +89,13 @@ export function literalViolation(
   limits: Constraints,
   format?: 'date' | 'date-time' | 'uuid',
 ): (item: Scalar) => string | undefined {
-  // Use the same predicates and format profiles as emitted validators.
+  // Bounds, formats and stable patterns use the emitted predicates. Property
+  // escapes depend on the engine's Unicode data: defer their matching instead
+  // of rejecting literals or pruning reference candidates on this host.
   const pattern =
-    limits.pattern === undefined ? undefined : patternTest(limits.pattern);
+    limits.pattern === undefined || hasUnicodeProperty(limits.pattern)
+      ? undefined
+      : patternTest(limits.pattern);
   const multiple =
     limits.multipleOf === undefined ? undefined : multipleOf(limits.multipleOf);
   return (item) => {
@@ -117,4 +121,16 @@ export function literalViolation(
       return 'literal violates declared multipleOf';
     return undefined;
   };
+}
+
+function hasUnicodeProperty(pattern: string): boolean {
+  // Schemas already validated u-mode syntax. A property escape has the same
+  // spelling inside and outside classes; skip escaped backslashes as one token.
+  for (let index = 0; index < pattern.length; index++) {
+    if (pattern[index] !== '\\') continue;
+    const escaped = pattern[++index];
+    if ((escaped === 'p' || escaped === 'P') && pattern[index + 1] === '{')
+      return true;
+  }
+  return false;
 }

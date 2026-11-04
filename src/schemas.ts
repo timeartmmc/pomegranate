@@ -1,4 +1,6 @@
+import { RegExpSyntaxError, RegExpValidator } from '@eslint-community/regexpp';
 import {
+  ContractError,
   contractField,
   fail,
   keys,
@@ -36,6 +38,7 @@ const constraintKeys = [
 
 const maximumSchemaNesting = 128;
 const maximumInlineSchemaNesting = 32;
+const maximumPatternNesting = 128;
 
 function assertInlineSchemaNesting(nesting: number, location: string): void {
   if (nesting > maximumInlineSchemaNesting)
@@ -43,6 +46,42 @@ function assertInlineSchemaNesting(nesting: number, location: string): void {
       location,
       `inline schema nesting exceeds the supported limit of ${maximumInlineSchemaNesting} levels; use component references`,
     );
+}
+
+function patternFailure(error: unknown, pattern: string): string {
+  if (!(error instanceof SyntaxError)) return '';
+  const prefix = 'Invalid regular expression: ';
+  const sourceEnd = prefix.length + 1 + pattern.length;
+  let reason: string;
+  // The pinned validator and V8 echo the complete source before their reason.
+  // Use its known length: the pattern can itself contain the delimiter /u: .
+  if (
+    error.message.startsWith(`${prefix}/`) &&
+    error.message.startsWith('/u: ', sourceEnd)
+  )
+    reason = error.message.slice(sourceEnd + '/u: '.length);
+  else if (
+    error.message.startsWith(prefix) &&
+    !error.message.startsWith('/', prefix.length)
+  )
+    // JavaScriptCore reports a reason without echoing the source or an offset.
+    reason = error.message.slice(prefix.length);
+  else return '';
+  if (!reason) return '';
+  const maximum = 160;
+  const escaped = JSON.stringify(reason.slice(0, maximum))
+    .slice(1, -1)
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029');
+  const detail =
+    escaped.slice(0, maximum) +
+    (reason.length > maximum || escaped.length > maximum ? '…' : '');
+  // regexpp's index is a zero-based UTF-16 offset, including end-of-input.
+  const position =
+    error instanceof RegExpSyntaxError
+      ? `at UTF-16 offset ${error.index}: `
+      : '';
+  return `; ${position}${detail}`;
 }
 
 function constraints(
@@ -66,11 +105,44 @@ function constraints(
       fail(`${location}.pattern`, 'expected a string');
     pattern = value.pattern;
     try {
+      let nesting = 0;
+      const enter = () => {
+        if (++nesting > maximumPatternNesting)
+          fail(
+            `${location}.pattern`,
+            `pattern nesting exceeds the supported limit of ${maximumPatternNesting} groups and lookaround assertions`,
+          );
+      };
+      const leave = () => {
+        nesting--;
+      };
+      // Keep syntax independent of the compiler's Node version. The exact
+      // regexpp 4.12.1 pin supplies Unicode 16.0 property names, matching both
+      // supported Node floors; 4.12.2 adds names unavailable there. Validation
+      // builds no AST; keep this instance local so its last source is released.
+      // Enter hooks run before recursive descent; escaped parens and class
+      // characters never enter, and sequential groups release their depth.
+      new RegExpValidator({
+        ecmaVersion: 2024,
+        onGroupEnter: enter,
+        onGroupLeave: leave,
+        onCapturingGroupEnter: enter,
+        onCapturingGroupLeave: leave,
+        onLookaroundAssertionEnter: enter,
+        onLookaroundAssertionLeave: leave,
+      }).validatePattern(pattern, 0, pattern.length, { unicode: true });
       new RegExp(pattern, 'u');
-    } catch {
+    } catch (error) {
+      if (error instanceof ContractError) throw error;
+      if (error instanceof RangeError)
+        fail(
+          `${location}.pattern`,
+          'pattern validation exceeded available parser resources',
+        );
       fail(
         `${location}.pattern`,
-        'expected a valid Unicode ECMAScript regular expression',
+        'expected a valid Unicode ECMAScript 2024 regular expression with Unicode 16.0 property names' +
+          patternFailure(error, pattern),
       );
     }
   }
