@@ -267,7 +267,7 @@ void test('unselected operations, unused schemas and overridden document securit
     'default',
   );
   Object.assign(document.components.schemas.UnusedMessage.properties.message, {
-    format: 'email',
+    format: 'idn-email',
   });
   await assert.rejects(selected(document), /format.*unsupported format/);
   Reflect.deleteProperty(

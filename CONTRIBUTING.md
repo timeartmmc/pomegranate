@@ -116,11 +116,6 @@ binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Us
 local evidence, never machine-dependent CI thresholds. Include the source
 revision, toolchain versions and exact command scope when reporting results.
 
-Broader synthetic investigations should measure validation, complete local
-call/cache pipelines, sharing, browser behavior, isolated allocation and peak
-memory, generation, typechecking, retained bundles, and editor responsiveness
-separately. Keep detailed results and reproduction commands with the investigation.
-
 Application adoption needs its own parity/integration checks and declared time
 and memory budgets. Measure generated/retained bundle size, typecheck, parsing,
 copying/freezing, sharing, allocations, and handwritten integration LOC against
@@ -138,9 +133,7 @@ persistence adapters in the consumer lockfile.
 ## Public documentation and local notes
 
 Keep proposals, sprint plans, working notes, and private consumer reports in
-`.local/`, outside Git and the npm package. Existing root proposal files are also
-ignored. Do not link public docs to local notes. The coordination board lives
-under Git metadata and stays local; keep its entries short and human.
+`.local/`, outside Git and the npm package. Do not link public docs to local notes.
 
 Public docs describe current behavior or durable requirements. Keep dated
 measurement evidence separate from those rules. Use synthetic public fixtures;

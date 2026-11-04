@@ -101,13 +101,18 @@ void test('read-only presence rejection covers non-enumerable and inherited prop
     nested: { label: 'nested', password: 'private' },
   });
   let reads = 0;
-  for (const inherited of [false, true]) {
+  for (const [inherited, enumerable] of [
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ] as const) {
     const holder = Object.defineProperty({}, 'id', {
       get() {
         reads++;
         throw new Error('Do not read forbidden input');
       },
-      enumerable: false,
+      enumerable,
     });
     const input: object = inherited
       ? Object.assign(Object.create(holder) as object, valid())
@@ -181,6 +186,10 @@ void test('wide directional parsers retain sibling issues and report forbidden f
     assert.deepEqual(
       new Set(parsed.error.issues.map((issue) => issue.path.join('.'))),
       new Set(['id', 'field0', 'field139', '']),
+    );
+    assert.deepEqual(
+      parsed.error.issues.filter((issue) => issue.path.length === 0),
+      [{ path: [], message: 'unrecognized key: "extra"' }],
     );
   }
 });

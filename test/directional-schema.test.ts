@@ -184,7 +184,7 @@ void test('source validation still rejects malformed and missing declarations th
         Payload: {
           type: 'object',
           properties: {
-            hidden: { type: 'string', format: 'email', writeOnly: true },
+            hidden: { type: 'string', format: 'idn-email', writeOnly: true },
           },
         },
       }),
@@ -326,50 +326,63 @@ void test('active annotations outside object properties reject in the direction 
   }
 });
 
-void test('a discriminator tag excluded by projection rejects only its affected usage', () => {
-  const raw = source({
-    A: {
-      type: 'object',
-      required: ['kind', 'value'],
-      properties: {
-        kind: { type: 'string', const: 'a', readOnly: true },
-        value: { type: 'string' },
+for (const [annotation, excluded, permitted] of [
+  ['readOnly', 'request', 'response'],
+  ['writeOnly', 'response', 'request'],
+] as const) {
+  void test(`${annotation} discriminator tags identify the excluded direction and a remedy`, () => {
+    const raw = source({
+      A: {
+        type: 'object',
+        required: ['kind', 'value'],
+        properties: {
+          kind: { type: 'string', const: 'a', [annotation]: true },
+          value: { type: 'string' },
+        },
       },
-    },
-    B: {
-      type: 'object',
-      required: ['kind', 'value'],
-      properties: {
-        kind: { type: 'string', const: 'b', readOnly: true },
-        value: { type: 'integer' },
+      B: {
+        type: 'object',
+        required: ['kind', 'value'],
+        properties: {
+          kind: { type: 'string', const: 'b', [annotation]: true },
+          value: { type: 'integer' },
+        },
       },
-    },
-    Choice: {
-      oneOf: [ref('A'), ref('B')],
-      discriminator: {
-        propertyName: 'kind',
-        mapping: { a: '#/components/schemas/A', b: '#/components/schemas/B' },
+      Choice: {
+        oneOf: [ref('A'), ref('B')],
+        discriminator: {
+          propertyName: 'kind',
+          mapping: { a: '#/components/schemas/A', b: '#/components/schemas/B' },
+        },
       },
-    },
+    });
+    const projection = projectSchemas(raw);
+    assert.throws(
+      () =>
+        validateSchema(
+          present(projection.schemas[excluded].Choice),
+          projection.schemas[excluded],
+          'choice',
+          excluded,
+        ),
+      (error) => {
+        assert.ok(error instanceof ContractError);
+        assert.equal(error.location, 'choice.discriminator.propertyName');
+        assert.equal(
+          error.message,
+          `choice.discriminator.propertyName: discriminator property "kind" must remain present and required in ${excluded}s; ${annotation} excludes it, so remove that annotation or use separate request and response schemas`,
+        );
+        return true;
+      },
+    );
+    validateSchema(
+      present(projection.schemas[permitted].Choice),
+      projection.schemas[permitted],
+      'choice',
+      permitted,
+    );
   });
-  const projection = projectSchemas(raw);
-  assert.throws(
-    () =>
-      validateSchema(
-        present(projection.schemas.request.Choice),
-        projection.schemas.request,
-        'request',
-        'request',
-      ),
-    /required tag field/,
-  );
-  validateSchema(
-    present(projection.schemas.response.Choice),
-    projection.schemas.response,
-    'reply',
-    'response',
-  );
-});
+}
 
 void test('long alias chains preserve access annotations without recursive traversal', () => {
   const input: Record<string, InputSchema> = {

@@ -45,7 +45,7 @@ export async function verifyExecutionDeclarations(
   await writeFile(
     join(directory, 'execution-wrapper.ts'),
     `
-    import { createClient } from './execution-generated/client.consumer.ts';
+    import { createClient, operations } from './execution-generated/client.consumer.ts';
     import type { Execution, Executor, ObservedResponse, PreparedRequest, ResponseInspection, Responses } from './execution-generated/client.consumer.ts';
     import type { Executor as IndependentExecutor } from './execution-independent/client.consumer.ts';
     import { createClient as createUploads } from './multipart-generated/client.browser.ts';
@@ -77,6 +77,10 @@ export async function verifyExecutionDeclarations(
     export const offsetBody = infinite.listRecords.body();
     export const offsetBodyOptions = offsetBody.options({context: {}, input: {path: {category: 'records'}}});
     export const call = client.createWidget.call;
+    export const optionalCall = client.maybeCreate.call;
+    export const nullableCall = client.maybeCreateNullable.call;
+    export const optionalRequest = operations.maybeCreate.build();
+    export const nullableRequest = operations.maybeCreateNullable.build({body:null});
     export const isError = client.createWidget.isError;
     export function createApi() { return createClient({namespace: 'published-client', execute}); }
   `,
@@ -110,6 +114,28 @@ export async function verifyExecutionDeclarations(
     import type { Executor as IndependentExecutor } from './execution-independent/client.consumer.js';
     import { sharedAdapter as publishedSharedAdapter, uploadClient as publishedUploadClient } from './execution-wrapper.js';
     import { mutablePolicyAdapter as publishedMutablePolicyAdapter } from './execution-wrapper.js';
+    import { optionalCall, nullableCall, optionalRequest, nullableRequest } from './execution-wrapper.js';
+    function verifyPublishedOptionalBodies() {
+      // @ts-expect-error Published optional builders retain the bodyless possibility.
+      const alwaysJson: 'json' = optionalRequest.bodyKind;
+      void alwaysJson;
+      if (optionalRequest.bodyKind === 'json') {
+        const label: string = optionalRequest.body.label;
+        // @ts-expect-error Published included bodies do not contain undefined.
+        const missing: typeof optionalRequest.body = undefined;
+        void [label, missing];
+      } else {
+        // @ts-expect-error Published bodyless requests have no body property.
+        void optionalRequest.body;
+      }
+      if (nullableRequest.bodyKind === 'json') {
+        const explicitNull: typeof nullableRequest.body = null;
+        // @ts-expect-error Retaining null must not retain undefined.
+        const missing: typeof nullableRequest.body = undefined;
+        void [explicitNull, missing];
+      }
+    }
+    void verifyPublishedOptionalBodies;
     function verifyPublishedReadonly(request: Parameters<typeof publishedMutablePolicyAdapter>[0]) {
       // @ts-expect-error Published policy overrides retain readonly fields.
       request.policy.timeout = 'upload';
@@ -153,6 +179,17 @@ export async function verifyExecutionDeclarations(
       const sameStatus: 201 | 202 = same.status;
       const empty: undefined = (await createApi().health.call({context: {}})).data;
       void [status, sameStatus, empty];
+      const optional = await optionalCall({context: {}});
+      const optionalStatus: 204 = optional.status;
+      const optionalData: undefined = optional.data;
+      await optionalCall({context: {}, input: {body: undefined}});
+      await nullableCall({context: {}, input: {body: null}});
+      await createApi().maybeUpdate.call({context: {}, input: {path: {id:'item'}, headers: args.input.headers}});
+      void [optionalStatus, optionalData];
+      // @ts-expect-error Published optional calls preserve nonnullable schemas.
+      await optionalCall({context: {}, input: {body: null}});
+      // @ts-expect-error Required parameters still require an input object.
+      await createApi().maybeUpdate.call({context: {}});
       // @ts-expect-error Published call signatures retain required input.
       await call({context: {}});
       // @ts-expect-error Published clients retain required context.

@@ -21,6 +21,11 @@ import {
   literalViolation,
 } from './scalar-rules.js';
 import { schemaAccess } from './directional.js';
+import { formats } from './runtime.js';
+import type { StringFormat } from './runtime.js';
+
+const formatNames = Object.keys(formats);
+const expectedFormats = `${formatNames.slice(0, -1).join(', ')} or ${formatNames.at(-1)}`;
 
 const stringConstraints = ['minLength', 'maxLength', 'pattern'];
 const numberConstraints = [
@@ -404,11 +409,9 @@ function normalizeScalar(
   const allowedConstraints =
     kind === 'string'
       ? [...stringConstraints, 'format']
-      : kind === 'integer'
+      : kind === 'integer' || kind === 'number'
         ? [...numberConstraints, 'format']
-        : kind === 'number'
-          ? numberConstraints
-          : [];
+        : [];
   keys(
     value,
     [...typedSchemaKeys, 'const', 'enum', ...allowedConstraints],
@@ -416,8 +419,13 @@ function normalizeScalar(
   );
   const allowed = literals(value, kind, location, nullable);
   let limits = constraints(value, location);
-  let format: 'date' | 'date-time' | 'uuid' | undefined;
+  let format: StringFormat | undefined;
   if (Object.hasOwn(value, 'format')) {
+    if (kind === 'number')
+      fail(
+        `${location}.format`,
+        `unsupported numeric format; number schemas do not support formats (supported formats: integer int32; string ${expectedFormats})`,
+      );
     if (kind === 'integer') {
       if (value.format !== 'int32')
         fail(
@@ -431,15 +439,14 @@ function normalizeScalar(
         maximum: 2_147_483_647,
       });
     } else if (
-      value.format !== 'date' &&
-      value.format !== 'date-time' &&
-      value.format !== 'uuid'
+      typeof value.format !== 'string' ||
+      !Object.hasOwn(formats, value.format)
     )
       fail(
         `${location}.format`,
-        'unsupported format; expected date, date-time or uuid',
+        `unsupported format; expected ${expectedFormats}`,
       );
-    else format = value.format;
+    else format = value.format as StringFormat;
   }
   const nonNull = nullable ? allowed?.filter((item) => item !== null) : allowed;
   // A null-only literal assertion removes the non-null branch. Sibling syntax
@@ -664,6 +671,7 @@ function validateUnion(
   schema: Extract<Schema, { kind: 'union' }>,
   schemas: Readonly<Record<string, Schema>>,
   location: string,
+  usage: Usage,
 ): void {
   if (!schema.discriminator) {
     const kinds = schema.branches
@@ -710,6 +718,20 @@ function validateUnion(
     );
   for (const [tag, name] of Object.entries(mapping)) {
     const branch = resolveSchema(schemas[name]!, schemas);
+    // Source validation already proved that the tag exists and is required.
+    // Its absence from a projected object identifies a directional exclusion.
+    if (
+      usage !== 'component' &&
+      branch.kind === 'object' &&
+      !Object.hasOwn(branch.properties, propertyName)
+    ) {
+      const direction = usage === 'response' ? 'responses' : 'requests';
+      const annotation = usage === 'response' ? 'writeOnly' : 'readOnly';
+      fail(
+        `${location}.discriminator.propertyName`,
+        `discriminator property ${JSON.stringify(propertyName)} must remain present and required in ${direction}; ${annotation} excludes it, so remove that annotation or use separate request and response schemas`,
+      );
+    }
     if (branch.kind !== 'object' || !branch.required.includes(propertyName))
       fail(
         location,
@@ -859,7 +881,7 @@ function validateUsage(
         );
       visit(value, branchLocation);
     });
-    validateUnion(schema, schemas, location);
+    validateUnion(schema, schemas, location, usage);
   }
 }
 

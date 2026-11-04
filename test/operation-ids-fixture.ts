@@ -12,6 +12,8 @@ export const operationIds = [
   '$list',
   '9list',
   '\ud800',
+  'a.1',
+  'a\u02e1',
 ] as const;
 
 export const operationIdsSelection = {

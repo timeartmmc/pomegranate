@@ -59,9 +59,12 @@ async function executeRaw(
       throw new Error('The example transport requires a bearer token');
     authHeaders['Authorization'] = `Bearer ${token}`;
   }
-  // Generated paths are root-relative. An explicit application origin makes
-  // the same transport usable by Node fetch and browser fetch.
-  const response = await send(new URL(request.url, baseUrl), {
+  // Append the contract path to the selected server's base path. Assign only
+  // pathname so encoded path data stays separate from the request's query.
+  const server = new URL(baseUrl);
+  const url = new URL(request.url, server);
+  url.pathname = `${server.pathname.replace(/\/$/, '')}${url.pathname}`;
+  const response = await send(url, {
     method: request.method,
     signal: execution.signal,
     headers: request.validateHeaders({

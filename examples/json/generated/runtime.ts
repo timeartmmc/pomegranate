@@ -315,32 +315,239 @@ const dateTimePattern =
 const uuidPattern =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
-export const formats = {
-  date: (value: string): boolean => {
+// RFC 5321 Mailbox and RFC 3986 URI syntax. These predicates preserve text;
+// DNS, delivery, scheme-specific rules and normalization belong to applications.
+const atext = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+$/;
+const label = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+const hexGroup = /^[A-Fa-f0-9]{1,4}$/;
+
+function ipv4(value: string, leadingZeroes = false): boolean {
+  if (value.length > 15 || /[^0-9.]/.test(value)) return false;
+  const parts = value.split('.');
+  return (
+    parts.length === 4 &&
+    parts.every(
+      (part) =>
+        part.length >= 1 &&
+        part.length <= 3 &&
+        Number(part) <= 255 &&
+        (leadingZeroes || part.length === 1 || part[0] !== '0'),
+    )
+  );
+}
+
+function ipv6(value: string, smtp = false): boolean {
+  if (value.length > 45 || /[^A-Fa-f0-9:.]/.test(value)) return false;
+  const compression = value.indexOf('::');
+  if (compression !== value.lastIndexOf('::')) return false;
+  const halves =
+    compression < 0
+      ? [value]
+      : [value.slice(0, compression), value.slice(compression + 2)];
+  const groups = halves.flatMap((half) => (half === '' ? [] : half.split(':')));
+  if (groups.length === 0) return compression === 0;
+  let count = 0;
+  for (let index = 0; index < groups.length; index++) {
+    const group = groups[index]!;
+    if (group.includes('.')) {
+      if (
+        index !== groups.length - 1 ||
+        value.endsWith(':') ||
+        !ipv4(group, smtp)
+      )
+        return false;
+      count += 2;
+    } else {
+      if (!hexGroup.test(group)) return false;
+      count++;
+    }
+  }
+  // RFC 5321's SMTP grammar requires compression of at least two groups;
+  // generic URI IPv6 syntax permits compression of one. Keep this explicit.
+  return compression < 0 ? count === 8 : count <= (smtp ? 6 : 7);
+}
+
+function email(value: string): boolean {
+  if (value.length === 0 || /[^\x20-\x7e]/.test(value)) return false;
+  let at: number;
+  if (value[0] === '"') {
+    let index = 1;
+    for (; index < value.length && value[index] !== '"'; index++) {
+      if (value[index] === '\\' && ++index === value.length) return false;
+    }
+    if (index === value.length || value[index + 1] !== '@') return false;
+    at = index + 1;
+  } else {
+    at = value.indexOf('@');
+    if (
+      at <= 0 ||
+      !value
+        .slice(0, at)
+        .split('.')
+        .every((atom) => atext.test(atom))
+    )
+      return false;
+  }
+  const domain = value.slice(at + 1);
+  if (domain.startsWith('[') && domain.endsWith(']')) {
+    const address = domain.slice(1, -1);
+    return /^IPv6:/i.test(address)
+      ? ipv6(address.slice(5), true)
+      : ipv4(address, true);
+  }
+  return domain.split('.').every((part) => label.test(part));
+}
+
+const subDelimiters = "!$&'()*+,;=";
+const alpha = (code: number): boolean =>
+  (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+const digit = (code: number): boolean => code >= 48 && code <= 57;
+const hex = (code: number): boolean =>
+  digit(code) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102);
+
+// Each component has its own delimiter alphabet. Percent escapes are syntax:
+// %2F remains encoded, and %FF does not imply that a URI's bytes are UTF-8.
+function component(value: string, extras: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (
+      alpha(code) ||
+      digit(code) ||
+      '-._~'.includes(value[index]!) ||
+      extras.includes(value[index]!)
+    )
+      continue;
+    if (
+      code !== 37 ||
+      !hex(value.charCodeAt(index + 1)) ||
+      !hex(value.charCodeAt(index + 2))
+    )
+      return false;
+    index += 2;
+  }
+  return true;
+}
+
+function authority(value: string): boolean {
+  const at = value.indexOf('@');
+  if (at >= 0) {
+    if (!component(value.slice(0, at), subDelimiters + ':')) return false;
+    value = value.slice(at + 1);
+  }
+  let host: string;
+  let port: string;
+  if (value.startsWith('[')) {
+    const end = value.indexOf(']');
+    if (end < 0) return false;
+    host = value.slice(1, end);
+    port = value.slice(end + 1);
+    if (host[0] === 'v' || host[0] === 'V') {
+      const dot = host.indexOf('.');
+      const version = host.slice(1, dot);
+      const address = host.slice(dot + 1);
+      if (
+        dot <= 1 ||
+        !/^[A-Fa-f0-9]+$/.test(version) ||
+        address.length === 0 ||
+        address.includes('%') ||
+        !component(address, subDelimiters + ':')
+      )
+        return false;
+    } else if (!ipv6(host)) return false;
+  } else {
+    const colon = value.indexOf(':');
+    host = colon < 0 ? value : value.slice(0, colon);
+    port = colon < 0 ? '' : value.slice(colon);
+    // IPv4-looking reg-names remain reg-names if not valid dotted-decimal IPs.
+    if (!component(host, subDelimiters)) return false;
+  }
+  return port === '' || (port[0] === ':' && !/[^0-9]/.test(port.slice(1)));
+}
+
+function uri(value: string): boolean {
+  if (/[^\x21-\x7e]/.test(value)) return false;
+  const colon = value.indexOf(':');
+  if (colon <= 0 || !/^[A-Za-z][A-Za-z0-9+.-]*$/.test(value.slice(0, colon)))
+    return false;
+  const rest = value.slice(colon + 1);
+  const fragmentStart = rest.indexOf('#');
+  const beforeFragment =
+    fragmentStart < 0 ? rest : rest.slice(0, fragmentStart);
+  if (
+    fragmentStart >= 0 &&
+    !component(rest.slice(fragmentStart + 1), subDelimiters + ':@/?')
+  )
+    return false;
+  const queryStart = beforeFragment.indexOf('?');
+  let path =
+    queryStart < 0 ? beforeFragment : beforeFragment.slice(0, queryStart);
+  if (
+    queryStart >= 0 &&
+    !component(beforeFragment.slice(queryStart + 1), subDelimiters + ':@/?')
+  )
+    return false;
+  if (path.startsWith('//')) {
+    const slash = path.indexOf('/', 2);
+    if (!authority(slash < 0 ? path.slice(2) : path.slice(2, slash)))
+      return false;
+    path = slash < 0 ? '' : path.slice(slash);
+  }
+  return component(path, subDelimiters + ':@/');
+}
+
+export type StringFormatRule = Readonly<{
+  check: (value: string) => boolean;
+  message: string;
+}>;
+
+// Generated rules reference one descriptor directly. Looking it up through the
+// complete registry here would retain every format in every string bundle.
+export const emailFormat: StringFormatRule = {
+  check: email,
+  message: 'expected an email address',
+};
+export const uriFormat: StringFormatRule = {
+  check: uri,
+  message: 'expected a URI',
+};
+export const dateFormat: StringFormatRule = {
+  check: (value: string): boolean => {
     const match = datePattern.exec(value);
     return (
       match !== null &&
       calendarDate(match[1] ?? '', match[2] ?? '', match[3] ?? '')
     );
   },
-  'date-time': (value: string): boolean => {
+  message: 'expected a calendar date',
+};
+export const dateTimeFormat: StringFormatRule = {
+  check: (value: string): boolean => {
     const match = dateTimePattern.exec(value);
     return (
       match !== null &&
       calendarDate(match[1] ?? '', match[2] ?? '', match[3] ?? '')
     );
   },
-  uuid: (value: string): boolean => uuidPattern.test(value),
-} as const;
-const formatMessages = {
-  date: 'expected a calendar date',
-  'date-time':
+  message:
     'expected a calendar date-time with seconds and timezone (no leap seconds)',
-  uuid: 'expected a UUID',
+};
+export const uuidFormat: StringFormatRule = {
+  check: (value: string): boolean => uuidPattern.test(value),
+  message: 'expected a UUID',
+};
+
+// The compiler uses the same predicates for declared literal values.
+export const formats = {
+  date: (value: string): boolean => dateFormat.check(value),
+  'date-time': (value: string): boolean => dateTimeFormat.check(value),
+  uuid: (value: string): boolean => uuidFormat.check(value),
+  email: (value: string): boolean => emailFormat.check(value),
+  uri: (value: string): boolean => uriFormat.check(value),
 } as const;
+export type StringFormat = keyof typeof formats;
 
 export type StringRules = Readonly<{
-  format?: keyof typeof formats;
+  format?: StringFormatRule;
   minLength?: number;
   maxLength?: number;
   pattern?: string;
@@ -352,12 +559,11 @@ function stringChecks(rules: StringRules): Check<string> {
   const known = stringCache.get(rules);
   if (known) return known;
   const { format, minLength, maxLength, pattern } = rules;
-  const formatted = format === undefined ? undefined : formats[format];
   const matches = pattern === undefined ? undefined : patternTest(pattern);
   // Lengths count Unicode code points, as JSON Schema specifies.
   const check: Check<string> = (value, issues) => {
-    if (format !== undefined && formatted && !formatted(value))
-      report(issues, formatMessages[format], false);
+    if (format !== undefined && !format.check(value))
+      report(issues, format.message, false);
     if (minLength !== undefined || maxLength !== undefined) {
       const length = codePoints(value);
       if (minLength !== undefined && length < minLength)
@@ -835,7 +1041,17 @@ export type PreparedRequest<
       : Readonly<{ bodyKind: 'none' }>);
 
 type RequestBody<O> =
-  NonNullable<O> extends { body: infer Value } ? Value : never;
+  NonNullable<O> extends { body?: infer Value }
+    ? Exclude<Value, undefined>
+    : never;
+
+// The parser owns input presence. Optional JSON may prepare either wire state;
+// the public Operation kind still describes the actual prepared request kinds.
+type PreparedBodyKind<O, B extends BodyKind> = B extends 'json'
+  ? O extends { body: unknown }
+    ? 'json'
+    : 'json' | 'none'
+  : B;
 
 export interface Operation<
   O extends RequestParts | undefined,
@@ -1124,7 +1340,9 @@ function validateMultipart(
       { path: ['body'], message: 'expected a multipart object' },
     ]);
   for (const field of multipart) {
-    const value = body[field.name];
+    const value = Object.hasOwn(body, field.name)
+      ? body[field.name]
+      : undefined;
     if (
       field.required &&
       field.multiple &&
@@ -1161,6 +1379,14 @@ function serializeParameters(
   let path = template;
   const query = new URLSearchParams();
   const headers: Record<string, string> = dictionary<string>();
+  // Parsing copies structural input fields into own output properties. Never
+  // recover an omitted group or parameter from polluted Object.prototype data.
+  const queryValues = Object.hasOwn(options, 'query')
+    ? options.query
+    : undefined;
+  const headerValues = Object.hasOwn(options, 'headers')
+    ? options.headers
+    : undefined;
   for (const parameter of parameters) {
     if (parameter.in === 'path') {
       path = path.replace(
@@ -1168,7 +1394,10 @@ function serializeParameters(
         encodePath(options.path![parameter.name]!, operationId, parameter.name),
       );
     } else if (parameter.in === 'query') {
-      const value = options.query?.[parameter.name];
+      const value =
+        queryValues && Object.hasOwn(queryValues, parameter.name)
+          ? queryValues[parameter.name]
+          : undefined;
       // The options schema admits null only for optional nullable primitives.
       // Their null value means omission, distinct from the string "null".
       if (value === undefined || value === null) continue;
@@ -1188,7 +1417,10 @@ function serializeParameters(
         query.append(parameter.name, serialized);
       }
     } else {
-      const value = options.headers?.[parameter.name];
+      const value =
+        headerValues && Object.hasOwn(headerValues, parameter.name)
+          ? headerValues[parameter.name]
+          : undefined;
       if (value === undefined || value === null) continue;
       if (!validHeaderValue(value))
         throw new RequestValidationError(operationId, [
@@ -1268,7 +1500,7 @@ export function defineOperation<
   const O extends RequestParts | undefined,
   const R extends Responses,
   const B extends BodyKind,
->(definition: Definition<O, R, B>): Operation<O, R, B> {
+>(definition: Definition<O, R, B>): Operation<O, R, PreparedBodyKind<O, B>> {
   const security = Object.freeze({ ...definition.security });
   const policy = Object.freeze({ ...definition.policy });
   const multipart = Object.freeze(
@@ -1284,7 +1516,7 @@ export function defineOperation<
   );
   function build(
     ...args: undefined extends O ? [options?: O] : [options: O]
-  ): PreparedRequest<R, B, RequestBody<O>> {
+  ): PreparedRequest<R, PreparedBodyKind<O, B>, RequestBody<O>> {
     if (args.length > 1)
       throw new RequestValidationError(definition.operationId, [
         { path: [], message: 'expected at most one options argument' },
@@ -1292,8 +1524,11 @@ export function defineOperation<
     const options: RequestParts =
       validateOptions(definition.options, args[0], definition.operationId) ??
       {};
+    // Optional-field parsing omits polluted Object.prototype fields. Do not
+    // recover one by reading an inherited body from the fresh options object.
+    const body = Object.hasOwn(options, 'body') ? options.body : undefined;
     if (definition.bodyKind === 'multipart')
-      validateMultipart(options.body, multipart, definition.operationId);
+      validateMultipart(body, multipart, definition.operationId);
     const serialized = serializeParameters(
       definition.operationId,
       definition.path,
@@ -1309,17 +1544,17 @@ export function defineOperation<
       headers: serialized.headers,
       validateHeaders,
       parseResponse,
-      ...(definition.bodyKind === 'json'
-        ? { bodyKind: 'json' as const, body: options.body }
+      ...(definition.bodyKind === 'json' && body !== undefined
+        ? { bodyKind: 'json' as const, body }
         : definition.bodyKind === 'multipart'
-          ? { bodyKind: 'multipart' as const, body: options.body, multipart }
+          ? { bodyKind: 'multipart' as const, body, multipart }
           : { bodyKind: 'none' as const }),
     };
     // The generated options schema and bodyKind are emitted together from one
     // descriptor. Their relationship cannot be inferred through this generic.
     return Object.freeze(request) as unknown as PreparedRequest<
       R,
-      B,
+      PreparedBodyKind<O, B>,
       RequestBody<O>
     >;
   }

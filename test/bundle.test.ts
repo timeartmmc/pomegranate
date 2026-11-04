@@ -124,6 +124,11 @@ for (const bundler of ['esbuild', 'bun'] as const) {
       'unselected operations must not increase the selected bundle',
     );
     assert.ok(!sparse.code.includes('unused-response-'));
+    // String validation must not retain predicates for undeclared formats.
+    assert.doesNotMatch(
+      sparse.code,
+      /expected (?:an email address|a URI|a calendar date|a UUID)/,
+    );
     const module = (await import(sparse.url)) as QueryModule;
     const queries = module.createQueries({
       namespace: 'bundle',

@@ -110,4 +110,12 @@ void test('operation string acceptance retains duplicate, empty and reserved-key
           : /unsupported object key/,
     );
   }
+  const document = operationIdsFixture();
+  const duplicate = present(document.paths['/items/8']).get.operationId;
+  Object.assign(present(document.paths['/items/1']).get, {
+    operationId: duplicate,
+  });
+  await assert.rejects(compile(document, operationIdsSelection), {
+    message: `paths./items/8.get.operationId: duplicate operation identifier ${JSON.stringify(duplicate)}; first declared at paths./items/1.get.operationId`,
+  });
 });

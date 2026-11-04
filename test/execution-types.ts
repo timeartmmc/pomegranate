@@ -7,9 +7,12 @@ import type {
   Executor,
   ObservedResponse,
   PreparedRequest,
+  RequestTypes,
   ResponseInspection,
   Responses,
 } from './execution-generated/client.consumer.ts';
+import { defineOperation } from './execution-generated/runtime.ts';
+import type { Parse } from './execution-generated/runtime.ts';
 import { QueryClient, skipToken } from '@tanstack/query-core';
 import type { QueryExecutor } from './execution-generated/client.consumer.queries.ts';
 import type { Executor as UploadExecutor } from './multipart-generated/client.browser.ts';
@@ -140,6 +143,118 @@ export function inspectionTypes(inspection: ResponseInspection<ReadResponses>) {
     // @ts-expect-error Execution inspection data is immutable until handoff.
     inspection.data.label = 'Changed';
   }
+}
+
+type OptionalResponses =
+  ReturnType<typeof operations.maybeCreate.build> extends PreparedRequest<
+    infer R
+  >
+    ? R
+    : never;
+
+export function optionalInspectionTypes(
+  inspection: ResponseInspection<OptionalResponses>,
+) {
+  if (inspection.kind !== 'protocol') {
+    const status: 204 = inspection.status;
+    const data: undefined = inspection.data;
+    void [status, data];
+  }
+}
+
+export async function optionalRequestTypes() {
+  operations.maybeCreate.build();
+  operations.maybeCreate.build({});
+  operations.maybeCreate.build({ body: undefined });
+  operations.maybeCreate.build({ body: input.body });
+  const request = operations.maybeCreate.build();
+  const annotated: PreparedRequest<
+    OptionalResponses,
+    'json' | 'none',
+    RequestTypes['WriteInput']
+  > = request;
+  // @ts-expect-error An optional JSON body can produce a bodyless request.
+  const alwaysJson: 'json' = operations.maybeCreate.build().bodyKind;
+  void [annotated, alwaysJson];
+  if (request.bodyKind === 'json') {
+    const body: RequestTypes['WriteInput'] = request.body;
+    const included: typeof request.body = input.body;
+    // @ts-expect-error Included JSON bodies exclude undefined.
+    const missing: typeof request.body = undefined;
+    void [body, included, missing];
+  } else {
+    // @ts-expect-error Bodyless prepared requests expose no body property.
+    void request.body;
+  }
+  const nullable = operations.maybeCreateNullable.build({ body: null });
+  if (nullable.bodyKind === 'json') {
+    const body: RequestTypes['WriteInput'] | null = nullable.body;
+    const explicitNull: typeof nullable.body = null;
+    // @ts-expect-error Nullable JSON bodies still exclude undefined when included.
+    const missing: typeof nullable.body = undefined;
+    void [body, explicitNull, missing];
+  }
+  // @ts-expect-error Optionality does not make a nonnullable schema nullable.
+  operations.maybeCreate.build({ body: null });
+  // @ts-expect-error Included JSON bodies retain their schema.
+  operations.maybeCreate.build({ body: { label: 'Valid', values: [1] } });
+  const update = { path: { id: 'item' }, headers: input.headers };
+  operations.maybeUpdate.build(update);
+  operations.maybeUpdate.build({ ...update, body: undefined });
+  // @ts-expect-error Optional bodies do not make path parameters optional.
+  operations.maybeUpdate.build({ headers: input.headers });
+  // @ts-expect-error Optional bodies do not make endpoint headers optional.
+  operations.maybeUpdate.build({ path: update.path });
+  const requiredKind: 'json' = operations.createWidget.build(input).bodyKind;
+  void requiredKind;
+  // @ts-expect-error Required JSON bodies remain required.
+  operations.createWidget.build({ headers: input.headers });
+  const result = await client.maybeCreate.call({ context });
+  const status: 204 = result.status;
+  const data: undefined = result.data;
+  void [status, data];
+  await client.maybeCreate.call({ context, input: { body: undefined } });
+  await client.maybeCreateNullable.call({ context, input: { body: null } });
+  await client.maybeUpdate.call({ context, input: update });
+  // @ts-expect-error Optional JSON calls preserve nonnullable schemas.
+  await client.maybeCreate.call({ context, input: { body: null } });
+  // @ts-expect-error An operation with required parameters still needs input.
+  await client.maybeUpdate.call({ context });
+}
+
+export function optionalDefinitionTypes(
+  options: Parse<{ body?: RequestTypes['WriteInput'] | undefined } | undefined>,
+) {
+  const definition = {
+    operationId: 'inferredOptional',
+    method: 'POST',
+    path: '/inferred-optional',
+    security: { transport: 'none' },
+    policy: { auth: 'public', retry: 'never', timeout: 'interactive' },
+    bodyKind: 'json',
+    parameters: [],
+    options,
+    headers: {},
+    responses: { 204: { bodyKind: 'none', headers: {} } },
+  } as const;
+  const operation = defineOperation(definition);
+  const request = operation.build();
+  const kind: 'json' | 'none' = request.bodyKind;
+  // @ts-expect-error Low-level inference must also retain the bodyless case.
+  const alwaysJson: 'json' = request.bodyKind;
+  void [kind, alwaysJson];
+  if (request.bodyKind === 'json') {
+    const body: RequestTypes['WriteInput'] = request.body;
+    const included: typeof request.body = input.body;
+    void [body, included];
+  }
+  const noOptions = defineOperation({
+    ...definition,
+    options: () => undefined,
+  });
+  // @ts-expect-error An undefined options parser cannot promise an included body.
+  const absentKind: 'json' = noOptions.build().bodyKind;
+  void absentKind;
 }
 
 export function cachedBodyTypes() {

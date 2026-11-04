@@ -86,7 +86,7 @@ Choose the integration needed by the application:
 POM supports JSON and multipart requests, exact response statuses, bearer or
 public security, selected client surfaces, and a restricted schema vocabulary.
 Unsupported features fail with a location-specific diagnostic before outputs
-change. General unions, recursive or external schema references, optional request
+change. General unions, recursive or external schema references, optional multipart
 bodies, and non-bearer authentication schemes are unsupported. The
 [contract reference](REFERENCE.md#supported-vocabulary) defines the complete
 supported vocabulary and limits.

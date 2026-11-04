@@ -217,10 +217,10 @@ validation, including operations excluded from output.
 | Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                     |
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique nonempty operation IDs; whole-segment path placeholders                                                                                                                                                   |
 | Parameters  | Path-item inheritance and operation overrides; primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
-| Bodies      | Required JSON or multipart request bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                                                                         |
+| Bodies      | Required or optional JSON bodies; required multipart bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                                                       |
 | Schemas     | Explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                           |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                  |
-| Formats     | String `date`, `date-time`, and `uuid`; integer `int32`; no coercion                                                                                                                                                                                           |
+| Formats     | String `date`, `date-time`, `uuid`, `email`, and `uri`; integer `int32`; no coercion                                                                                                                                                                           |
 
 JSON inputs and configuration accept one leading UTF-8 byte-order mark and
 reject duplicate decoded object keys. YAML files use a single YAML 1.2 core
@@ -362,6 +362,33 @@ text. Timestamps with leap seconds are unsupported.
 `uuid` validates case-insensitive hexadecimal `8-4-4-4-12` syntax without adding
 version or variant restrictions; braces and URN prefixes are rejected.
 
+`email` checks ASCII [RFC 5321 Mailbox syntax](https://www.rfc-editor.org/rfc/rfc5321.html#section-4.1.2):
+dot-separated atoms or a quoted local part, followed by a domain or IPv4/IPv6
+address literal. Quoted spaces and escapes, single-label domains, and ASCII
+Punycode spelling are accepted. Display names, comments, raw non-ASCII text,
+controls and surrounding whitespace are rejected. IPv6 literals follow the SMTP
+grammar, including its requirement that `::` replace at least two groups. This
+is a syntax check: DNS, delivery and SMTP transport length limits are not checked.
+Declare field lengths explicitly when required.
+
+`uri` checks ASCII [RFC 3986 generic syntax](https://www.rfc-editor.org/rfc/rfc3986.html#appendix-A),
+requiring a scheme. It accepts non-HTTP schemes, IPv6 and IPvFuture hosts, and
+well-formed percent escapes. Relative references, raw non-ASCII text, malformed
+escapes, backslashes, controls and IPv6 zone identifiers are rejected. Empty
+hierarchical components and ports are permitted; numeric ports have no implicit
+range limit. Scheme-specific rules and host existence are application concerns.
+Use `pattern` to restrict schemes or impose a narrower application profile.
+
+Both formats preserve the original string, including case and percent spelling;
+neither resolves, decodes or normalizes values. `idn-email`, `iri`, and
+`uri-reference` remain unsupported. Documentation URLs and contact emails remain
+shape-checked annotations, independent of schema format assertions.
+
+Declared formats are enforced on requests and responses. A response string that
+violates its format produces a protocol failure, just like a wrong type or an
+invalid date. For example, a bare hostname does not satisfy `format: "uri"`;
+schemas for such values should use a string without that format assertion.
+
 Arrays observe their length once and check all effective bounds, including
 reference constraints, before reading items. Parsing visits exactly that many
 positions and returns a fresh dense array. Later growth is ignored; positions
@@ -382,17 +409,17 @@ runtime omission behavior. Dynamic maps preserve their own JSON keys, including
 `__proto__` and `constructor`.
 
 Unsupported semantics stop generation with a location-specific diagnostic before
-outputs change. For example, adding `format: "email"` to the example's
+outputs change. For example, adding `format: "idn-email"` to the example's
 `components.schemas.WidgetId` produces:
 
 ```text
-POM: components.schemas.WidgetId.format: unsupported format; expected date, date-time or uuid
+POM: components.schemas.WidgetId.format: unsupported format; expected date, date-time, uuid, email or uri
 ```
 
 External or recursive references, general unions and other type arrays, objects
 mixing fixed properties with dynamic entries, other formats, response defaults,
-optional request bodies, parameter reference objects, status ranges/default responses,
-non-bearer security schemes and external security-scheme references
+optional multipart request bodies, parameter reference objects, status ranges/default
+responses, non-bearer security schemes and external security-scheme references
 remain unsupported.
 
 ### Directional object fields
@@ -466,10 +493,27 @@ if (result.kind === 'success' && result.status === 202) {
 ```
 
 Builders validate immediately and return a relative URL, endpoint headers,
-inferred security, selected policy, and a validated body when declared. The application serializes
-that body, adds transport headers, validates the merged headers with
+inferred security, selected policy, and a validated body when present. The
+application serializes that body, adds transport headers, validates the merged headers with
 `request.validateHeaders(headers)`, sends the request, and supplies response status,
 headers, and raw body text to `parseResponse`.
+
+JSON request bodies are optional when `requestBody.required` is omitted or
+`false`. The generated `body` input is optional; the whole options argument is
+optional only when no other generated input is required. Omitting `body` or
+supplying `undefined` prepares `bodyKind: 'none'` without a `body` property.
+Explicit `null` is JSON data and is accepted only when the schema allows it;
+valid `false`, `0`, empty strings and empty objects also remain JSON data.
+Optional bodies retain their schemas, constraints and directional validation
+when present. Defaults remain annotations and never create an omitted body.
+
+An optional JSON operation returns a request with `bodyKind: 'none' | 'json'`.
+Narrow by `bodyKind` before reading `body`. Applications serialize JSON and add
+its Content-Type only for the `json` branch; the example transport already does
+this. Required JSON bodies and multipart bodies retain their required inputs.
+Optional multipart and all GET/HEAD request bodies remain unsupported. Response
+validation is independent of whether a request body was sent.
+
 Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and occupy an
 entire segment. Path values cannot be empty, `.` or `..`.
 

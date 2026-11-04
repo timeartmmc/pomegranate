@@ -36,6 +36,115 @@ async function rejected(promise: Promise<unknown>): Promise<unknown> {
 
 export const executionChecks = {
   ...integrationChecks,
+  'optional JSON bodies preserve absence and null through raw and scoped execution':
+    async (module) => {
+      for (const scoped of [false, true]) {
+        const requests: Parameters<Executor>[0][] = [];
+        const client = module.createClient({
+          namespace: 'optional-json',
+          execute: async (request, execution) => {
+            await Promise.resolve();
+            requests.push(request);
+            const observed = { status: 204, headers: {}, body: '' };
+            return scoped ? execution.validateResponse(observed) : observed;
+          },
+        });
+        for (const [operation, build] of [
+          [client.maybeCreate, module.operations.maybeCreate.build],
+          [
+            client.maybeCreateNullable,
+            module.operations.maybeCreateNullable.build,
+          ],
+        ] as const) {
+          for (const input of [undefined, {}, { body: undefined }]) {
+            const prepared = runtimeInput(build, input);
+            assert.equal(prepared.bodyKind, 'none');
+            assert.equal(Object.hasOwn(prepared, 'body'), false);
+          }
+          assert.equal(build().bodyKind, 'none');
+          for (const args of [
+            { context: {} },
+            { context: {}, input: undefined },
+            { context: {}, input: {} },
+            { context: {}, input: { body: undefined } },
+          ]) {
+            const result = await operation.call(args);
+            assert.equal(result.status, 204);
+            assert.equal(result.data, undefined);
+            const request = requests.at(-1);
+            assert.equal(request?.bodyKind, 'none');
+            assert.equal(Object.hasOwn(request ?? {}, 'body'), false);
+          }
+          const body = {
+            ...command().input.body,
+            attributes: { phase: 'original' },
+          };
+          const pending = operation.call({ context: {}, input: { body } });
+          body.label = 'Changed';
+          body.values.push('changed');
+          body.attributes.phase = 'changed';
+          await pending;
+          const request = requests.at(-1);
+          assert.equal(request?.bodyKind, 'json');
+          assert.deepEqual(request?.bodyKind === 'json' && request.body, {
+            label: 'Synthetic',
+            values: ['one'],
+            attributes: { phase: 'original' },
+          });
+        }
+        await client.maybeCreateNullable.call({
+          context: {},
+          input: { body: null },
+        });
+        const nullable = requests.at(-1);
+        assert.equal(nullable?.bodyKind, 'json');
+        assert.equal(nullable?.bodyKind === 'json' && nullable.body, null);
+        const required = {
+          path: { id: 'a/b' },
+          headers: { 'Idempotency-Key': 'attempt' },
+        };
+        for (const input of [required, { ...required, body: undefined }]) {
+          await client.maybeUpdate.call({ context: {}, input });
+          const request = requests.at(-1);
+          assert.equal(request?.url, '/commands/optional/a%2Fb');
+          assert.equal(request?.headers['Idempotency-Key'], 'attempt');
+          assert.equal(request?.bodyKind, 'none');
+          assert.equal(Object.hasOwn(request ?? {}, 'body'), false);
+        }
+        await client.maybeUpdate.call({
+          context: {},
+          input: { ...required, body: command().input.body },
+        });
+        const updated = requests.at(-1);
+        assert.equal(updated?.bodyKind, 'json');
+        assert.deepEqual(updated?.bodyKind === 'json' && updated.body, {
+          label: 'Synthetic',
+          values: ['one'],
+        });
+        const attempts = requests.length;
+        await assert.rejects(
+          runtimeInput(client.maybeCreate.call, {
+            context: {},
+            input: { body: null },
+          }),
+          module.RequestValidationError,
+        );
+        for (const input of [
+          undefined,
+          {},
+          { path: required.path },
+          { headers: required.headers },
+          { ...required, body: null },
+          { ...required, body: { label: 'ab', values: [] } },
+        ])
+          await assert.rejects(
+            runtimeInput(client.maybeUpdate.call, { context: {}, input }),
+            module.RequestValidationError,
+          );
+        assert.equal(requests.length, attempts);
+      }
+    },
+
   'all seven methods retain exact success envelopes and JSON request snapshots':
     async (module) => {
       const requests: Parameters<Executor>[0][] = [];

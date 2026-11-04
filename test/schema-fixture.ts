@@ -133,13 +133,18 @@ export function schemaFixture() {
       },
     },
     ShortLocation: { ...ref('Location'), minItems: 1, maxItems: 2 },
-    Scalars: object({
-      date: { type: 'string', format: 'date' },
-      instant: { type: 'string', format: 'date-time' },
-      id: { type: 'string', format: 'uuid' },
-      code: { type: 'string', pattern: '^.$', minLength: 1, maxLength: 1 },
-      label: ref('ShortLabel'),
-    }),
+    Scalars: object(
+      {
+        date: { type: 'string', format: 'date' },
+        instant: { type: 'string', format: 'date-time' },
+        id: { type: 'string', format: 'uuid' },
+        code: { type: 'string', pattern: '^.$', minLength: 1, maxLength: 1 },
+        label: ref('ShortLabel'),
+        email: { type: 'string', format: 'email' },
+        uri: { type: ['string', 'null'], format: 'uri' },
+      },
+      ['date', 'instant', 'id', 'code', 'label'],
+    ),
     QueryCursor: {
       type: 'string',
       minLength: 1,
@@ -272,6 +277,8 @@ export function schemaFixture() {
                       date: nullable({ type: 'string', format: 'date' }),
                       instant: nullable(ref('QueryInstant')),
                       id: nullable({ type: 'string', format: 'uuid' }),
+                      email: nullable({ type: 'string', format: 'email' }),
+                      uri: nullable({ type: 'string', format: 'uri' }),
                     }).map(([name, schema]) => ({ name, in: 'query', schema })),
                   ]
                 : []),
@@ -629,8 +636,13 @@ export function verifySchemas(
     id: '12345678-1234-4234-9234-123456789012',
     code: '😀',
     label: 'red',
+    email: '"Synthetic User"@EXAMPLE.INVALID',
+    uri: 'https://EXAMPLE.invalid:443/a/../b?x=%2f#Mixed',
   };
   check('Scalars', scalars, true);
+  check('Scalars', { ...scalars, uri: null }, true);
+  check('Scalars', { ...scalars, email: 'user..name@example.invalid' }, false);
+  check('Scalars', { ...scalars, uri: 'https://example.invalid/%' }, false);
   const queryUrl = (query: unknown) =>
     runtimeInput(operations.checkScalars.build, { body: scalars, query }).url;
   for (const query of [
@@ -645,6 +657,8 @@ export function verifySchemas(
       date: null,
       instant: null,
       id: null,
+      email: null,
+      uri: null,
     },
     { q: undefined, cursor: undefined, count: undefined, active: undefined },
   ])
@@ -667,6 +681,8 @@ export function verifySchemas(
     date: scalars.date,
     instant: scalars.instant,
     id: scalars.id,
+    email: scalars.email,
+    uri: scalars.uri,
   };
   assert.deepEqual(
     Object.fromEntries(
@@ -690,6 +706,8 @@ export function verifySchemas(
     { date: '2024-02-30' },
     { instant: '2024-02-29' },
     { id: 'not-a-uuid' },
+    { email: 'user..name@example.invalid' },
+    { uri: 'http://host/%' },
     { limit: null },
     { tags: null },
     { unknown: null },

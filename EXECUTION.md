@@ -48,10 +48,12 @@ const pending = await client.prepareWidget.call({
 ```
 
 Every operation on the surface has `call(args)` and `isError(error)`, including
-POST, PUT, PATCH, DELETE, HEAD and OPTIONS. Required path, header and body inputs
-retain their builder types; an operation with no required input permits omission
-of `input`. Calls return promises. Invalid requests reject before the executor
-runs. Successes retain the exact declared 2xx status, raw normalized headers,
+POST, PUT, PATCH, DELETE, HEAD and OPTIONS. Required path, query, header and body
+inputs retain their builder types; when all generated fields are optional,
+`call({ context })` may omit `input`. An
+[optional JSON body](REFERENCE.md#build-and-validate-a-request) does not relax
+other required inputs. Calls return promises. Invalid requests reject before the
+executor runs. Successes retain the exact declared 2xx status, raw normalized headers,
 validated declared headers and schema-validated data. Bodyless success has an own
 `data: undefined` field. Different success statuses retain distinct body types.
 

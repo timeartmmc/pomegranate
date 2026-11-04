@@ -1,4 +1,11 @@
-import { annotations, fail, keys, record, stringArray } from './diagnostics.js';
+import {
+  annotations,
+  fail,
+  keys,
+  record,
+  stringArray,
+  stringFields,
+} from './diagnostics.js';
 
 export const exampleKeys = ['example', 'examples'];
 export const schemaAnnotationKeys = [
@@ -70,21 +77,9 @@ export function licenseAnnotation(info: Record<string, unknown>): void {
   keys(license, ['name', 'identifier', 'url'], location);
   if (typeof license.name !== 'string')
     fail(`${location}.name`, 'expected a string');
-  for (const key of ['identifier', 'url'])
-    if (Object.hasOwn(license, key) && typeof license[key] !== 'string')
-      fail(`${location}.${key}`, 'expected a string');
+  stringFields(license, ['identifier', 'url'], location);
   if (Object.hasOwn(license, 'identifier') && Object.hasOwn(license, 'url'))
     fail(location, 'identifier and url are mutually exclusive');
-}
-
-function stringFields(
-  value: Record<string, unknown>,
-  names: readonly string[],
-  location: string,
-): void {
-  for (const name of names)
-    if (Object.hasOwn(value, name) && typeof value[name] !== 'string')
-      fail(`${location}.${name}`, 'expected a string');
 }
 
 export function infoAnnotations(info: Record<string, unknown>): void {
@@ -124,9 +119,9 @@ export function serverAnnotations(value: Record<string, unknown>): void {
     stringFields(server, ['description'], location);
     if (!Object.hasOwn(server, 'variables')) continue;
     const variables = record(server.variables, `${location}.variables`);
-    for (const [name, input] of Object.entries(variables)) {
+    for (const [name, entry] of Object.entries(variables)) {
       const path = `${location}.variables.${name}`;
-      const variable = record(input, path);
+      const variable = record(entry, path);
       keys(variable, ['default', 'enum', 'description'], path);
       if (typeof variable.default !== 'string')
         fail(`${path}.default`, 'expected a string');

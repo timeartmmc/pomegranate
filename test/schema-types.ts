@@ -14,6 +14,17 @@ import {
 } from './schema-generated/client.samples.schemas.js';
 import type { Validator } from './schema-generated/runtime.js';
 const emptyInput: EmptyInput = {};
+const formatted: Pick<RequestTypes['Scalars'], 'email' | 'uri'> = {
+  email: 'user@example.invalid',
+  uri: null,
+};
+const formattedResponse: Pick<ResponseTypes['Scalars'], 'email' | 'uri'> = {
+  email: 'user@example.invalid',
+  uri: 'urn:example:synthetic',
+};
+// @ts-expect-error Formats keep their string types without coercion.
+const invalidEmail: Pick<RequestTypes['Scalars'], 'email'> = { email: 1 };
+void [formatted, formattedResponse, invalidEmail];
 operations.checkSpacedKey.build({ body: { id: 'id', 'a b-c': 'value' } });
 operations.checkCompactKey.build({ body: { id: 'id', 'ab-c': 'value' } });
 operations.checkSpacedLiteral.build({ body: { state: 'a b' } });

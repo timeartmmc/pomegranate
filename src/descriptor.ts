@@ -67,6 +67,15 @@ type SchemaContext = Readonly<{
   directionValidation: Readonly<Record<Direction, Validation>>;
 }>;
 
+type OperationContext = Readonly<{
+  vocabulary: PolicyVocabulary;
+  schemas: SchemaContext;
+  examples: ReadonlySet<string>;
+  bearerSchemes: ReadonlySet<string>;
+  inheritedSecurity: AuthTransport;
+  memberships: ReadonlyMap<string, readonly string[]> | undefined;
+}>;
+
 function normalizeFor(
   input: unknown,
   location: string,
@@ -515,11 +524,11 @@ function requestBody(
       `${location}.requestBody`,
     );
     annotations(request, `${location}.requestBody`);
-    if (request.required !== true)
-      fail(
-        `${location}.requestBody.required`,
-        'only required request bodies are supported',
-      );
+    const required = optionalBoolean(
+      request,
+      'required',
+      `${location}.requestBody`,
+    );
     const contentLocation = `${location}.requestBody.content`;
     const content = record(request.content, contentLocation);
     keys(content, ['application/json', 'multipart/form-data'], contentLocation);
@@ -534,6 +543,11 @@ function requestBody(
     exampleAnnotations(media, `${contentLocation}.${mediaType}`, examples);
     const schemaLocation = `${contentLocation}.${mediaType}.schema`;
     const multipart = mediaType === 'multipart/form-data';
+    if (multipart && !required)
+      fail(
+        `${location}.requestBody.required`,
+        'optional multipart request bodies are unsupported',
+      );
     const schema = normalizeFor(
       media.schema,
       schemaLocation,
@@ -551,7 +565,7 @@ function requestBody(
             schemaLocation,
           ),
         }
-      : { kind: 'json', schema };
+      : { kind: 'json', schema, required };
   }
   return body;
 }
@@ -615,14 +629,17 @@ function normalizeOperation(
   input: unknown,
   method: (typeof methods)[number],
   path: string,
-  vocabulary: PolicyVocabulary,
-  context: SchemaContext,
-  examples: ReadonlySet<string>,
-  bearerSchemes: ReadonlySet<string>,
-  inheritedSecurity: AuthTransport,
-  memberships: ReadonlyMap<string, readonly string[]> | undefined,
   inheritedParameters: readonly Parameter[],
+  context: OperationContext,
 ): Operation {
+  const {
+    vocabulary,
+    schemas,
+    examples,
+    bearerSchemes,
+    inheritedSecurity,
+    memberships,
+  } = context;
   const location = `paths.${path}.${method}`;
   const value = record(input, location);
   keys(
@@ -674,16 +691,16 @@ function normalizeOperation(
   const parameters = operationParameters(
     value,
     inheritedParameters,
-    context,
+    schemas,
     examples,
     path,
     location,
   );
-  const body = requestBody(value, method, context, examples, location);
+  const body = requestBody(value, method, schemas, examples, location);
   const responses = operationResponses(
     value,
     method,
-    context,
+    schemas,
     examples,
     location,
   );
@@ -832,6 +849,14 @@ export function buildDescriptor(
       response: schemaValidation(),
     },
   };
+  const operationContext: OperationContext = {
+    vocabulary,
+    schemas: context,
+    examples,
+    bearerSchemes,
+    inheritedSecurity,
+    memberships,
+  };
   const paths = record(value.paths, 'paths');
   const operations: Operation[] = [];
   for (const path of Object.keys(paths).sort()) {
@@ -858,13 +883,8 @@ export function buildDescriptor(
             pathItem[method],
             method,
             path,
-            vocabulary,
-            context,
-            examples,
-            bearerSchemes,
-            inheritedSecurity,
-            memberships,
             inheritedParameters,
+            operationContext,
           ),
         );
   }
@@ -874,7 +894,7 @@ export function buildDescriptor(
     if (ids.has(operation.id))
       fail(
         location,
-        `duplicate operation identifier ${operation.id}; first declared at ${ids.get(operation.id)!}`,
+        `duplicate operation identifier ${JSON.stringify(operation.id)}; first declared at ${ids.get(operation.id)!}`,
       );
     ids.set(operation.id, location);
   }

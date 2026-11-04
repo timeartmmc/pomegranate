@@ -233,7 +233,7 @@ void test('config membership does not suppress unsupported unselected operations
   Object.assign(
     schemaFailure.components.schemas.SecretRecord.properties.secret,
     {
-      format: 'email',
+      format: 'idn-email',
     },
   );
   await assert.rejects(compile(schemaFailure, selection), /unsupported format/);

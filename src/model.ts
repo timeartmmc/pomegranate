@@ -1,3 +1,5 @@
+import type { StringFormat } from './runtime.js';
+
 export type Scalar = string | number | boolean | null;
 export type Direction = 'request' | 'response';
 export type Constraints = {
@@ -53,7 +55,7 @@ export type Schema = {
       readonly minLength?: number;
       readonly maxLength?: number;
       readonly pattern?: string;
-      readonly format?: 'date' | 'date-time' | 'uuid';
+      readonly format?: StringFormat;
       readonly literals?: readonly Scalar[];
     }
   | {
@@ -121,7 +123,11 @@ export type Operation = {
   readonly parameters: readonly Parameter[];
   readonly body:
     | { readonly kind: 'none' }
-    | { readonly kind: 'json'; readonly schema: Schema }
+    | {
+        readonly kind: 'json';
+        readonly schema: Schema;
+        readonly required: boolean;
+      }
     | {
         readonly kind: 'multipart';
         readonly schema: Schema;

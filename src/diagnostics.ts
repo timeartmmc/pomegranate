@@ -87,9 +87,15 @@ export function annotations(
   value: Record<string, unknown>,
   location: string,
 ): void {
-  for (const key of ['title', 'description', 'summary']) {
-    if (Object.hasOwn(value, key) && typeof value[key] !== 'string') {
-      fail(`${location}.${key}`, 'expected a string');
-    }
-  }
+  stringFields(value, ['title', 'description', 'summary'], location);
+}
+
+export function stringFields(
+  value: Record<string, unknown>,
+  names: readonly string[],
+  location: string,
+): void {
+  for (const name of names)
+    if (Object.hasOwn(value, name) && typeof value[name] !== 'string')
+      fail(`${location}.${name}`, 'expected a string');
 }

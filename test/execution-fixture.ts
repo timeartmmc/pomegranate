@@ -56,6 +56,12 @@ export function executionFixture() {
       409: { description: 'Conflict', ...reference('Problem') },
     },
   });
+  const optionalCommand = (operationId: string) => ({
+    operationId,
+    'x-pom': policy,
+    requestBody: { required: false, ...reference('WriteInput') },
+    responses: { 204: { description: 'Accepted' } },
+  });
   return {
     ...base,
     components: {
@@ -130,6 +136,37 @@ export function executionFixture() {
           operationId: 'commandOptions',
           'x-pom': policy,
           responses: { 204: { description: 'Supported' } },
+        },
+      },
+      '/commands/optional': {
+        post: optionalCommand('maybeCreate'),
+        put: {
+          ...optionalCommand('maybeCreateNullable'),
+          requestBody: json({
+            anyOf: [
+              { $ref: '#/components/schemas/WriteInput' },
+              { type: 'null' },
+            ],
+          }),
+        },
+      },
+      '/commands/optional/{id}': {
+        patch: {
+          ...optionalCommand('maybeUpdate'),
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1 },
+            },
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: true,
+              schema: { type: 'string', minLength: 1 },
+            },
+          ],
         },
       },
       '/commands/{id}': {

@@ -1,6 +1,7 @@
 import { fail } from './diagnostics.js';
 import type { Constraints, Scalar, Schema } from './model.js';
 import { formats, multipleOf, patternTest } from './runtime.js';
+import type { StringFormat } from './runtime.js';
 
 function adjacentNumber(value: number, direction: 1 | -1): number {
   if (value === 0) return direction * Number.MIN_VALUE;
@@ -46,7 +47,7 @@ export function assertScalarRules(
   limits: Constraints,
   literals: readonly Scalar[] | undefined,
   location: string,
-  format?: 'date' | 'date-time' | 'uuid',
+  format?: StringFormat,
 ): void {
   for (const [minimum, maximum] of [
     ['minLength', 'maxLength'],
@@ -87,7 +88,7 @@ export function assertScalarRules(
 
 export function literalViolation(
   limits: Constraints,
-  format?: 'date' | 'date-time' | 'uuid',
+  format?: StringFormat,
 ): (item: Scalar) => string | undefined {
   // Bounds, formats and stable patterns use the emitted predicates. Property
   // escapes depend on the engine's Unicode data: defer their matching instead

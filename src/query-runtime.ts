@@ -828,7 +828,8 @@ function infiniteFactory<
     const request = build({
       ...input,
       query: {
-        ...input?.query,
+        // Only the parsed snapshot supplies base parameters for later pages.
+        ...(input && Object.hasOwn(input, 'query') ? input.query : undefined),
         ...(value === null ? {} : { [config.parameter]: value }),
       },
     });

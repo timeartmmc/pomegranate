@@ -37,6 +37,7 @@ type Entries = [string | number, Expression][];
 function operationScope(id: string): string {
   // Escape the marker as well as punctuation so original IDs and role suffixes
   // cannot alias: read-options, read_options and read_x2d_options stay distinct.
+  // The hex terminator distinguishes a.1 from a\u02e1 even beside hex digits.
   // Preserve existing ASCII symbols; names never depend on selection or order.
   return `operation_${id.replace(/[^A-Za-z0-9]/gu, (character) =>
     character === '_' ? '_u' : `_x${character.codePointAt(0)!.toString(16)}_`,
@@ -95,6 +96,10 @@ function renderComponents(
   return { renderer, declarations: declarations.join('\n') };
 }
 
+function bodyRequired(body: Operation['body']): boolean {
+  return body.kind === 'multipart' || (body.kind === 'json' && body.required);
+}
+
 // Request options are one strict object of strict parameter groups and the
 // body. The explicit structural return type is what `build` accepts.
 function parameterOptions(
@@ -106,7 +111,8 @@ function parameterOptions(
 ): { parse: Expression; type: string } {
   const fields: ObjectField[] = [];
   const types: string[] = [];
-  let required = operation.body.kind !== 'none';
+  const requiredBody = bodyRequired(operation.body);
+  let required = requiredBody;
   for (const [position, field] of [
     ['path', 'path'],
     ['query', 'query'],
@@ -152,7 +158,7 @@ function parameterOptions(
   if (operation.body.kind !== 'none') {
     fields.push({
       name: 'body',
-      required: true,
+      required: requiredBody,
       parse: renderer.part(
         operation.body.schema,
         'request',
@@ -160,7 +166,9 @@ function parameterOptions(
         `${scope}_body`,
       ),
     });
-    types.push(`body: ${renderer.typeOf(operation.body.schema, 'request')};`);
+    types.push(
+      `body${requiredBody ? '' : '?'}: ${renderer.typeOf(operation.body.schema, 'request')}${requiredBody ? '' : ' | undefined'};`,
+    );
   }
   const value = fields.length ? `{${types.join('')}}` : 'Record<string, never>';
   const type = required ? value : `${value} | undefined`;
@@ -299,11 +307,15 @@ function operationExpression(
     entries.push(['multipart', data(operation.body.fields)]);
   renderer.typeImports.add('Operation');
   renderer.typeImports.add('Invalid');
+  const bodyKind =
+    operation.body.kind === 'json' && !bodyRequired(operation.body)
+      ? "'json' | 'none'"
+      : `'${operation.body.kind}'`;
   return {
     expression: call(identifier('defineOperation'), [object(entries)]),
     // The named options parser already has a checked contract return. Refer to
     // it explicitly for isolated declarations without duplicating inline types.
-    type: `Operation<Exclude<ReturnType<typeof ${options.parse.source}>, Invalid>, ${responses.type}, '${operation.body.kind}'>`,
+    type: `Operation<Exclude<ReturnType<typeof ${options.parse.source}>, Invalid>, ${responses.type}, ${bodyKind}>`,
   };
 }
 

@@ -10,6 +10,7 @@ import type {
 } from './model.js';
 import { hasUnicodeProperty } from './scalar-rules.js';
 import { schemaType } from './schema-types.js';
+import type { StringFormat } from './runtime.js';
 
 // Follow references to the first non-reference component. Constraint sets are
 // applied from the terminal component outwards, preserving sibling-rule order.
@@ -63,6 +64,13 @@ export type ObjectField = Readonly<{
 }>;
 
 const stringRules = ['minLength', 'maxLength', 'pattern'] as const;
+const formatHelpers = {
+  date: 'dateFormat',
+  'date-time': 'dateTimeFormat',
+  uuid: 'uuidFormat',
+  email: 'emailFormat',
+  uri: 'uriFormat',
+} satisfies Record<StringFormat, keyof typeof import('./runtime.js')>;
 const numberRules = [
   'minimum',
   'maximum',
@@ -287,7 +295,9 @@ export function schemaRenderer(
       return rules(
         value,
         stringRules,
-        value.format === undefined ? [] : [['format', literal(value.format)]],
+        value.format === undefined
+          ? []
+          : [['format', use(formatHelpers[value.format])]],
       );
     if (!rules(value, numberRules)) return undefined;
     return rules(

@@ -59,7 +59,7 @@ void test('accepting a patch version preserves schema and operation-policy diagn
   Object.assign(unsupportedSchema.components.schemas.Widget.properties, {
     id: {
       type: 'string',
-      format: 'email',
+      format: 'idn-email',
     },
   });
   await assert.rejects(

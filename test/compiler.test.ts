@@ -357,7 +357,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
       Object.assign(d.components.schemas.Widget.properties, {
         id: {
           type: 'string',
-          format: 'email',
+          format: 'idn-email',
         },
       });
     },
@@ -382,11 +382,11 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /mixed fixed properties and dynamic maps/,
   ],
   [
-    'optional body',
+    'malformed request body required flag',
     (d) => {
-      preparation(d).requestBody.required = false;
+      Object.assign(preparation(d).requestBody, { required: 'false' });
     },
-    /required request bodies/,
+    /requestBody.required.*expected a boolean/,
   ],
   [
     'multipart without a client target',

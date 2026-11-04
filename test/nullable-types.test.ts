@@ -53,6 +53,8 @@ void test('nullable formats and input defaults preserve their existing equivalen
     { type: 'string', format: 'date' },
     { type: 'string', format: 'date-time' },
     { type: 'string', format: 'uuid' },
+    { type: 'string', format: 'email' },
+    { type: 'string', format: 'uri' },
     { type: 'string', minLength: 1 },
   ]) {
     const document = fixture();
@@ -179,7 +181,7 @@ const invalidSchemas: [string, unknown, RegExp][] = [
   ],
   [
     'null-only enum with unknown format',
-    { type: ['string', 'null'], enum: [null], format: 'email' },
+    { type: ['string', 'null'], enum: [null], format: 'idn-email' },
     /unsupported format/,
   ],
   [

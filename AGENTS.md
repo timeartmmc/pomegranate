@@ -16,8 +16,8 @@ Read [README.md](README.md) for an introduction,
 - Preserve concurrent work and avoid overwriting unrelated changes.
 - Start additional agents only when the user requests them. Do not commit,
   publish, or deploy without an explicit request.
-- The local agent coordination board is open. Use it to coordinate active
-  implementation, review, and documentation work; keep entries and findings concise.
+- The local agent coordination board is closed. Do not create or use a board
+  unless the user explicitly reopens it.
 - Keep proposals, sprint plans, and working notes in ignored `.local/` storage.
   Never track or package them, or link to them from public documentation.
 

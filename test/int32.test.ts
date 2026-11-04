@@ -175,7 +175,7 @@ const invalid: [string, Schema, RegExp][] = [
   [
     'number type mismatch',
     { type: 'number', format: 'int32' },
-    /format.*unsupported keyword/,
+    /unsupported numeric format/,
   ],
   [
     'string type mismatch',
@@ -211,6 +211,27 @@ for (const [name, schema, message] of invalid)
     });
     assert.deepEqual(input, before);
   });
+
+void test('number format diagnostics identify the supported scalar profiles', async () => {
+  for (const schema of [
+    { type: 'number', format: 'double' },
+    { type: 'number', format: 'float' },
+    { type: ['number', 'null'], format: 'double', const: null },
+  ]) {
+    await assert.rejects(
+      compile(document({ Value: schema }), roots),
+      (error) => {
+        assert.ok(error instanceof ContractError);
+        assert.equal(error.location, 'components.schemas.Value.format');
+        assert.equal(
+          error.message,
+          'components.schemas.Value.format: unsupported numeric format; number schemas do not support formats (supported formats: integer int32; string date, date-time, uuid, email or uri)',
+        );
+        return true;
+      },
+    );
+  }
+});
 
 void test('int32 reference chains reject contradictory bounds and exhausted literals', async () => {
   for (const constraints of [
