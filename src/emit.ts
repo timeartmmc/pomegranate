@@ -292,10 +292,11 @@ function operationExpression(
     [
       'parameters',
       data(
-        parameters.map(({ name, in: position, required }) => ({
+        parameters.map(({ name, in: position, required, explode }) => ({
           name,
           in: position,
           required,
+          ...(explode === false ? { explode } : {}),
         })),
       ),
     ],

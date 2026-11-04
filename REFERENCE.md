@@ -227,15 +227,15 @@ validation, including operations excluded from output.
 
 ## Supported vocabulary
 
-| Surface     | Current support                                                                                                                                                                                                                                                                                        |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                             |
-| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique nonempty operation IDs; whole-segment path placeholders                                                                                                                                                                                           |
-| Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
-| Bodies      | Required or optional JSON bodies; required multipart bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses with local component references and aliases; declared string response headers                                                                   |
-| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                   |
-| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                          |
-| Formats     | String `date`, `date-time`, `uuid`, `email`, and `uri`; integer `int32`; no coercion                                                                                                                                                                                                                   |
+| Surface     | Current support                                                                                                                                                                                                                                                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                             |
+| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique nonempty operation IDs; whole-segment path placeholders                                                                                                                                                                                                                           |
+| Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; string and optional nullable string request headers; simple path/header and form query serialization |
+| Bodies      | Required or optional JSON bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON or bodyless responses; string response headers; local component references and aliases                                                                                                                        |
+| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                                                   |
+| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                  |
+| Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, and `ipv6`; integer `int32`; no coercion                                                                                                                                                                                                                                   |
 
 JSON inputs and configuration accept one leading UTF-8 byte-order mark and
 reject duplicate decoded object keys. YAML files use a single YAML 1.2 core
@@ -276,14 +276,14 @@ generated format as JSON input.
 Descriptive metadata is checked for location and structure and does not change
 generated files:
 
-| Location                                                 | Accepted metadata                                                                         |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `info.license`                                           | Required string `name`; optional string `identifier` or `url`, mutually exclusive         |
-| `info.contact`, `info.termsOfService`                    | Contact has optional string `name`, `url` and `email`; terms of service is a string       |
-| Document, tags, operations, schemas (including `$ref`)   | `externalDocs` with required string `url` and optional string `description`               |
-| Schemas, including `$ref` siblings                       | `example` as a JSON value; `examples` as an array of JSON values; both may coexist        |
-| Parameters, response headers, JSON/multipart media types | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive |
-| Operations, parameters, response headers, schemas        | Boolean `deprecated`; deprecated declarations remain generated                            |
+| Location                                                 | Accepted metadata                                                                                       |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `info.license`                                           | Required string `name`; optional string `identifier` or `url`, mutually exclusive                       |
+| `info.contact`, `info.termsOfService`                    | Contact has optional string `name`, `url` and `email`; terms of service is a string                     |
+| Document, tags, operations, schemas (including `$ref`)   | `externalDocs` with required string `url` and optional string `description`                             |
+| Schemas, including `$ref` siblings                       | `$comment` as a string; `example` as a JSON value and `examples` as an array of JSON values may coexist |
+| Parameters, response headers, JSON/multipart media types | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive               |
+| Operations, parameters, response headers, schemas        | Boolean `deprecated`; deprecated declarations remain generated                                          |
 
 Example Objects accept string `summary` and `description`, and a JSON `value` or
 string `externalValue`, mutually exclusive. Named examples may reference
@@ -314,8 +314,9 @@ Supported schema composition is deliberately limited:
 - Objects with fixed properties use `additionalProperties: false` or omission.
   Pure maps set `additionalProperties` to a schema or `true` for arbitrary JSON
   values. Mixing fixed properties with dynamic entries is unsupported.
-- Local `$ref` schemas may add string, numeric, or array constraints appropriate
-  to the referenced type. Other semantic siblings are rejected.
+- Local `$ref` schemas may add string, numeric, or array constraints, or
+  `minProperties` and `maxProperties`, appropriate to the referenced type.
+  Other semantic siblings are rejected.
 
 Component schema names match `[A-Za-z0-9._-]+`, including hyphens, dots, and
 leading digits. References, discriminator mappings, and generated schema maps
@@ -378,6 +379,11 @@ text. Timestamps with leap seconds are unsupported.
 `uuid` validates case-insensitive hexadecimal `8-4-4-4-12` syntax without adding
 version or variant restrictions; braces and URN prefixes are rejected.
 
+`ipv4` accepts four decimal octets from 0 through 255, each with one to three
+digits; leading zeroes are allowed. `ipv6` accepts full or compressed hexadecimal
+forms and embedded IPv4 without leading zeroes. Brackets, zone identifiers, and
+network prefixes are unsupported. Both formats preserve the input text.
+
 `email` checks ASCII [RFC 5321 Mailbox syntax](https://www.rfc-editor.org/rfc/rfc5321.html#section-4.1.2):
 dot-separated atoms or a quoted local part, followed by a domain or IPv4/IPv6
 address literal. Quoted spaces and escapes, single-label domains, and ASCII
@@ -411,6 +417,16 @@ positions and returns a fresh dense array. Later growth is ignored; positions
 removed during parsing still undergo item validation. Missing slots cannot be
 filled by inherited numeric properties. Arbitrary JSON arrays use the same policy.
 
+`minProperties` and `maxProperties` are nonnegative integer bounds for fixed
+objects and maps. Fixed request objects count validated fields, excluding
+`undefined`; inherited or non-enumerable structural fields count after parsing
+copies them into the snapshot. Fixed response objects count original own
+enumerable string keys, including extra fields and fields later omitted by
+directional parsing, so a parsed response can have fewer keys than the declared
+minimum. Maps check bounds against both original own enumerable string keys
+and captured parsed entries. Reference constraints intersect with the target's
+bounds. For multipart inputs, see the [file array restriction](#multipart-requests).
+
 Path and query names/values must contain well-formed Unicode. Header values use
 HTTP byte characters, permit internal horizontal tabs, and reject other ASCII
 controls or leading/trailing SP/HTAB so transport serialization preserves them.
@@ -429,7 +445,7 @@ outputs change. For example, adding `format: "idn-email"` to the example's
 `components.schemas.WidgetId` produces:
 
 ```text
-POM: components.schemas.WidgetId.format: unsupported format; expected date, date-time, uuid, email or uri
+POM: components.schemas.WidgetId.format: unsupported format; expected date, date-time, uuid, email, uri, ipv4 or ipv6
 ```
 
 External or recursive references, general unions and other type arrays, objects
@@ -438,26 +454,40 @@ optional multipart request bodies, status ranges/default
 responses, non-bearer security schemes and external security-scheme references
 remain unsupported.
 
-### Reusable parameters and responses
+### Reusable components
 
-Path-item and operation parameter lists accept inline declarations or
-`{ "$ref": "#/components/parameters/WidgetId" }`. Exact-status operation response
-entries accept inline declarations or
-`{ "$ref": "#/components/responses/WidgetResult" }`. Define the targets in
-`components.parameters` or `components.responses`; component entries may alias
-another entry of the same kind.
+The following declarations accept inline objects or local component references:
+
+| Declaration                      | Reference target                        |
+| -------------------------------- | --------------------------------------- |
+| Path-item or operation parameter | `#/components/parameters/WidgetId`      |
+| Operation `requestBody`          | `#/components/requestBodies/WidgetBody` |
+| Exact-status operation response  | `#/components/responses/WidgetResult`   |
+| Response header                  | `#/components/headers/TraceId`          |
+
+`{ "$ref": "<target>" }` selects the target in its corresponding `components`
+map. Component entries may alias another entry of the same kind.
 
 Component names match `[A-Za-z0-9._-]+`; `__proto__`, `prototype`, and `constructor`
 are reserved. References may add string `summary` and `description` annotations;
-semantic siblings such as `name`, `schema`, `content`, and `headers` are rejected.
-Every component parameter and response is validated, including unused
-declarations. Missing targets, cycles, and external references fail with
+semantic siblings such as `required`, `schema`, `content`, and `headers` are
+rejected. Every declaration in these component maps is validated, including
+unused entries. Missing targets, cycles, and external references fail with
 diagnostics.
+
+Request body components keep the declared `required` flag, media type, and
+schema. [Optional JSON bodies](#build-and-validate-a-request) and
+[multipart bodies](#multipart-requests) follow the same rules as inline bodies.
+GET and HEAD request bodies remain unsupported, including through references.
 
 Response components require a string `description` and may declare JSON content
 and response headers using the same rules as inline responses. Each operation
 binds the resolved body and headers to its declared exact status. HEAD responses
 and statuses 204, 205, and 304 must be bodyless, including through references.
+
+Header components describe response headers; each response header map supplies
+the wire name. Every use rejects invalid names, case-insensitive duplicates,
+and transport-owned response headers.
 
 ### Directional object fields
 
@@ -555,7 +585,7 @@ Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and occupy an
 entire segment. Path values cannot be empty, `.` or `..`.
 
 Path-item and operation parameter lists accept
-[reusable component references](#reusable-parameters-and-responses) as well as
+[reusable component references](#reusable-components) as well as
 inline declarations.
 
 Path-item `parameters` apply to every operation under that path. An operation
@@ -580,9 +610,15 @@ contracts reject transport-owned request headers such as `Host`, `Origin`, and
 `Proxy-*`/`Sec-*` names. Response declarations reject `Set-Cookie` and
 `Set-Cookie2`, which browser Fetch hides.
 
-Form query arrays use repeated keys (`tag=one&tag=two`); an optional empty array
-adds no keys. Required empty arrays fail validation because this encoding cannot
-represent their required presence. Other array serialization styles are rejected.
+Form query arrays use repeated keys (`tag=one&tag=two`) when `explode` is omitted
+or `true`. With `explode: false` and `style: "form"` (or an omitted `style`), an
+array uses comma-separated values under one key. Items are percent-encoded
+individually before joining: `["a,b", "c d"]` becomes `tag=a%2Cb,c%20d`. Server
+decoders must split raw comma separators before percent-decoding each item.
+Both modes omit optional empty arrays and reject required empty arrays because
+an empty collection cannot represent its required presence. Other array
+serialization styles remain unsupported.
+
 Optional nullable primitive query parameters omit `null` and `undefined`, while
 preserving `0`, `false`, empty strings allowed by the schema, and literal `"null"`
 text. Non-null values still satisfy the declared constraints and formats.
@@ -617,6 +653,11 @@ Prepared uploads have `bodyKind: "multipart"`, the complete validated `body`, an
 a `multipart` field inventory (`name`, `kind`, `multiple`, `required`). Applications
 resolve native references and serialize every field, repeating parts for file
 arrays. Required file arrays cannot be empty; optional empty arrays omit parts.
+
+Multipart objects with `minProperties` or `maxProperties` require each optional
+file array to have an effective `minItems` of at least 1; local reference
+constraints can supply that minimum.
+
 The application owns file access, `FormData`, progress, and fresh retry bodies.
 Let the transport set multipart Content-Type and its boundary. POM neither reads
 files nor serializes uploads. Multipart names must be ASCII HTTP tokens; text

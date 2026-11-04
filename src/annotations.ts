@@ -9,6 +9,7 @@ import {
 
 export const exampleKeys = ['example', 'examples'];
 export const schemaAnnotationKeys = [
+  '$comment',
   'title',
   'description',
   'default',
@@ -139,6 +140,8 @@ export function schemaAnnotations(
   value: Record<string, unknown>,
   location: string,
 ): void {
+  // Author comments never enter normalized schemas or generated output.
+  stringFields(value, ['$comment'], location);
   annotations(value, location);
   externalDocsAnnotation(value, location);
   deprecatedAnnotation(value, location);

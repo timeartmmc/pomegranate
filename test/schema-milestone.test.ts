@@ -274,14 +274,14 @@ void test('duplicate operation identifiers identify both declarations', async ()
 
 for (const [name, mutate, pattern] of [
   [
-    'non-exploded query arrays',
+    'non-boolean query explode',
     (d) => {
       Object.assign(
         present(entry(d.paths, '/samples/Scalars').post.parameters[1]),
-        { explode: false },
+        { explode: 'false' },
       );
     },
-    /explode.*query arrays require/,
+    /explode.*expected a boolean/,
   ],
   [
     'required nullable headers',

@@ -47,6 +47,8 @@ const children: Readonly<Record<Node, Fields>> = {
     schemas: 'map:schema',
     parameters: 'map:parameter',
     responses: 'map:response',
+    requestBodies: 'map:requestBody',
+    headers: 'map:header',
     examples: 'map:example',
     securitySchemes: 'map:securityScheme',
   },
@@ -189,7 +191,10 @@ export function ignoreExtensions(
       // error. A Schema Object ref permits only its externalDocs child here.
       if (
         reference &&
-        (frame.context === 'parameter' || frame.context === 'response')
+        (frame.context === 'parameter' ||
+          frame.context === 'response' ||
+          frame.context === 'requestBody' ||
+          frame.context === 'header')
       )
         continue;
       if (reference && frame.context === 'schema' && key !== 'externalDocs')

@@ -8,7 +8,7 @@ import type {
   DirectionalSchemas,
   Schema,
 } from './model.js';
-import { hasUnicodeProperty } from './scalar-rules.js';
+import { hasUnicodeProperty, intersectConstraints } from './scalar-rules.js';
 import { schemaType } from './schema-types.js';
 import type { StringFormat } from './runtime.js';
 
@@ -70,6 +70,8 @@ const formatHelpers = {
   uuid: 'uuidFormat',
   email: 'emailFormat',
   uri: 'uriFormat',
+  ipv4: 'ipv4Format',
+  ipv6: 'ipv6Format',
 } satisfies Record<StringFormat, keyof typeof import('./runtime.js')>;
 const numberRules = [
   'minimum',
@@ -79,6 +81,7 @@ const numberRules = [
   'multipleOf',
 ] as const;
 const arrayRules = ['minItems', 'maxItems'] as const;
+const objectRules = ['minProperties', 'maxProperties'] as const;
 
 function rules(
   limits: Constraints,
@@ -188,7 +191,17 @@ export function schemaRenderer(
     strict: boolean,
     exported = false,
     forbidden: readonly string[] = [],
+    limits?: Expression,
   ): void {
+    const sizeCheck = (body: string[]) => {
+      if (!limits) return;
+      const bounds = constant(`rules_${name}`, limits.source, 'ObjectRules');
+      // Request counts use the normalized value sent as JSON. Response counts
+      // precede stripping; chunk parsers omit bounds so only the outer counts.
+      body.push(
+        `if (${use('propertyCount').source}(${strict ? 'output' : 'source'}, issues, ${bounds}${strict ? ', true' : ''})) return invalid;`,
+      );
+    };
     // Bound TypeScript's failure-condition flow graph while retaining a checked
     // return for every field. Parse every chunk before testing failures so a
     // wide invalid object still reports all sibling issues in source order.
@@ -198,6 +211,7 @@ export function schemaRenderer(
         `const source = ${use('objectValue').source}(input, issues);`,
         'if (source === invalid) return invalid;',
       ];
+      if (!strict) sizeCheck(body);
       const values: string[] = [];
       for (let start = 0; start < fields.length; start += 64) {
         const group = fields.slice(start, start + 64);
@@ -213,7 +227,12 @@ export function schemaRenderer(
       const failures = values.map((value) => `${value} === invalid`);
       if (strict) objectChecks(body, failures, name, fields, forbidden);
       body.push(`if (${failures.join(' || ')}) return invalid;`);
-      body.push(`return {${values.map((value) => `...${value}`).join(',')}};`);
+      const output = `{${values.map((value) => `...${value}`).join(',')}}`;
+      if (strict && limits) {
+        body.push(`const output = ${output};`);
+        sizeCheck(body);
+        body.push('return output;');
+      } else body.push(`return ${output};`);
       declarations.push(functionDeclaration(name, type, body, exported));
       return;
     }
@@ -222,6 +241,7 @@ export function schemaRenderer(
       `const source = ${use('objectValue').source}(input, issues);`,
       'if (source === invalid) return invalid;',
     ];
+    if (!strict) sizeCheck(body);
     const failures = fields.map((entry, index) => {
       const helper = use(entry.required ? 'field' : 'optionalField');
       body.push(
@@ -238,7 +258,12 @@ export function schemaRenderer(
       helpers.add('absent');
       return `...(v${index} === absent ? {} : { ${key}: v${index} })`;
     });
-    body.push(`return {${properties.join(',')}};`);
+    const output = `{${properties.join(',')}}`;
+    if (strict && limits) {
+      body.push(`const output = ${output};`);
+      sizeCheck(body);
+      body.push('return output;');
+    } else body.push(`return ${output};`);
     declarations.push(functionDeclaration(name, type, body, exported));
   }
 
@@ -335,12 +360,30 @@ export function schemaRenderer(
         return call(target === 'browser' ? 'browserFile' : 'nativeFile');
       case 'ref': {
         if (Object.keys(value.constraints).length === 0) return;
-        // Resolve alias chains here: a pure alias binds the terminal parser
-        // itself, and constrained chains become one wrapper with ordered rule
-        // data. Neither runtime depth nor validator identity grows with chains.
+        // Resolve aliases here: container bounds combine into one parser;
+        // scalar siblings use one wrapper with ordered rule data. Runtime
+        // depth and validator identity never grow with alias-chain depth.
         const { terminal, sets } = aliasChain(value, schemas[direction]);
-        const base = reference(terminal, direction).source;
         const terminalSchema = schemas[direction][terminal]!;
+        if (terminalSchema.kind === 'object' || terminalSchema.kind === 'map') {
+          // Rebuild one parser with intersected bounds. Refining the base's
+          // returned object would count already-stripped response fields, and
+          // chaining wrappers would repeatedly enumerate the same input.
+          const merged = sets.reduce<Constraints>(
+            intersectConstraints,
+            terminalSchema,
+          );
+          return define(
+            { ...terminalSchema, ...merged },
+            direction,
+            location,
+            scope,
+            name,
+            type,
+            exported,
+          );
+        }
+        const base = reference(terminal, direction).source;
         if (terminalSchema.kind === 'array') {
           const minimum = [
             terminalSchema.minItems,
@@ -384,13 +427,20 @@ export function schemaRenderer(
           ),
         );
       }
-      case 'map':
-        return call(
-          'map',
+      case 'map': {
+        const values =
           value.values === true
             ? use('jsonValue').source
-            : child(value.values, `${location}.additionalProperties`).source,
-        );
+            : child(value.values, `${location}.additionalProperties`).source;
+        const limits = rules(value, objectRules);
+        return limits
+          ? call(
+              'map',
+              values,
+              constant(`rules_${name}`, limits.source, 'ObjectRules'),
+            )
+          : call('map', values);
+      }
       case 'union': {
         if (value.discriminator) {
           const { propertyName, mapping } = value.discriminator;
@@ -427,6 +477,7 @@ export function schemaRenderer(
           direction === 'request',
           exported,
           value.forbidden,
+          rules(value, objectRules),
         );
       case 'array': {
         const limits = rules(value, arrayRules);

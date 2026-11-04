@@ -36,10 +36,12 @@ const numberConstraints = [
   'multipleOf',
 ];
 const arrayConstraints = ['minItems', 'maxItems'];
+const objectConstraints = ['minProperties', 'maxProperties'];
 const constraintKeys = [
   ...stringConstraints,
   ...numberConstraints,
   ...arrayConstraints,
+  ...objectConstraints,
 ];
 
 const maximumSchemaNesting = 128;
@@ -95,10 +97,11 @@ function constraints(
   location: string,
 ): Constraints {
   // Parse sibling syntax before folding null-only literals. Check whether the
-  // interval admits a value only for a retained scalar, array or ref target.
+  // interval admits a value only for a retained scalar, container or ref target.
   const result = {
     ...bounds(value, 'minLength', 'maxLength', location, true),
     ...bounds(value, 'minItems', 'maxItems', location, true),
+    ...bounds(value, 'minProperties', 'maxProperties', location, true),
     ...bounds(value, 'minimum', 'maximum', location, false),
     ...bounds(value, 'exclusiveMinimum', 'exclusiveMaximum', location, false),
   };
@@ -336,9 +339,23 @@ function normalizeObject(
 ): Schema {
   keys(
     value,
-    [...typedSchemaKeys, 'properties', 'required', 'additionalProperties'],
+    [
+      ...typedSchemaKeys,
+      'properties',
+      'required',
+      'additionalProperties',
+      ...objectConstraints,
+    ],
     location,
   );
+  const limits = bounds(
+    value,
+    'minProperties',
+    'maxProperties',
+    location,
+    true,
+  );
+  assertScalarRules('object', limits, undefined, location);
   const properties = record(
     Object.hasOwn(value, 'properties') ? value.properties : {},
     `${location}.properties`,
@@ -374,6 +391,7 @@ function normalizeObject(
       );
     return {
       kind: 'map',
+      ...limits,
       values:
         value.additionalProperties === true
           ? true
@@ -392,11 +410,12 @@ function normalizeObject(
     Object.keys(properties).length === 0 &&
     !Object.hasOwn(value, 'additionalProperties')
   )
-    return { kind: 'map', values: true };
+    return { kind: 'map', values: true, ...limits };
   return {
     kind: 'object',
     properties: normalized,
     required: [...required].sort(),
+    ...limits,
   };
 }
 
@@ -761,7 +780,9 @@ function validateReferenceConstraints(
     resolved.kind !== 'string' &&
     resolved.kind !== 'number' &&
     resolved.kind !== 'integer' &&
-    resolved.kind !== 'array'
+    resolved.kind !== 'array' &&
+    resolved.kind !== 'object' &&
+    resolved.kind !== 'map'
   )
     return;
   const chain: Extract<Schema, { kind: 'ref' }>[] = [];
@@ -772,7 +793,7 @@ function validateReferenceConstraints(
   }
   let rules = cache.get(target) ?? {
     limits: resolved,
-    literals: resolved.kind === 'array' ? undefined : resolved.literals,
+    literals: 'literals' in resolved ? resolved.literals : undefined,
   };
   for (const reference of chain.reverse()) {
     const limits = intersectConstraints(rules.limits, reference.constraints);
@@ -834,7 +855,9 @@ function validateUsage(
           ? numberConstraints
           : resolved.kind === 'array'
             ? arrayConstraints
-            : [];
+            : resolved.kind === 'object' || resolved.kind === 'map'
+              ? objectConstraints
+              : [];
     // Alias depth is independent of data depth. Walk long chains iteratively,
     // checking intermediate defaults and constraints in this usage context.
     let target: Schema = schema;

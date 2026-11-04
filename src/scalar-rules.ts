@@ -22,6 +22,7 @@ export function intersectConstraints(
     'exclusiveMinimum',
     'minLength',
     'minItems',
+    'minProperties',
   ] as const) {
     const left = base[key];
     const right = extra[key];
@@ -33,6 +34,7 @@ export function intersectConstraints(
     'exclusiveMaximum',
     'maxLength',
     'maxItems',
+    'maxProperties',
   ] as const) {
     const left = base[key];
     const right = extra[key];
@@ -52,6 +54,7 @@ export function assertScalarRules(
   for (const [minimum, maximum] of [
     ['minLength', 'maxLength'],
     ['minItems', 'maxItems'],
+    ['minProperties', 'maxProperties'],
   ] as const) {
     const lower = limits[minimum];
     const upper = limits[maximum];

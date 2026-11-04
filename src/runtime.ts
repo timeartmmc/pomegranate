@@ -509,6 +509,16 @@ export const uriFormat: StringFormatRule = {
   check: uri,
   message: 'expected a URI',
 };
+export const ipv4Format: StringFormatRule = {
+  // JSON Schema uses RFC 2673 dotted-quad, which allows leading zeroes.
+  // URI hosts and embedded IPv4 in IPv6 retain their stricter grammar.
+  check: (value: string): boolean => ipv4(value, true),
+  message: 'expected an IPv4 address',
+};
+export const ipv6Format: StringFormatRule = {
+  check: ipv6,
+  message: 'expected an IPv6 address',
+};
 export const dateFormat: StringFormatRule = {
   check: (value: string): boolean => {
     const match = datePattern.exec(value);
@@ -542,6 +552,8 @@ export const formats = {
   uuid: (value: string): boolean => uuidFormat.check(value),
   email: (value: string): boolean => emailFormat.check(value),
   uri: (value: string): boolean => uriFormat.check(value),
+  ipv4: (value: string): boolean => ipv4Format.check(value),
+  ipv6: (value: string): boolean => ipv6Format.check(value),
 } as const;
 export type StringFormat = keyof typeof formats;
 
@@ -696,6 +708,46 @@ export function refineNumber<T extends number>(
 }
 
 export type ArrayRules = Readonly<{ minItems?: number; maxItems?: number }>;
+export type ObjectRules = Readonly<{
+  minProperties?: number;
+  maxProperties?: number;
+}>;
+
+export function propertyCount(
+  source: object,
+  issues: Issues,
+  rules: ObjectRules,
+  omitUndefined = false,
+): boolean {
+  const keys = Object.keys(source);
+  let count = keys.length;
+  // Requests count the detached parsed object as JSON will serialize it:
+  // optional undefined disappears, while inherited fields became own fields.
+  // Responses count original members before stripping, without reading values.
+  if (omitUndefined)
+    for (const key of keys) if (Reflect.get(source, key) === undefined) count--;
+  return propertyBounds(count, issues, rules);
+}
+
+function propertyBounds(
+  count: number,
+  issues: Issues,
+  rules: ObjectRules,
+): boolean {
+  if (rules.maxProperties !== undefined && count > rules.maxProperties) {
+    report(issues, `expected at most ${rules.maxProperties} properties`, false);
+    return true;
+  }
+  if (rules.minProperties !== undefined && count < rules.minProperties) {
+    report(
+      issues,
+      `expected at least ${rules.minProperties} properties`,
+      false,
+    );
+    return true;
+  }
+  return false;
+}
 
 // Observe a host length once and reject impossible counts before any item read.
 function arrayLength(input: readonly unknown[]): number | undefined {
@@ -754,10 +806,14 @@ export function map<T>(
   input: unknown,
   issues: Issues,
   values: Parse<T>,
+  rules?: ObjectRules,
 ): Record<string, T> | Invalid {
   // Dynamic JSON keys are data: inspect own entries of plain records and build
   // the result with fromEntries so keys such as __proto__ stay own properties.
   if (!plainRecord(input)) return report(issues, 'expected an object', true);
+  // Count the original own JSON keys before reading values or projecting data.
+  // Unbounded maps keep their existing traversal without an extra enumeration.
+  if (rules && propertyCount(input, issues, rules)) return invalid;
   const start = issues.length;
   const entries: [string, T][] = [];
   for (const [name, value] of Object.entries(input)) {
@@ -768,6 +824,15 @@ export function map<T>(
       within(issues, before, name);
     } else entries.push([name, parsed]);
   }
+  // Getters may remove members or make hidden members enumerable while
+  // Object.entries captures values. Check the detached count too, without
+  // another enumeration or getter read.
+  if (
+    rules &&
+    issues.length === start &&
+    propertyBounds(entries.length, issues, rules)
+  )
+    return invalid;
   return issues.length === start ? Object.fromEntries(entries) : invalid;
 }
 
@@ -1081,6 +1146,7 @@ type Parameter = Readonly<{
   name: string;
   in: 'path' | 'query' | 'header';
   required: boolean;
+  explode?: false;
 }>;
 type Definition<
   O extends RequestParts | undefined,
@@ -1136,7 +1202,11 @@ function encodePath(
     ]);
   }
   requireWellFormed(serialized, operationId, ['path', name]);
-  return encodeURIComponent(serialized).replace(
+  return encodeComponent(serialized);
+}
+
+function encodeComponent(value: string): string {
+  return encodeURIComponent(value).replace(
     /[!'()*]/g,
     (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
   );
@@ -1376,7 +1446,8 @@ function serializeParameters(
   options: RequestParts,
 ): { url: string; headers: HeaderContext } {
   let path = template;
-  const query = new URLSearchParams();
+  let query = new URLSearchParams();
+  let segments: string[] | undefined;
   const headers: Record<string, string> = dictionary<string>();
   // Parsing copies structural input fields into own output properties. Never
   // recover an omitted group or parameter from polluted Object.prototype data.
@@ -1408,6 +1479,23 @@ function serializeParameters(
             message: 'a required query array must contain at least one value',
           },
         ]);
+      if (parameter.explode === false && Array.isArray(value)) {
+        if (value.length === 0) continue;
+        // OAS Appendix C.2: split separators before decoding. Encoding a joined
+        // array with URLSearchParams would turn data commas and delimiters into
+        // the same bytes. Keep the existing form encoder for all other values.
+        const items = value.map((item) => {
+          const serialized = String(item);
+          requireWellFormed(serialized, operationId, ['query', parameter.name]);
+          return encodeComponent(serialized);
+        });
+        segments ??= [];
+        const previous = query.toString();
+        if (previous) segments.push(previous);
+        query = new URLSearchParams();
+        segments.push(`${encodeComponent(parameter.name)}=${items.join(',')}`);
+        continue;
+      }
       for (const item of Array.isArray(value) ? value : [value]) {
         const serialized = String(item);
         // URLSearchParams silently replaces unpaired surrogates. Validate first
@@ -1431,7 +1519,10 @@ function serializeParameters(
       headers[parameter.name] = value;
     }
   }
-  const search = query.toString();
+  const tail = query.toString();
+  const search = segments
+    ? segments.join('&') + (tail ? `&${tail}` : '')
+    : tail;
   return {
     url: `${path}${search ? `?${search}` : ''}`,
     headers: frozenHeaders(headers),

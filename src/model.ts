@@ -13,6 +13,8 @@ export type Constraints = {
   readonly multipleOf?: number;
   readonly minItems?: number;
   readonly maxItems?: number;
+  readonly minProperties?: number;
+  readonly maxProperties?: number;
 };
 
 export type Schema = {
@@ -26,10 +28,15 @@ export type Schema = {
       readonly name: string;
       readonly location: string;
       // Siblings restrict the referenced base; they do not replace its kind or
-      // constraints. Scalar nodes carry their own type-specific limits inline.
+      // constraints. Terminal nodes carry their type-specific limits inline.
       readonly constraints: Constraints;
     }
-  | { readonly kind: 'map'; readonly values: Schema | true }
+  | {
+      readonly kind: 'map';
+      readonly values: Schema | true;
+      readonly minProperties?: number;
+      readonly maxProperties?: number;
+    }
   | {
       readonly kind: 'union';
       readonly branches: readonly Schema[];
@@ -43,6 +50,8 @@ export type Schema = {
       readonly properties: Readonly<Record<string, Schema>>;
       readonly required: readonly string[];
       readonly forbidden?: readonly string[];
+      readonly minProperties?: number;
+      readonly maxProperties?: number;
     }
   | {
       readonly kind: 'array';
@@ -91,6 +100,7 @@ export type Parameter = {
   readonly in: 'path' | 'query' | 'header';
   readonly required: boolean;
   readonly schema: Schema;
+  readonly explode?: false;
 };
 
 export type ResponseHeader = {

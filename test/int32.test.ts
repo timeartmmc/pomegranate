@@ -225,7 +225,7 @@ void test('number format diagnostics identify the supported scalar profiles', as
         assert.equal(error.location, 'components.schemas.Value.format');
         assert.equal(
           error.message,
-          'components.schemas.Value.format: unsupported numeric format; number schemas do not support formats (supported formats: integer int32; string date, date-time, uuid, email or uri)',
+          'components.schemas.Value.format: unsupported numeric format; number schemas do not support formats (supported formats: integer int32; string date, date-time, uuid, email, uri, ipv4 or ipv6)',
         );
         return true;
       },

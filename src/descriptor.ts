@@ -64,6 +64,8 @@ const methods = [
 
 type Validation = ReturnType<typeof schemaValidation>;
 type ResponseDefinition = Omit<ContractResponse, 'status'>;
+type HeaderDefinition = Omit<ResponseHeader, 'name'>;
+type RequestBodyDefinition = Exclude<Operation['body'], { kind: 'none' }>;
 
 type SchemaContext = Readonly<{
   source: SchemaTable;
@@ -78,6 +80,8 @@ type OperationContext = Readonly<{
   examples: ReadonlySet<string>;
   parameterComponents: ReadonlyMap<string, Parameter>;
   responseComponents: ReadonlyMap<string, ResponseDefinition>;
+  requestBodyComponents: ReadonlyMap<string, RequestBodyDefinition>;
+  headerComponents: ReadonlyMap<string, HeaderDefinition>;
   bearerSchemes: ReadonlySet<string>;
   inheritedSecurity: AuthTransport;
   memberships: ReadonlyMap<string, readonly string[]> | undefined;
@@ -272,11 +276,6 @@ function normalizeParameter(
     position === 'query' &&
     resolved.kind === 'array' &&
     primitive(resolved.items);
-  if (queryArray && value.explode === false)
-    fail(
-      `${location}.explode`,
-      'query arrays require form serialization with explode true',
-    );
   if (nullableHeader && required)
     fail(
       `${location}.required`,
@@ -305,13 +304,61 @@ function normalizeParameter(
     if (resolved.kind !== 'string' && !nullableHeader)
       fail(`${location}.schema`, 'header parameters require string schemas');
   }
-  return { name, in: position, required, schema };
+  return {
+    name,
+    in: position,
+    required,
+    schema,
+    ...(queryArray && value.explode === false
+      ? { explode: false as const }
+      : {}),
+  };
+}
+
+function normalizeHeader(
+  header: Record<string, unknown>,
+  context: SchemaContext,
+  examples: ReadonlySet<string>,
+  location: string,
+): HeaderDefinition {
+  keys(
+    header,
+    [
+      'description',
+      'required',
+      'schema',
+      'style',
+      'explode',
+      'deprecated',
+      ...exampleKeys,
+    ],
+    location,
+  );
+  annotations(header, location);
+  deprecatedAnnotation(header, location);
+  exampleAnnotations(header, location, examples);
+  if (Object.hasOwn(header, 'style') && header.style !== 'simple')
+    fail(`${location}.style`, 'only simple headers are supported');
+  if (Object.hasOwn(header, 'explode'))
+    optionalBoolean(header, 'explode', location);
+  const schema = normalizeFor(
+    header.schema,
+    `${location}.schema`,
+    context,
+    'response',
+  );
+  if (
+    resolveSchema(schema, context.projection.schemas.response).kind !== 'string'
+  )
+    fail(`${location}.schema`, 'response headers require string schemas');
+  return { required: optionalBoolean(header, 'required', location), schema };
 }
 
 function normalizeHeaders(
   input: unknown,
   context: SchemaContext,
   examples: ReadonlySet<string>,
+  components: ReadonlyMap<string, HeaderDefinition>,
   location: string,
 ): readonly ResponseHeader[] {
   const headers = record(input, location);
@@ -319,6 +366,8 @@ function normalizeHeaders(
   return Object.keys(headers)
     .sort()
     .map((rawName) => {
+      // A reusable Header Object has no wire name. Check the binding here even
+      // when its schema and requiredness came from a shared component.
       // Case folding can turn non-ASCII characters into valid ASCII names.
       if (!validHeaderName(rawName))
         fail(`${location}.${rawName}`, 'invalid HTTP header name');
@@ -340,46 +389,15 @@ function normalizeHeaders(
         );
       seen.add(name);
       const headerLocation = `${location}.${rawName}`;
-      const header = record(headers[rawName], headerLocation);
-      keys(
-        header,
-        [
-          'description',
-          'required',
-          'schema',
-          'style',
-          'explode',
-          'deprecated',
-          ...exampleKeys,
-        ],
-        headerLocation,
-      );
-      annotations(header, headerLocation);
-      deprecatedAnnotation(header, headerLocation);
-      exampleAnnotations(header, headerLocation, examples);
-      if (Object.hasOwn(header, 'style') && header.style !== 'simple')
-        fail(`${headerLocation}.style`, 'only simple headers are supported');
-      if (Object.hasOwn(header, 'explode'))
-        optionalBoolean(header, 'explode', headerLocation);
-      const schema = normalizeFor(
-        header.schema,
-        `${headerLocation}.schema`,
-        context,
-        'response',
-      );
-      if (
-        resolveSchema(schema, context.projection.schemas.response).kind !==
-        'string'
-      )
-        fail(
-          `${headerLocation}.schema`,
-          'response headers require string schemas',
-        );
-      return {
-        name,
-        required: optionalBoolean(header, 'required', headerLocation),
-        schema,
-      };
+      const value = record(headers[rawName], headerLocation);
+      const target = componentReference(value, 'header', headerLocation);
+      const header =
+        target === undefined
+          ? normalizeHeader(value, context, examples, headerLocation)
+          : components.get(target);
+      if (!header)
+        fail(`${headerLocation}.$ref`, `unresolved header reference ${target}`);
+      return { name, ...header };
     });
 }
 
@@ -416,6 +434,14 @@ function multipartFields(
   const object = resolveSchema(schema, schemas);
   if (object.kind !== 'object')
     fail(location, 'multipart requires a fixed object of text and file fields');
+  let bounded =
+    object.minProperties !== undefined || object.maxProperties !== undefined;
+  for (let target = schema; !bounded && target.kind === 'ref';) {
+    bounded =
+      target.constraints.minProperties !== undefined ||
+      target.constraints.maxProperties !== undefined;
+    target = schemas[target.name]!;
+  }
   return Object.entries(object.properties).map(([name, field]) => {
     if (!validHeaderName(name))
       fail(
@@ -431,11 +457,27 @@ function multipartFields(
         `${location}.properties.${name}`,
         'multipart fields require strings, files or arrays of files',
       );
+    const required = object.required.includes(name);
+    if (bounded && multiple && !required) {
+      let nonempty = (resolved.minItems ?? 0) > 0;
+      for (let target = field; !nonempty && target.kind === 'ref';) {
+        nonempty = (target.constraints.minItems ?? 0) > 0;
+        target = schemas[target.name]!;
+      }
+      // An optional empty file array emits no multipart field. Its presence
+      // cannot participate in property counts; require a representable value
+      // when present, with undefined/omission still meaning no field.
+      if (!nonempty)
+        fail(
+          `${location}.properties.${name}`,
+          'multipart property-count bounds require optional file arrays to declare minItems >= 1',
+        );
+    }
     return {
       name,
       kind: resolved.kind === 'string' ? 'text' : 'file',
       multiple,
-      required: object.required.includes(name),
+      required,
     };
   });
 }
@@ -521,70 +563,72 @@ function operationParameters(
   return parameters;
 }
 
+function normalizeRequestBody(
+  request: Record<string, unknown>,
+  context: SchemaContext,
+  examples: ReadonlySet<string>,
+  location: string,
+): RequestBodyDefinition {
+  keys(request, ['description', 'required', 'content'], location);
+  annotations(request, location);
+  const required = optionalBoolean(request, 'required', location);
+  const contentLocation = `${location}.content`;
+  const content = record(request.content, contentLocation);
+  keys(content, ['application/json', 'multipart/form-data'], contentLocation);
+  const mediaType = Object.keys(content)[0];
+  if (Object.keys(content).length !== 1 || !mediaType)
+    fail(contentLocation, 'expected exactly one JSON or multipart media type');
+  const media = record(content[mediaType], `${contentLocation}.${mediaType}`);
+  keys(media, ['schema', ...exampleKeys], `${contentLocation}.${mediaType}`);
+  exampleAnnotations(media, `${contentLocation}.${mediaType}`, examples);
+  const schemaLocation = `${contentLocation}.${mediaType}.schema`;
+  const multipart = mediaType === 'multipart/form-data';
+  if (multipart && !required)
+    fail(
+      `${location}.required`,
+      'optional multipart request bodies are unsupported',
+    );
+  const schema = normalizeFor(
+    media.schema,
+    schemaLocation,
+    context,
+    'request',
+    multipart ? 'multipart' : 'request',
+  );
+  return multipart
+    ? {
+        kind: 'multipart',
+        schema,
+        fields: multipartFields(
+          schema,
+          context.projection.schemas.request,
+          schemaLocation,
+        ),
+      }
+    : { kind: 'json', schema, required };
+}
+
 function requestBody(
   value: Record<string, unknown>,
   method: (typeof methods)[number],
   context: SchemaContext,
   examples: ReadonlySet<string>,
+  components: ReadonlyMap<string, RequestBodyDefinition>,
   location: string,
 ): Operation['body'] {
-  let body: Operation['body'] = { kind: 'none' };
-  if (Object.hasOwn(value, 'requestBody')) {
-    if (method === 'get' || method === 'head')
-      fail(
-        `${location}.requestBody`,
-        `${method.toUpperCase()} bodies are unsupported`,
-      );
-    const request = record(value.requestBody, `${location}.requestBody`);
-    keys(
-      request,
-      ['description', 'required', 'content'],
-      `${location}.requestBody`,
-    );
-    annotations(request, `${location}.requestBody`);
-    const required = optionalBoolean(
-      request,
-      'required',
-      `${location}.requestBody`,
-    );
-    const contentLocation = `${location}.requestBody.content`;
-    const content = record(request.content, contentLocation);
-    keys(content, ['application/json', 'multipart/form-data'], contentLocation);
-    const mediaType = Object.keys(content)[0];
-    if (Object.keys(content).length !== 1 || !mediaType)
-      fail(
-        contentLocation,
-        'expected exactly one JSON or multipart media type',
-      );
-    const media = record(content[mediaType], `${contentLocation}.${mediaType}`);
-    keys(media, ['schema', ...exampleKeys], `${contentLocation}.${mediaType}`);
-    exampleAnnotations(media, `${contentLocation}.${mediaType}`, examples);
-    const schemaLocation = `${contentLocation}.${mediaType}.schema`;
-    const multipart = mediaType === 'multipart/form-data';
-    if (multipart && !required)
-      fail(
-        `${location}.requestBody.required`,
-        'optional multipart request bodies are unsupported',
-      );
-    const schema = normalizeFor(
-      media.schema,
-      schemaLocation,
-      context,
-      'request',
-      multipart ? 'multipart' : 'request',
-    );
-    body = multipart
-      ? {
-          kind: 'multipart',
-          schema,
-          fields: multipartFields(
-            schema,
-            context.projection.schemas.request,
-            schemaLocation,
-          ),
-        }
-      : { kind: 'json', schema, required };
-  }
+  if (!Object.hasOwn(value, 'requestBody')) return { kind: 'none' };
+  // Requiredness and media validation belong to the definition. Whether a body
+  // is allowed belongs to each operation, including uses through aliases.
+  const bodyLocation = `${location}.requestBody`;
+  if (method === 'get' || method === 'head')
+    fail(bodyLocation, `${method.toUpperCase()} bodies are unsupported`);
+  const request = record(value.requestBody, bodyLocation);
+  const target = componentReference(request, 'requestBody', bodyLocation);
+  if (target === undefined)
+    return normalizeRequestBody(request, context, examples, bodyLocation);
+  const body = components.get(target);
+  if (!body)
+    fail(`${bodyLocation}.$ref`, `unresolved request body reference ${target}`);
   return body;
 }
 
@@ -592,6 +636,7 @@ function normalizeResponse(
   response: Record<string, unknown>,
   context: SchemaContext,
   examples: ReadonlySet<string>,
+  headers: ReadonlyMap<string, HeaderDefinition>,
   location: string,
 ): ResponseDefinition {
   keys(response, ['description', 'content', 'headers'], location);
@@ -608,15 +653,16 @@ function normalizeResponse(
         ),
       }
     : { kind: 'none' };
-  const headers = Object.hasOwn(response, 'headers')
+  const responseHeaders = Object.hasOwn(response, 'headers')
     ? normalizeHeaders(
         response.headers,
         context,
         examples,
+        headers,
         `${location}.headers`,
       )
     : [];
-  return { body, headers };
+  return { body, headers: responseHeaders };
 }
 
 function operationResponses(
@@ -625,6 +671,7 @@ function operationResponses(
   context: SchemaContext,
   examples: ReadonlySet<string>,
   components: ReadonlyMap<string, ResponseDefinition>,
+  headers: ReadonlyMap<string, HeaderDefinition>,
   location: string,
 ): readonly ContractResponse[] {
   const rawResponses = record(value.responses, `${location}.responses`);
@@ -642,7 +689,13 @@ function operationResponses(
       const target = componentReference(value, 'response', responseLocation);
       const response =
         target === undefined
-          ? normalizeResponse(value, context, examples, responseLocation)
+          ? normalizeResponse(
+              value,
+              context,
+              examples,
+              headers,
+              responseLocation,
+            )
           : components.get(target);
       if (!response)
         fail(
@@ -738,13 +791,21 @@ function normalizeOperation(
     path,
     location,
   );
-  const body = requestBody(value, method, schemas, examples, location);
+  const body = requestBody(
+    value,
+    method,
+    schemas,
+    examples,
+    context.requestBodyComponents,
+    location,
+  );
   const responses = operationResponses(
     value,
     method,
     schemas,
     examples,
     context.responseComponents,
+    context.headerComponents,
     location,
   );
   return {
@@ -855,7 +916,15 @@ export function buildDescriptor(
     : {};
   keys(
     components,
-    ['schemas', 'securitySchemes', 'examples', 'parameters', 'responses'],
+    [
+      'schemas',
+      'securitySchemes',
+      'examples',
+      'parameters',
+      'responses',
+      'requestBodies',
+      'headers',
+    ],
     'components',
   );
   const examples = exampleComponents(
@@ -906,10 +975,22 @@ export function buildDescriptor(
     'parameter',
     (value, location) => normalizeParameter(value, context, examples, location),
   );
+  const headerComponents = normalizeComponents(
+    Object.hasOwn(components, 'headers') ? components.headers : {},
+    'header',
+    (value, location) => normalizeHeader(value, context, examples, location),
+  );
+  const requestBodyComponents = normalizeComponents(
+    Object.hasOwn(components, 'requestBodies') ? components.requestBodies : {},
+    'requestBody',
+    (value, location) =>
+      normalizeRequestBody(value, context, examples, location),
+  );
   const responseComponents = normalizeComponents(
     Object.hasOwn(components, 'responses') ? components.responses : {},
     'response',
-    (value, location) => normalizeResponse(value, context, examples, location),
+    (value, location) =>
+      normalizeResponse(value, context, examples, headerComponents, location),
   );
   const operationContext: OperationContext = {
     vocabulary,
@@ -917,6 +998,8 @@ export function buildDescriptor(
     examples,
     parameterComponents,
     responseComponents,
+    requestBodyComponents,
+    headerComponents,
     bearerSchemes,
     inheritedSecurity,
     memberships,

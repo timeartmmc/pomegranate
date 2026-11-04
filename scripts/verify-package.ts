@@ -52,6 +52,26 @@ import {
   responseReferenceConsumer,
 } from '../test/response-reference-fixture.ts';
 import {
+  bodyHeaderReferenceFixture,
+  bodyHeaderReferenceSelection,
+  bodyHeaderReferenceConsumer,
+} from '../test/body-header-reference-fixture.ts';
+import {
+  ipCommentFixture,
+  ipCommentSelection,
+  ipCommentConsumer,
+} from '../test/ip-comment-fixture.ts';
+import {
+  propertyCountFixture,
+  propertyCountSelection,
+  propertyCountConsumer,
+} from '../test/property-count-fixture.ts';
+import {
+  queryCsvFixture,
+  queryCsvSelection,
+  queryCsvConsumer,
+} from '../test/query-csv-fixture.ts';
+import {
   operationIdsFixture,
   operationIdsSelection,
   operationIdsTypeConsumer,
@@ -192,6 +212,10 @@ try {
     'extension-fixture.ts',
     'parameter-reference-fixture.ts',
     'response-reference-fixture.ts',
+    'body-header-reference-fixture.ts',
+    'ip-comment-fixture.ts',
+    'property-count-fixture.ts',
+    'query-csv-fixture.ts',
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
     'symbol-fixture.ts',
@@ -332,6 +356,10 @@ try {
     'directional-generated/*.ts',
     'parameter-generated/*.ts',
     'response-generated/*.ts',
+    'body-header-generated/*.ts',
+    'ip-comment-generated/*.ts',
+    'property-count-generated/*.ts',
+    'query-csv-generated/*.ts',
     'extension-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
@@ -543,6 +571,20 @@ try {
       responseReferenceSelection,
       responseReferenceConsumer,
     ],
+    [
+      'body-header',
+      bodyHeaderReferenceFixture(),
+      bodyHeaderReferenceSelection,
+      bodyHeaderReferenceConsumer,
+    ],
+    ['ip-comment', ipCommentFixture(), ipCommentSelection, ipCommentConsumer],
+    [
+      'property-count',
+      propertyCountFixture(),
+      propertyCountSelection,
+      propertyCountConsumer,
+    ],
+    ['query-csv', queryCsvFixture(), queryCsvSelection, queryCsvConsumer],
   ] as const) {
     await writeFile(
       join(consumer, `${name}-openapi.yaml`),
@@ -1322,6 +1364,22 @@ try {
     import * as responseStaff from './response-generated/client.staff.ts';
     import {verifyResponseReferences} from './verification/response-reference-fixture.ts';
     verifyResponseReferences(responseClient, responseStaff);
+    import * as bodyHeaderBrowser from './body-header-generated/client.browser.ts';
+    import * as bodyHeaderNative from './body-header-generated/client.native.ts';
+    import {verifyBodyHeaderReferences} from './verification/body-header-reference-fixture.ts';
+    verifyBodyHeaderReferences(bodyHeaderBrowser, bodyHeaderNative);
+    import * as ipCommentClient from './ip-comment-generated/client.consumer.ts';
+    import * as ipv4 from './ip-comment-generated/standalone.ipv4.ts';
+    import * as ipv6 from './ip-comment-generated/standalone.ipv6.ts';
+    import {verifyIpComment} from './verification/ip-comment-fixture.ts';
+    verifyIpComment(ipCommentClient, ipv4, ipv6);
+    import * as propertyCountClient from './property-count-generated/client.consumer.ts';
+    import * as propertyCountSchemas from './property-count-generated/client.consumer.schemas.ts';
+    import {verifyPropertyCounts} from './verification/property-count-fixture.ts';
+    verifyPropertyCounts(propertyCountClient, propertyCountSchemas);
+    import * as queryCsvClient from './query-csv-generated/client.consumer.ts';
+    import {verifyQueryCsv} from './verification/query-csv-fixture.ts';
+    verifyQueryCsv(queryCsvClient);
     import * as directionalClient from './directional-generated/client.consumer.ts';
     import * as operationIdsClient from './operation-ids-generated/client.consumer.ts';
     import * as operationIdsQueries from './operation-ids-generated/client.consumer.queries.ts';
@@ -1421,6 +1479,22 @@ try {
     import * as responseStaff from './.build/response-generated/client.staff.js';
     import {verifyResponseReferences} from './verification/response-reference-fixture.ts';
     verifyResponseReferences(responseClient, responseStaff);
+    import * as bodyHeaderBrowser from './.build/body-header-generated/client.browser.js';
+    import * as bodyHeaderNative from './.build/body-header-generated/client.native.js';
+    import {verifyBodyHeaderReferences} from './verification/body-header-reference-fixture.ts';
+    verifyBodyHeaderReferences(bodyHeaderBrowser, bodyHeaderNative);
+    import * as ipCommentClient from './.build/ip-comment-generated/client.consumer.js';
+    import * as ipv4 from './.build/ip-comment-generated/standalone.ipv4.js';
+    import * as ipv6 from './.build/ip-comment-generated/standalone.ipv6.js';
+    import {verifyIpComment} from './verification/ip-comment-fixture.ts';
+    verifyIpComment(ipCommentClient, ipv4, ipv6);
+    import * as propertyCountClient from './.build/property-count-generated/client.consumer.js';
+    import * as propertyCountSchemas from './.build/property-count-generated/client.consumer.schemas.js';
+    import {verifyPropertyCounts} from './verification/property-count-fixture.ts';
+    verifyPropertyCounts(propertyCountClient, propertyCountSchemas);
+    import * as queryCsvClient from './.build/query-csv-generated/client.consumer.js';
+    import {verifyQueryCsv} from './verification/query-csv-fixture.ts';
+    verifyQueryCsv(queryCsvClient);
     import * as directionalClient from './.build/directional-generated/client.consumer.js';
     import * as operationIdsClient from './.build/operation-ids-generated/client.consumer.js';
     import * as operationIdsQueries from './.build/operation-ids-generated/client.consumer.queries.js';
