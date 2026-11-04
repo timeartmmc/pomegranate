@@ -232,7 +232,7 @@ validation, including operations excluded from output.
 | Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                             |
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique nonempty operation IDs; whole-segment path placeholders                                                                                                                                                                                           |
 | Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
-| Bodies      | Required or optional JSON bodies; required multipart bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                                                                                               |
+| Bodies      | Required or optional JSON bodies; required multipart bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses with local component references and aliases; declared string response headers                                                                   |
 | Schemas     | Explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                   |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                          |
 | Formats     | String `date`, `date-time`, `uuid`, `email`, and `uri`; integer `int32`; no coercion                                                                                                                                                                                                                   |
@@ -438,6 +438,27 @@ optional multipart request bodies, status ranges/default
 responses, non-bearer security schemes and external security-scheme references
 remain unsupported.
 
+### Reusable parameters and responses
+
+Path-item and operation parameter lists accept inline declarations or
+`{ "$ref": "#/components/parameters/WidgetId" }`. Exact-status operation response
+entries accept inline declarations or
+`{ "$ref": "#/components/responses/WidgetResult" }`. Define the targets in
+`components.parameters` or `components.responses`; component entries may alias
+another entry of the same kind.
+
+Component names match `[A-Za-z0-9._-]+`; `__proto__`, `prototype`, and `constructor`
+are reserved. References may add string `summary` and `description` annotations;
+semantic siblings such as `name`, `schema`, `content`, and `headers` are rejected.
+Every component parameter and response is validated, including unused
+declarations. Missing targets, cycles, and external references fail with
+diagnostics.
+
+Response components require a string `description` and may declare JSON content
+and response headers using the same rules as inline responses. Each operation
+binds the resolved body and headers to its declared exact status. HEAD responses
+and statuses 204, 205, and 304 must be bodyless, including through references.
+
 ### Directional object fields
 
 A fixed object can share one schema across requests and responses:
@@ -533,14 +554,9 @@ validation is independent of whether a request body was sent.
 Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and occupy an
 entire segment. Path values cannot be empty, `.` or `..`.
 
-Path-item and operation parameter lists accept inline declarations or local
-references such as `{ "$ref": "#/components/parameters/WidgetId" }`. Component
-parameters may alias another component parameter. Component names match
-`[A-Za-z0-9._-]+`; `__proto__`, `prototype`, and `constructor` are reserved.
-References may add string `summary` and `description` annotations; semantic
-siblings such as `name`, `required`, and `schema` are rejected. Every component
-parameter is validated, including unused declarations. Missing targets, cycles,
-and external references fail with diagnostics.
+Path-item and operation parameter lists accept
+[reusable component references](#reusable-parameters-and-responses) as well as
+inline declarations.
 
 Path-item `parameters` apply to every operation under that path. An operation
 replaces a declaration with the same case-sensitive `name` and `in`; other

@@ -46,6 +46,7 @@ const children: Readonly<Record<Node, Fields>> = {
   components: {
     schemas: 'map:schema',
     parameters: 'map:parameter',
+    responses: 'map:response',
     examples: 'map:example',
     securitySchemes: 'map:securityScheme',
   },
@@ -186,7 +187,11 @@ export function ignoreExtensions(
       if (!context) continue;
       // Semantic siblings of Reference Objects remain the owning parser's
       // error. A Schema Object ref permits only its externalDocs child here.
-      if (reference && frame.context === 'parameter') continue;
+      if (
+        reference &&
+        (frame.context === 'parameter' || frame.context === 'response')
+      )
+        continue;
       if (reference && frame.context === 'schema' && key !== 'externalDocs')
         continue;
       const value: unknown =

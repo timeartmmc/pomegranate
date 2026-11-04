@@ -47,6 +47,11 @@ import {
   parameterReferenceConsumer,
 } from '../test/parameter-reference-fixture.ts';
 import {
+  responseReferenceFixture,
+  responseReferenceSelection,
+  responseReferenceConsumer,
+} from '../test/response-reference-fixture.ts';
+import {
   operationIdsFixture,
   operationIdsSelection,
   operationIdsTypeConsumer,
@@ -186,6 +191,7 @@ try {
     'directional-fixture.ts',
     'extension-fixture.ts',
     'parameter-reference-fixture.ts',
+    'response-reference-fixture.ts',
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
     'symbol-fixture.ts',
@@ -325,6 +331,7 @@ try {
     'compatibility-generated/*.ts',
     'directional-generated/*.ts',
     'parameter-generated/*.ts',
+    'response-generated/*.ts',
     'extension-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
@@ -523,33 +530,38 @@ try {
     operations.echo.build({path: {id: 'id'}, body: {}});
   `,
   );
-  await writeFile(
-    join(consumer, 'parameter-openapi.yaml'),
-    stringify(parameterReferenceFixture()),
-  );
-  await writeFile(
-    join(consumer, 'parameter-pom.json'),
-    JSON.stringify({
-      version: 2,
-      openapi: './parameter-openapi.yaml',
-      output: './parameter-generated',
-      ...parameterReferenceSelection,
-    }),
-  );
-  await run(binary, [
-    'generate',
-    '--config',
-    join(consumer, 'parameter-pom.json'),
-  ]);
-  await run(binary, [
-    'check',
-    '--config',
-    join(consumer, 'parameter-pom.json'),
-  ]);
-  await writeFile(
-    join(consumer, 'parameter-generated/consumer.ts'),
-    parameterReferenceConsumer,
-  );
+  for (const [name, document, selection, source] of [
+    [
+      'parameter',
+      parameterReferenceFixture(),
+      parameterReferenceSelection,
+      parameterReferenceConsumer,
+    ],
+    [
+      'response',
+      responseReferenceFixture(),
+      responseReferenceSelection,
+      responseReferenceConsumer,
+    ],
+  ] as const) {
+    await writeFile(
+      join(consumer, `${name}-openapi.yaml`),
+      stringify(document),
+    );
+    const config = join(consumer, `${name}-pom.json`);
+    await writeFile(
+      config,
+      JSON.stringify({
+        version: 2,
+        openapi: `./${name}-openapi.yaml`,
+        output: `./${name}-generated`,
+        ...selection,
+      }),
+    );
+    await run(binary, ['generate', '--config', config]);
+    await run(binary, ['check', '--config', config]);
+    await writeFile(join(consumer, `${name}-generated/consumer.ts`), source);
+  }
   const dPolicy = {
     auth: 'public',
     retry: 'never',
@@ -1306,6 +1318,10 @@ try {
     import * as parameterStaff from './parameter-generated/client.staff.ts';
     import {verifyParameterReferences} from './verification/parameter-reference-fixture.ts';
     verifyParameterReferences(parameterClient, parameterStaff);
+    import * as responseClient from './response-generated/client.consumer.ts';
+    import * as responseStaff from './response-generated/client.staff.ts';
+    import {verifyResponseReferences} from './verification/response-reference-fixture.ts';
+    verifyResponseReferences(responseClient, responseStaff);
     import * as directionalClient from './directional-generated/client.consumer.ts';
     import * as operationIdsClient from './operation-ids-generated/client.consumer.ts';
     import * as operationIdsQueries from './operation-ids-generated/client.consumer.queries.ts';
@@ -1401,6 +1417,10 @@ try {
     import * as parameterStaff from './.build/parameter-generated/client.staff.js';
     import {verifyParameterReferences} from './verification/parameter-reference-fixture.ts';
     verifyParameterReferences(parameterClient, parameterStaff);
+    import * as responseClient from './.build/response-generated/client.consumer.js';
+    import * as responseStaff from './.build/response-generated/client.staff.js';
+    import {verifyResponseReferences} from './verification/response-reference-fixture.ts';
+    verifyResponseReferences(responseClient, responseStaff);
     import * as directionalClient from './.build/directional-generated/client.consumer.js';
     import * as operationIdsClient from './.build/operation-ids-generated/client.consumer.js';
     import * as operationIdsQueries from './.build/operation-ids-generated/client.consumer.queries.js';

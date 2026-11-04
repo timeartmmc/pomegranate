@@ -1,4 +1,8 @@
 import {
+  componentReference,
+  normalizeComponents,
+} from './component-references.js';
+import {
   annotations,
   contractField,
   fail,
@@ -59,6 +63,7 @@ const methods = [
 ] as const;
 
 type Validation = ReturnType<typeof schemaValidation>;
+type ResponseDefinition = Omit<ContractResponse, 'status'>;
 
 type SchemaContext = Readonly<{
   source: SchemaTable;
@@ -72,6 +77,7 @@ type OperationContext = Readonly<{
   schemas: SchemaContext;
   examples: ReadonlySet<string>;
   parameterComponents: ReadonlyMap<string, Parameter>;
+  responseComponents: ReadonlyMap<string, ResponseDefinition>;
   bearerSchemes: ReadonlySet<string>;
   inheritedSecurity: AuthTransport;
   memberships: ReadonlyMap<string, readonly string[]> | undefined;
@@ -446,74 +452,6 @@ function uniqueParameters(
   }
 }
 
-function parameterComponentName(name: string, location: string): string {
-  if (name.length === 0 || /[^A-Za-z0-9._-]/.test(name))
-    fail(location, 'component parameter names must match [A-Za-z0-9._-]+');
-  return safeKey(name, location);
-}
-
-function parameterReference(
-  value: Record<string, unknown>,
-  location: string,
-): string | undefined {
-  if (!Object.hasOwn(value, '$ref')) return undefined;
-  // Reference Objects carry documentation, not parameter overrides. Resolve
-  // them before name/location identity checks; never merge semantic siblings.
-  keys(value, ['$ref', 'summary', 'description'], location);
-  annotations(value, location);
-  const prefix = '#/components/parameters/';
-  if (typeof value.$ref !== 'string' || !value.$ref.startsWith(prefix))
-    fail(
-      `${location}.$ref`,
-      'only local component parameter references are supported',
-    );
-  return parameterComponentName(
-    value.$ref.slice(prefix.length),
-    `${location}.$ref`,
-  );
-}
-
-function normalizeParameterComponents(
-  input: unknown,
-  context: SchemaContext,
-  examples: ReadonlySet<string>,
-): ReadonlyMap<string, Parameter> {
-  const location = 'components.parameters';
-  const components = record(input, location);
-  const parameters = new Map<string, Parameter>();
-  const references = new Map<string, string>();
-  for (const name of Object.keys(components).sort()) {
-    const path = `${location}.${name}`;
-    parameterComponentName(name, path);
-    const value = record(components[name], path);
-    const target = parameterReference(value, path);
-    if (target === undefined) {
-      // Unused declarations must satisfy request parameter rules too, including
-      // directional projection, schema constraints and serialization limits.
-      parameters.set(name, normalizeParameter(value, context, examples, path));
-    } else {
-      if (!Object.hasOwn(components, target))
-        fail(`${path}.$ref`, `unresolved parameter reference ${target}`);
-      references.set(name, target);
-    }
-  }
-  for (const name of references.keys()) {
-    const pending = new Set<string>();
-    let current = name;
-    // Alias depth is independent of schema nesting. Cache every visited alias
-    // so long chains and shared tails take linear work without recursion.
-    while (!parameters.has(current)) {
-      if (pending.has(current))
-        fail(`${location}.${current}.$ref`, 'cyclic parameter reference');
-      pending.add(current);
-      current = references.get(current)!;
-    }
-    const parameter = parameters.get(current)!;
-    for (const alias of pending) parameters.set(alias, parameter);
-  }
-  return parameters;
-}
-
 function parameterList(
   input: unknown,
   context: SchemaContext,
@@ -525,7 +463,7 @@ function parameterList(
   const parameters = Array.from(input, (input, index) => {
     const path = `${location}[${index}]`;
     const value = record(input, path);
-    const target = parameterReference(value, path);
+    const target = componentReference(value, 'parameter', path);
     if (target === undefined)
       return normalizeParameter(value, context, examples, path);
     const parameter = components.get(target);
@@ -650,11 +588,43 @@ function requestBody(
   return body;
 }
 
+function normalizeResponse(
+  response: Record<string, unknown>,
+  context: SchemaContext,
+  examples: ReadonlySet<string>,
+  location: string,
+): ResponseDefinition {
+  keys(response, ['description', 'content', 'headers'], location);
+  if (typeof response.description !== 'string')
+    fail(`${location}.description`, 'expected a response description');
+  const body: ContractResponse['body'] = Object.hasOwn(response, 'content')
+    ? {
+        kind: 'json',
+        schema: jsonSchema(
+          response.content,
+          `${location}.content`,
+          examples,
+          context,
+        ),
+      }
+    : { kind: 'none' };
+  const headers = Object.hasOwn(response, 'headers')
+    ? normalizeHeaders(
+        response.headers,
+        context,
+        examples,
+        `${location}.headers`,
+      )
+    : [];
+  return { body, headers };
+}
+
 function operationResponses(
   value: Record<string, unknown>,
   method: (typeof methods)[number],
   context: SchemaContext,
   examples: ReadonlySet<string>,
+  components: ReadonlyMap<string, ResponseDefinition>,
   location: string,
 ): readonly ContractResponse[] {
   const rawResponses = record(value.responses, `${location}.responses`);
@@ -668,37 +638,28 @@ function operationResponses(
         );
       const status = Number(statusText);
       const responseLocation = `${location}.responses.${statusText}`;
-      const response = record(rawResponses[statusText], responseLocation);
-      keys(response, ['description', 'content', 'headers'], responseLocation);
-      if (typeof response.description !== 'string')
+      const value = record(rawResponses[statusText], responseLocation);
+      const target = componentReference(value, 'response', responseLocation);
+      const response =
+        target === undefined
+          ? normalizeResponse(value, context, examples, responseLocation)
+          : components.get(target);
+      if (!response)
         fail(
-          `${responseLocation}.description`,
-          'expected a response description',
+          `${responseLocation}.$ref`,
+          `unresolved response reference ${target}`,
         );
-      let responseBody: ContractResponse['body'] = { kind: 'none' };
-      if (Object.hasOwn(response, 'content')) {
-        if (method === 'head' || [204, 205, 304].includes(status))
-          fail(
-            `${responseLocation}.content`,
-            'this HTTP method/status cannot carry a body',
-          );
-        const schema = jsonSchema(
-          response.content,
+      // Definitions have no HTTP context: a shared JSON response may be valid
+      // for GET 200 and invalid for HEAD or 204. Check every binding after resolution.
+      if (
+        response.body.kind !== 'none' &&
+        (method === 'head' || [204, 205, 304].includes(status))
+      )
+        fail(
           `${responseLocation}.content`,
-          examples,
-          context,
+          'this HTTP method/status cannot carry a body',
         );
-        responseBody = { kind: 'json', schema };
-      }
-      const headers = Object.hasOwn(response, 'headers')
-        ? normalizeHeaders(
-            response.headers,
-            context,
-            examples,
-            `${responseLocation}.headers`,
-          )
-        : [];
-      return { status, body: responseBody, headers };
+      return { status, ...response };
     });
   if (!responses.some((response) => response.status < 300))
     fail(`${location}.responses`, 'at least one 2xx response is required');
@@ -783,6 +744,7 @@ function normalizeOperation(
     method,
     schemas,
     examples,
+    context.responseComponents,
     location,
   );
   return {
@@ -893,7 +855,7 @@ export function buildDescriptor(
     : {};
   keys(
     components,
-    ['schemas', 'securitySchemes', 'examples', 'parameters'],
+    ['schemas', 'securitySchemes', 'examples', 'parameters', 'responses'],
     'components',
   );
   const examples = exampleComponents(
@@ -939,16 +901,22 @@ export function buildDescriptor(
       response: schemaValidation(),
     },
   };
-  const parameterComponents = normalizeParameterComponents(
+  const parameterComponents = normalizeComponents(
     Object.hasOwn(components, 'parameters') ? components.parameters : {},
-    context,
-    examples,
+    'parameter',
+    (value, location) => normalizeParameter(value, context, examples, location),
+  );
+  const responseComponents = normalizeComponents(
+    Object.hasOwn(components, 'responses') ? components.responses : {},
+    'response',
+    (value, location) => normalizeResponse(value, context, examples, location),
   );
   const operationContext: OperationContext = {
     vocabulary,
     schemas: context,
     examples,
     parameterComponents,
+    responseComponents,
     bearerSchemes,
     inheritedSecurity,
     memberships,
