@@ -71,6 +71,7 @@ type OperationContext = Readonly<{
   vocabulary: PolicyVocabulary;
   schemas: SchemaContext;
   examples: ReadonlySet<string>;
+  parameterComponents: ReadonlyMap<string, Parameter>;
   bearerSchemes: ReadonlySet<string>;
   inheritedSecurity: AuthTransport;
   memberships: ReadonlyMap<string, readonly string[]> | undefined;
@@ -445,16 +446,93 @@ function uniqueParameters(
   }
 }
 
+function parameterComponentName(name: string, location: string): string {
+  if (name.length === 0 || /[^A-Za-z0-9._-]/.test(name))
+    fail(location, 'component parameter names must match [A-Za-z0-9._-]+');
+  return safeKey(name, location);
+}
+
+function parameterReference(
+  value: Record<string, unknown>,
+  location: string,
+): string | undefined {
+  if (!Object.hasOwn(value, '$ref')) return undefined;
+  // Reference Objects carry documentation, not parameter overrides. Resolve
+  // them before name/location identity checks; never merge semantic siblings.
+  keys(value, ['$ref', 'summary', 'description'], location);
+  annotations(value, location);
+  const prefix = '#/components/parameters/';
+  if (typeof value.$ref !== 'string' || !value.$ref.startsWith(prefix))
+    fail(
+      `${location}.$ref`,
+      'only local component parameter references are supported',
+    );
+  return parameterComponentName(
+    value.$ref.slice(prefix.length),
+    `${location}.$ref`,
+  );
+}
+
+function normalizeParameterComponents(
+  input: unknown,
+  context: SchemaContext,
+  examples: ReadonlySet<string>,
+): ReadonlyMap<string, Parameter> {
+  const location = 'components.parameters';
+  const components = record(input, location);
+  const parameters = new Map<string, Parameter>();
+  const references = new Map<string, string>();
+  for (const name of Object.keys(components).sort()) {
+    const path = `${location}.${name}`;
+    parameterComponentName(name, path);
+    const value = record(components[name], path);
+    const target = parameterReference(value, path);
+    if (target === undefined) {
+      // Unused declarations must satisfy request parameter rules too, including
+      // directional projection, schema constraints and serialization limits.
+      parameters.set(name, normalizeParameter(value, context, examples, path));
+    } else {
+      if (!Object.hasOwn(components, target))
+        fail(`${path}.$ref`, `unresolved parameter reference ${target}`);
+      references.set(name, target);
+    }
+  }
+  for (const name of references.keys()) {
+    const pending = new Set<string>();
+    let current = name;
+    // Alias depth is independent of schema nesting. Cache every visited alias
+    // so long chains and shared tails take linear work without recursion.
+    while (!parameters.has(current)) {
+      if (pending.has(current))
+        fail(`${location}.${current}.$ref`, 'cyclic parameter reference');
+      pending.add(current);
+      current = references.get(current)!;
+    }
+    const parameter = parameters.get(current)!;
+    for (const alias of pending) parameters.set(alias, parameter);
+  }
+  return parameters;
+}
+
 function parameterList(
   input: unknown,
   context: SchemaContext,
   examples: ReadonlySet<string>,
+  components: ReadonlyMap<string, Parameter>,
   location: string,
 ): readonly Parameter[] {
   if (!Array.isArray(input)) fail(location, 'expected an array');
-  const parameters = Array.from(input, (parameter, index) =>
-    normalizeParameter(parameter, context, examples, `${location}[${index}]`),
-  );
+  const parameters = Array.from(input, (input, index) => {
+    const path = `${location}[${index}]`;
+    const value = record(input, path);
+    const target = parameterReference(value, path);
+    if (target === undefined)
+      return normalizeParameter(value, context, examples, path);
+    const parameter = components.get(target);
+    if (!parameter)
+      fail(`${path}.$ref`, `unresolved parameter reference ${target}`);
+    return parameter;
+  });
   uniqueParameters(parameters, location);
   return parameters;
 }
@@ -464,6 +542,7 @@ function operationParameters(
   inherited: readonly Parameter[],
   context: SchemaContext,
   examples: ReadonlySet<string>,
+  components: ReadonlyMap<string, Parameter>,
   path: string,
   location: string,
 ): readonly Parameter[] {
@@ -471,6 +550,7 @@ function operationParameters(
     Object.hasOwn(value, 'parameters') ? value.parameters : [],
     context,
     examples,
+    components,
     `${location}.parameters`,
   );
   // Validate both declaration lists before merging so an override cannot hide
@@ -693,6 +773,7 @@ function normalizeOperation(
     inheritedParameters,
     schemas,
     examples,
+    context.parameterComponents,
     path,
     location,
   );
@@ -805,7 +886,11 @@ export function buildDescriptor(
   const components = Object.hasOwn(value, 'components')
     ? record(value.components, 'components')
     : {};
-  keys(components, ['schemas', 'securitySchemes', 'examples'], 'components');
+  keys(
+    components,
+    ['schemas', 'securitySchemes', 'examples', 'parameters'],
+    'components',
+  );
   const examples = exampleComponents(
     Object.hasOwn(components, 'examples') ? components.examples : {},
   );
@@ -849,10 +934,16 @@ export function buildDescriptor(
       response: schemaValidation(),
     },
   };
+  const parameterComponents = normalizeParameterComponents(
+    Object.hasOwn(components, 'parameters') ? components.parameters : {},
+    context,
+    examples,
+  );
   const operationContext: OperationContext = {
     vocabulary,
     schemas: context,
     examples,
+    parameterComponents,
     bearerSchemes,
     inheritedSecurity,
     memberships,
@@ -874,6 +965,7 @@ export function buildDescriptor(
       Object.hasOwn(pathItem, 'parameters') ? pathItem.parameters : [],
       context,
       examples,
+      parameterComponents,
       `paths.${path}.parameters`,
     );
     for (const method of methods)

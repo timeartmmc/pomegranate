@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { QueryClient } from '@tanstack/query-core';
 import { compile, ContractError, runProject } from '../dist/index.js';
 import { invalidOptions, runtimeInput } from './assertions.ts';
 import { temporary, fileSnapshot } from './helpers.ts';
@@ -13,6 +14,8 @@ import { infiniteFixture, infiniteSelection } from './infinite-fixture.ts';
 import { infiniteChecks } from './infinite-checks.ts';
 import { verifyQueryDeclarations } from './query-declarations.ts';
 import { generatedWorkspace } from './generated-workspace.ts';
+import { nullable, ref } from './schema-helpers.ts';
+import type { Schema } from './schema-helpers.ts';
 
 type Module = typeof import('./.generated/infinite/client.consumer.queries.ts');
 const exec = promisify(execFile);
@@ -220,7 +223,7 @@ void test('invalid pagination configuration and unsupported neighboring contract
       (d) => {
         Object.assign(
           d.paths['/collections/{collection}/items'].get.parameters[1]!,
-          { schema: { type: ['string', 'null'] } },
+          { schema: { type: ['integer', 'null'] } },
         );
       },
       (d) => {
@@ -246,6 +249,13 @@ void test('invalid pagination configuration and unsupported neighboring contract
       (d) => {
         Object.assign(d.components.schemas.Page.properties.continuation, {
           type: 'null',
+        });
+      },
+      (d) => {
+        Object.assign(d.components.schemas.Page.properties, {
+          continuation: {
+            anyOf: [{ type: 'string' }, { type: 'integer' }],
+          },
         });
       },
       (d) => {
@@ -320,6 +330,249 @@ void test('cursor-only and referenced base inputs produce strict usable modules'
   await checkConsumer(t, referenced);
 });
 
+const cursorString = { type: 'string', maxLength: 4 };
+const nullableCursors: [string, Schema, Record<string, Schema>][] = [
+  ['type array', { ...cursorString, type: ['string', 'null'] }, {}],
+  ['reversed type array', { ...cursorString, type: ['null', 'string'] }, {}],
+  ['anyOf', nullable(cursorString), {}],
+  ['null-first anyOf', { anyOf: [{ type: 'null' }, cursorString] }, {}],
+  [
+    'reference aliases',
+    ref('CursorAlias'),
+    { CursorAlias: ref('Cursor'), Cursor: nullable(cursorString) },
+  ],
+  [
+    'referenced branches with constraints',
+    { anyOf: [ref('NoCursor'), { ...ref('CursorString'), maxLength: 4 }] },
+    { NoCursor: { type: 'null' }, CursorString: { type: 'string' } },
+  ],
+];
+
+for (const [name, schema, definitions] of nullableCursors)
+  void test(`nullable cursor ${name} preserves request and response validation`, async (t) => {
+    const document = infiniteFixture();
+    Object.assign(document.components.schemas, definitions);
+    Object.assign(
+      document.paths['/collections/{collection}/items'].get.parameters[1]!,
+      { schema },
+    );
+    // Exercise the same nullable shape on both sides of the binding.
+    Object.assign(document.components.schemas.Page.properties, {
+      continuation: schema,
+    });
+    const before = structuredClone(document);
+    const files = await compile(document, infiniteSelection);
+    assert.deepEqual(document, before);
+    const root = await generatedWorkspace(files);
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const { operations } = (await import(
+      pathToFileURL(join(root, 'client.consumer.operations.ts')).href
+    )) as typeof import('./.generated/infinite/client.consumer.operations.ts');
+    const input = { path: { collection: 'widgets' } };
+    for (const after of [undefined, null, '', 'next']) {
+      const request = runtimeInput(operations.listItems.build, {
+        ...input,
+        ...(after === undefined ? {} : { query: { after } }),
+      });
+      assert.equal(
+        new URL(request.url, 'https://synthetic.invalid').searchParams.get(
+          'after',
+        ),
+        after ?? null,
+      );
+      const result = request.parseResponse({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ results: [], continuation: after ?? null }),
+      });
+      assert.equal(result.kind, 'success');
+    }
+    for (const after of ['longer', false, 0, []]) {
+      assert.throws(
+        () =>
+          runtimeInput(operations.listItems.build, {
+            ...input,
+            query: { after },
+          }),
+        { name: 'RequestValidationError' },
+      );
+      assert.equal(
+        operations.listItems.build(input).parseResponse({
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ results: [], continuation: after }),
+        }).kind,
+        'protocol',
+      );
+    }
+  });
+
+void test('nullable cursor types admit null only in full inputs and preserve page parameter types', async (t) => {
+  const document = infiniteFixture();
+  Object.assign(document.components.schemas, {
+    Cursor: nullable(cursorString),
+    CursorAlias: ref('Cursor'),
+  });
+  Object.assign(
+    document.paths['/collections/{collection}/items'].get.parameters[1]!,
+    { schema: ref('CursorAlias') },
+  );
+  await checkConsumer(
+    t,
+    await compile(document, infiniteSelection),
+    `
+    import { QueryClient } from '@tanstack/query-core';
+    import { operations } from './client.consumer.operations.ts';
+    import { createQueries, createInfiniteQueries } from './client.consumer.queries.ts';
+    const config = { namespace: 'nullable', execute: async () => ({ status: 200, headers: {}, body: '' }) };
+    const input = { path: { collection: 'items' }, query: { after: null } };
+    operations.listItems.build(input);
+    const ordinary = createQueries(config).listItems;
+    ordinary.options({ context: {}, input });
+    ordinary.body().key({ context: {}, input });
+    // @ts-expect-error Nullability does not admit other scalar types.
+    operations.listItems.build({ path: input.path, query: { after: 0 } });
+    const infinite = createInfiniteQueries(config).listItems;
+    // @ts-expect-error Null remains pagination-owned in base inputs.
+    infinite.options({ context: {}, input: { path: input.path, query: { after: null } } });
+    // @ts-expect-error Body storage has the same base input restriction.
+    infinite.body().key({ context: {}, input: { path: input.path, query: { after: null } } });
+    const args = { context: {}, input: { path: input.path } };
+    const initial: null = infinite.options(args).initialPageParam;
+    const cache = new QueryClient();
+    const envelopes = cache.getQueryData(infinite.key(args));
+    const bodies = cache.getQueryData(infinite.body().key(args));
+    const envelopeParam: string | null | undefined = envelopes?.pageParams[0];
+    const bodyParam: string | null | undefined = bodies?.pageParams[0];
+    // @ts-expect-error Nullable request schemas do not widen page parameters.
+    const numericParam: number = bodies!.pageParams[0]!;
+    void [initial, envelopeParam, bodyParam, numericParam];
+  `,
+  );
+});
+
+void test('nullable cursor defaults and literal narrowing retain ordinary request semantics', async (t) => {
+  for (const schema of [
+    { type: ['string', 'null'], default: null },
+    { type: ['string', 'null'], default: 'seed' },
+    { type: ['string', 'null'], enum: ['next', null] },
+    { type: ['string', 'null'], enum: ['next'] },
+    { type: ['string', 'null'], const: 'next' },
+  ]) {
+    const document = infiniteFixture();
+    Object.assign(
+      document.paths['/collections/{collection}/items'].get.parameters[1]!,
+      { schema },
+    );
+    const root = await generatedWorkspace(
+      await compile(document, infiniteSelection),
+    );
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const generated = (await import(
+      pathToFileURL(join(root, 'client.consumer.queries.ts')).href
+    )) as Module;
+    const { operations } = (await import(
+      pathToFileURL(join(root, 'client.consumer.operations.ts')).href
+    )) as typeof import('./.generated/infinite/client.consumer.operations.ts');
+    const input = { path: { collection: 'items' } };
+    operations.listItems.build({ ...input, query: { after: 'next' } });
+    const buildNull = () =>
+      runtimeInput(operations.listItems.build, {
+        ...input,
+        query: { after: null },
+      });
+    if ('const' in schema || ('enum' in schema && !schema.enum.includes(null)))
+      assert.throws(buildNull, { name: 'RequestValidationError' });
+    else assert.equal(buildNull().url.includes('after='), false);
+    if ('const' in schema || 'enum' in schema)
+      assert.throws(
+        () =>
+          operations.listItems.build({ ...input, query: { after: 'other' } }),
+        { name: 'RequestValidationError' },
+      );
+    let calls = 0;
+    const options = generated
+      .createInfiniteQueries({
+        namespace: 'nullable-literals',
+        execute: async (request) => {
+          calls++;
+          const after = new URL(
+            request.url,
+            'https://synthetic.invalid',
+          ).searchParams.get('after');
+          assert.equal(after, calls === 1 ? null : 'next');
+          return {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              results: [],
+              continuation: after === null ? 'next' : null,
+            }),
+          };
+        },
+      })
+      .listItems.options({
+        context: {},
+        input,
+      });
+    const client = new QueryClient();
+    try {
+      const result = await client.fetchInfiniteQuery({ ...options, pages: 3 });
+      assert.deepEqual(result.pageParams, [null, 'next']);
+      assert.equal(calls, 2);
+    } finally {
+      client.clear();
+    }
+  }
+});
+
+void test('nullable cursor bindings reject neighboring scalar types and required presence', async () => {
+  for (const type of ['number', 'integer', 'boolean']) {
+    const document = infiniteFixture();
+    Object.assign(
+      document.paths['/collections/{collection}/items'].get.parameters[1]!,
+      { schema: { type: [type, 'null'] } },
+    );
+    await assert.rejects(compile(document, infiniteSelection), {
+      name: 'ContractError',
+      message:
+        /\.cursor: cursor must name an optional string or nullable string query parameter/,
+    });
+  }
+  for (const schema of [
+    { type: ['string', 'null'] },
+    nullable({ type: 'string' }),
+    ref('Cursor'),
+  ]) {
+    const document = infiniteFixture();
+    Object.assign(document.components.schemas, {
+      Cursor: nullable({ type: 'string' }),
+    });
+    Object.assign(
+      document.paths['/collections/{collection}/items'].get.parameters[1]!,
+      { required: true, schema },
+    );
+    await assert.rejects(
+      compile(document, infiniteSelection),
+      /nullable query parameters must be optional/,
+    );
+  }
+  for (const schema of [
+    { type: ['string', 'null'], const: null },
+    { type: ['string', 'null'], enum: [null] },
+  ]) {
+    const document = infiniteFixture();
+    Object.assign(
+      document.paths['/collections/{collection}/items'].get.parameters[1]!,
+      { schema },
+    );
+    await assert.rejects(
+      compile(document, infiniteSelection),
+      /parameters require primitive schemas/,
+    );
+  }
+});
+
 void test('different success statuses retain their own page and item types', async (t) => {
   const document = infiniteFixture();
   Object.assign(
@@ -372,7 +625,7 @@ void test('infinite outputs retain read-only drift and safe cleanup ownership', 
   const configFile = join(root, 'pom.json');
   await writeFile(
     join(root, 'openapi.json'),
-    JSON.stringify(infiniteFixture()),
+    JSON.stringify(infiniteFixture(true)),
   );
   await writeFile(configFile, JSON.stringify(config));
   await runProject(configFile);

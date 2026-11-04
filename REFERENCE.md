@@ -212,15 +212,15 @@ validation, including operations excluded from output.
 
 ## Supported vocabulary
 
-| Surface     | Current support                                                                                                                                                                                                                                                |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                     |
-| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique nonempty operation IDs; whole-segment path placeholders                                                                                                                                                   |
-| Parameters  | Path-item inheritance and operation overrides; primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
-| Bodies      | Required or optional JSON bodies; required multipart bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                                                       |
-| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                           |
-| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                  |
-| Formats     | String `date`, `date-time`, `uuid`, `email`, and `uri`; integer `int32`; no coercion                                                                                                                                                                           |
+| Surface     | Current support                                                                                                                                                                                                                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                             |
+| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique nonempty operation IDs; whole-segment path placeholders                                                                                                                                                                                           |
+| Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
+| Bodies      | Required or optional JSON bodies; required multipart bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                                                                                               |
+| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                   |
+| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                          |
+| Formats     | String `date`, `date-time`, `uuid`, `email`, and `uri`; integer `int32`; no coercion                                                                                                                                                                                                                   |
 
 JSON inputs and configuration accept one leading UTF-8 byte-order mark and
 reject duplicate decoded object keys. YAML files use a single YAML 1.2 core
@@ -418,7 +418,7 @@ POM: components.schemas.WidgetId.format: unsupported format; expected date, date
 
 External or recursive references, general unions and other type arrays, objects
 mixing fixed properties with dynamic entries, other formats, response defaults,
-optional multipart request bodies, parameter reference objects, status ranges/default
+optional multipart request bodies, status ranges/default
 responses, non-bearer security schemes and external security-scheme references
 remain unsupported.
 
@@ -517,6 +517,15 @@ validation is independent of whether a request body was sent.
 Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and occupy an
 entire segment. Path values cannot be empty, `.` or `..`.
 
+Path-item and operation parameter lists accept inline declarations or local
+references such as `{ "$ref": "#/components/parameters/WidgetId" }`. Component
+parameters may alias another component parameter. Component names match
+`[A-Za-z0-9._-]+`; `__proto__`, `prototype`, and `constructor` are reserved.
+References may add string `summary` and `description` annotations; semantic
+siblings such as `name`, `required`, and `schema` are rejected. Every component
+parameter is validated, including unused declarations. Missing targets, cycles,
+and external references fail with diagnostics.
+
 Path-item `parameters` apply to every operation under that path. An operation
 replaces a declaration with the same case-sensitive `name` and `in`; other
 inherited parameters remain, including when the operation declares an empty
@@ -525,8 +534,8 @@ overrides cannot hide unsupported schemas or serialization. Duplicates within
 either list fail. Header names must also remain unique ignoring case in the
 effective operation; changing only a header's casing does not count as an
 override. Path placeholders must match the effective path parameters exactly.
-Declaration errors retain the path-item or operation source location. Parameter
-reference objects remain unsupported.
+References resolve before inheritance and duplicate checks, using the target's
+`name` and `in`. Errors identify the invalid component declaration or list entry.
 
 Configuration may name declared request headers in `transportHeaders`, for
 example `"transportHeaders": ["X-Origin"]`. These headers are absent from builder

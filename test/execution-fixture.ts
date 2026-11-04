@@ -17,7 +17,7 @@ export const executionSelection = {
 } as const;
 
 export function executionFixture() {
-  const base = infiniteFixture();
+  const base = infiniteFixture(true);
   const offset = offsetFixture();
   const records = offset.paths['/records/{category}'].get;
   const json = (schema: unknown) => ({

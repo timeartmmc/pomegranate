@@ -17,7 +17,7 @@ export const infiniteSelection = {
   },
 } as const;
 
-export function infiniteFixture() {
+export function infiniteFixture(nullableCursor = false) {
   const document = queryFixture();
   const content = {
     'application/json': { schema: { $ref: '#/components/schemas/Page' } },
@@ -71,7 +71,10 @@ export function infiniteFixture() {
             {
               name: 'after',
               in: 'query',
-              schema: { type: 'string', maxLength: 64 },
+              schema: {
+                type: nullableCursor ? ['string', 'null'] : 'string',
+                maxLength: 64,
+              },
             },
             {
               name: 'limit',

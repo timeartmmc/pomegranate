@@ -280,10 +280,14 @@ export function cachedBodyTypes() {
   const cursor = cache.getQueryData(cursorBodyOptions.queryKey);
   if (cursor) {
     const pageParameter: string | null | undefined = cursor.pageParams[0];
+    const initial: (typeof cursor.pageParams)[number] = null;
+    const resumed: (typeof cursor.pageParams)[number] = 'next';
+    // @ts-expect-error Nullable request cursors do not widen page parameters to numbers.
+    const invalid: (typeof cursor.pageParams)[number] = 1;
     const first = cursor.pages[0];
     const next: string | null | undefined = first?.continuation;
     const selected = cursorBodyFactory.items(cursor);
-    void [pageParameter, next, selected];
+    void [pageParameter, initial, resumed, invalid, next, selected];
     // @ts-expect-error Cursor body pages have no status envelope.
     void first?.status;
   }
@@ -335,9 +339,17 @@ export async function executionTypes(error: unknown) {
   void label;
   operations.readItem.build({ path: { id: 'item' } });
   queries.readItem.options({ context, input: { path: { id: 'item' } } });
+  operations.listItems.build({
+    path: { collection: 'items' },
+    query: { after: null },
+  });
+  queries.listItems.options({
+    context,
+    input: { path: { collection: 'items' }, query: { after: null } },
+  });
   const cursor = await client.listItems.call({
     context,
-    input: { path: { collection: 'items' } },
+    input: { path: { collection: 'items' }, query: { after: null } },
   });
   if (cursor.status === 206) {
     const code: number | undefined = cursor.data.results[0]?.code;
@@ -351,6 +363,22 @@ export async function executionTypes(error: unknown) {
   infinite.listItems.options({
     context,
     input: { path: { collection: 'items' } },
+  });
+  infinite.listItems.options({
+    context,
+    input: {
+      path: { collection: 'items' },
+      // @ts-expect-error Pagination owns nullable cursors in envelope mode too.
+      query: { after: null },
+    },
+  });
+  cursorBodyFactory.options({
+    context,
+    input: {
+      path: { collection: 'items' },
+      // @ts-expect-error Body storage does not expose the pagination-owned cursor.
+      query: { after: null },
+    },
   });
   infinite.listRecords.options({
     context,

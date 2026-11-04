@@ -1,7 +1,28 @@
 import { fail } from './diagnostics.js';
-import type { Descriptor, InfiniteQueryBinding, Operation } from './model.js';
+import type {
+  Descriptor,
+  InfiniteQueryBinding,
+  Operation,
+  Schema,
+  SchemaTable,
+} from './model.js';
 import { resolveSchema } from './schemas.js';
 import { literalViolation } from './scalar-rules.js';
+
+function nullableString(schema: Schema, schemas: SchemaTable): boolean {
+  const resolved = resolveSchema(schema, schemas);
+  return (
+    resolved.kind === 'union' &&
+    !resolved.discriminator &&
+    resolved.branches.length === 2 &&
+    resolved.branches.some(
+      (branch) => resolveSchema(branch, schemas).kind === 'null',
+    ) &&
+    resolved.branches.some(
+      (branch) => resolveSchema(branch, schemas).kind === 'string',
+    )
+  );
+}
 
 export function validatePagination(
   operation: Operation,
@@ -19,19 +40,15 @@ export function validatePagination(
       parameter.in === 'query' &&
       parameter.name === (offset ? binding.offset : binding.cursor),
   );
-  if (
-    !parameter ||
-    (!offset && parameter.required) ||
-    resolveSchema(parameter.schema, requestSchemas).kind !==
-      (offset ? 'integer' : 'string')
-  )
-    fail(
-      `${location}.${offset ? 'offset' : 'cursor'}`,
-      offset
-        ? 'offset must name a nonnullable integer query parameter'
-        : 'cursor must name an optional, nonnullable string query parameter',
-    );
   if (offset) {
+    if (
+      !parameter ||
+      resolveSchema(parameter.schema, requestSchemas).kind !== 'integer'
+    )
+      fail(
+        `${location}.offset`,
+        'offset must name a nonnullable integer query parameter',
+      );
     // Offset traversal has an explicit zero origin, independent of OpenAPI
     // default annotations. Every reference restriction must admit that origin.
     let schema = parameter.schema;
@@ -61,6 +78,19 @@ export function validatePagination(
       ]).size !== 4
     )
       fail(location, 'offset pagination response fields must be distinct');
+  } else {
+    // Optional nullable queries serialize null as omission, matching the initial
+    // page. Later string cursors still pass through the full request validator.
+    if (
+      !parameter ||
+      parameter.required ||
+      (resolveSchema(parameter.schema, requestSchemas).kind !== 'string' &&
+        !nullableString(parameter.schema, requestSchemas))
+    )
+      fail(
+        `${location}.cursor`,
+        'cursor must name an optional string or nullable string query parameter',
+      );
   }
   for (const response of operation.responses.filter(
     (response) => response.status < 300,
@@ -104,21 +134,7 @@ export function validatePagination(
           );
       continue;
     }
-    const next = resolveSchema(
-      body.properties[binding.nextCursor]!,
-      responseSchemas,
-    );
-    if (
-      next.kind !== 'union' ||
-      next.discriminator ||
-      next.branches.length !== 2 ||
-      !next.branches.some(
-        (branch) => resolveSchema(branch, responseSchemas).kind === 'null',
-      ) ||
-      !next.branches.some(
-        (branch) => resolveSchema(branch, responseSchemas).kind === 'string',
-      )
-    )
+    if (!nullableString(body.properties[binding.nextCursor]!, responseSchemas))
       fail(
         `${path}.${binding.nextCursor}`,
         'nextCursor must name a nullable string field',

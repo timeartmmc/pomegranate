@@ -37,6 +37,11 @@ import {
 } from '../test/directional-fixture.ts';
 import { symbolFixture } from '../test/symbol-fixture.ts';
 import {
+  parameterReferenceFixture,
+  parameterReferenceSelection,
+  parameterReferenceConsumer,
+} from '../test/parameter-reference-fixture.ts';
+import {
   operationIdsFixture,
   operationIdsSelection,
   operationIdsTypeConsumer,
@@ -174,6 +179,7 @@ try {
     'schema-helpers.ts',
     'schema-fixture.ts',
     'directional-fixture.ts',
+    'parameter-reference-fixture.ts',
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
     'symbol-fixture.ts',
@@ -312,6 +318,7 @@ try {
     'execution-generated/*.ts',
     'compatibility-generated/*.ts',
     'directional-generated/*.ts',
+    'parameter-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
   await writeFile(
@@ -461,6 +468,33 @@ try {
     '.bin',
     process.platform === 'win32' ? 'pom.cmd' : 'pom',
   );
+  await writeFile(
+    join(consumer, 'parameter-openapi.yaml'),
+    stringify(parameterReferenceFixture()),
+  );
+  await writeFile(
+    join(consumer, 'parameter-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './parameter-openapi.yaml',
+      output: './parameter-generated',
+      ...parameterReferenceSelection,
+    }),
+  );
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'parameter-pom.json'),
+  ]);
+  await run(binary, [
+    'check',
+    '--config',
+    join(consumer, 'parameter-pom.json'),
+  ]);
+  await writeFile(
+    join(consumer, 'parameter-generated/consumer.ts'),
+    parameterReferenceConsumer,
+  );
   const dPolicy = {
     auth: 'public',
     retry: 'never',
@@ -545,7 +579,7 @@ try {
   ]);
   await writeFile(
     join(consumer, 'query-openapi.json'),
-    JSON.stringify(infiniteFixture()),
+    JSON.stringify(infiniteFixture(true)),
   );
   await writeFile(
     join(consumer, 'query-pom.json'),
@@ -1195,6 +1229,10 @@ try {
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
+    import * as parameterClient from './parameter-generated/client.consumer.ts';
+    import * as parameterStaff from './parameter-generated/client.staff.ts';
+    import {verifyParameterReferences} from './verification/parameter-reference-fixture.ts';
+    verifyParameterReferences(parameterClient, parameterStaff);
     import * as directionalClient from './directional-generated/client.consumer.ts';
     import * as operationIdsClient from './operation-ids-generated/client.consumer.ts';
     import * as operationIdsQueries from './operation-ids-generated/client.consumer.queries.ts';
@@ -1283,6 +1321,10 @@ try {
     import assert from 'node:assert/strict';
     import {verifyCompatibility} from './.build/compatibility-consumer.js';
     verifyCompatibility();
+    import * as parameterClient from './.build/parameter-generated/client.consumer.js';
+    import * as parameterStaff from './.build/parameter-generated/client.staff.js';
+    import {verifyParameterReferences} from './verification/parameter-reference-fixture.ts';
+    verifyParameterReferences(parameterClient, parameterStaff);
     import * as directionalClient from './.build/directional-generated/client.consumer.js';
     import * as operationIdsClient from './.build/operation-ids-generated/client.consumer.js';
     import * as operationIdsQueries from './.build/operation-ids-generated/client.consumer.queries.js';

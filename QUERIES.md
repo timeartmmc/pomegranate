@@ -294,7 +294,7 @@ Bind forward cursor pagination explicitly in configuration or `CompileOptions`:
 ```
 
 `listItems` must be a bodyless GET operation on the selected client. `after`
-must name an optional, nonnullable string query parameter. Every declared 2xx
+must name an optional string or nullable string query parameter. Every declared 2xx
 response must have a fixed JSON object body with a required nullable string
 `continuation` field and a required array `results` field. Component references
 are supported. Bindings name top-level fields; nested paths, tagged-union page
@@ -334,7 +334,9 @@ own rendering, deduplication policy, and mutation/invalidation bindings.
 Base inputs exclude the bound pagination parameter; supplying it fails validation. Factories
 validate and copy base inputs immediately, including arrays and structural
 fields, so later pages do not reread caller state. The first page omits the
-cursor with `initialPageParam: null`. Later pages validate the server's cursor
+cursor with `initialPageParam: null`, whether its request schema accepts null or
+only strings. Nullable query values mean omission, so null is never sent as a
+cursor value. Later pages validate the server's cursor
 through the ordinary request builder before execution. An invalid cursor fails
 before transport; a failed later fetch retains any previous cached collection.
 

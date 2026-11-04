@@ -201,13 +201,13 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /trace.*unsupported keyword/,
   ],
   [
-    'path-level parameter references',
+    'unresolved path-level parameter references',
     (d) => {
       Object.assign(d.paths['/api/health'], {
         parameters: [{ $ref: '#/components/parameters/Health' }],
       });
     },
-    /\$ref.*unsupported keyword/,
+    /\$ref.*unresolved parameter reference Health/,
   ],
   [
     'malformed Unicode query name',
