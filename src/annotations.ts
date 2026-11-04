@@ -1,4 +1,4 @@
-import { annotations, fail, keys, record } from './diagnostics.js';
+import { annotations, fail, keys, record, stringArray } from './diagnostics.js';
 
 export const exampleKeys = ['example', 'examples'];
 export const schemaAnnotationKeys = [
@@ -6,6 +6,7 @@ export const schemaAnnotationKeys = [
   'description',
   'default',
   'deprecated',
+  'externalDocs',
   ...exampleKeys,
 ];
 
@@ -76,11 +77,75 @@ export function licenseAnnotation(info: Record<string, unknown>): void {
     fail(location, 'identifier and url are mutually exclusive');
 }
 
+function stringFields(
+  value: Record<string, unknown>,
+  names: readonly string[],
+  location: string,
+): void {
+  for (const name of names)
+    if (Object.hasOwn(value, name) && typeof value[name] !== 'string')
+      fail(`${location}.${name}`, 'expected a string');
+}
+
+export function infoAnnotations(info: Record<string, unknown>): void {
+  licenseAnnotation(info);
+  stringFields(info, ['termsOfService'], 'info');
+  if (!Object.hasOwn(info, 'contact')) return;
+  const contact = record(info.contact, 'info.contact');
+  const fields = ['name', 'url', 'email'];
+  keys(contact, fields, 'info.contact');
+  stringFields(contact, fields, 'info.contact');
+}
+
+export function externalDocsAnnotation(
+  value: Record<string, unknown>,
+  location: string,
+): void {
+  if (!Object.hasOwn(value, 'externalDocs')) return;
+  const path = `${location}.externalDocs`;
+  const docs = record(value.externalDocs, path);
+  keys(docs, ['url', 'description'], path);
+  if (typeof docs.url !== 'string') fail(`${path}.url`, 'expected a string');
+  stringFields(docs, ['description'], path);
+}
+
+export function serverAnnotations(value: Record<string, unknown>): void {
+  if (!Object.hasOwn(value, 'servers')) return;
+  if (!Array.isArray(value.servers)) fail('servers', 'expected an array');
+  // Only document-level endpoint configuration is accepted. Applications choose
+  // and expand it, then append the generated contract path (OAS 3.1.1 §4.8.8).
+  // Path/operation overrides remain unsupported rather than losing routing data.
+  for (const [index, input] of value.servers.entries()) {
+    const location = `servers[${index}]`;
+    const server = record(input, location);
+    keys(server, ['url', 'description', 'variables'], location);
+    if (typeof server.url !== 'string')
+      fail(`${location}.url`, 'expected a string');
+    stringFields(server, ['description'], location);
+    if (!Object.hasOwn(server, 'variables')) continue;
+    const variables = record(server.variables, `${location}.variables`);
+    for (const [name, input] of Object.entries(variables)) {
+      const path = `${location}.variables.${name}`;
+      const variable = record(input, path);
+      keys(variable, ['default', 'enum', 'description'], path);
+      if (typeof variable.default !== 'string')
+        fail(`${path}.default`, 'expected a string');
+      stringFields(variable, ['description'], path);
+      if (!Object.hasOwn(variable, 'enum')) continue;
+      if (!stringArray(variable.enum) || variable.enum.length === 0)
+        fail(`${path}.enum`, 'expected a nonempty array of strings');
+      if (!variable.enum.includes(variable.default))
+        fail(`${path}.default`, 'default must be a member of enum');
+    }
+  }
+}
+
 export function schemaAnnotations(
   value: Record<string, unknown>,
   location: string,
 ): void {
   annotations(value, location);
+  externalDocsAnnotation(value, location);
   deprecatedAnnotation(value, location);
   if (Object.hasOwn(value, 'example'))
     jsonAnnotation(value.example, `${location}.example`);

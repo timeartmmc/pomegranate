@@ -382,14 +382,13 @@ export async function executeRequest<
   const isAborted = (): boolean => (aborted ||= signal.aborted);
   if (isAborted())
     cancelExecution(signal, context, identity, false, mapCancellation);
-  if (request === undefined)
-    throw new TypeError('execution requires a prepared request');
   let accepting = true;
   let executorInvoked = false;
   // Raw executors never use receipt tracking. Allocate it only on inspection.
   let accepted: WeakMap<object, ProtocolResult<R>> | undefined;
   let inspected: WeakSet<object> | undefined;
-  let success: Success<R> | undefined;
+  // An unassigned result exits below through a latched abort or rejection.
+  let success!: Success<R>;
   let rejection: Rejection | undefined;
   try {
     identity = { ...scope };
@@ -492,8 +491,6 @@ export async function executeRequest<
     // oxlint-disable-next-line typescript/only-throw-error -- Preserve application rejection identity, including non-Error values.
     throw rejection.error;
   }
-  if (success === undefined)
-    throw new TypeError('execution completed without a validated response');
   return success;
 }
 

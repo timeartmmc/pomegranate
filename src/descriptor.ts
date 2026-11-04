@@ -43,7 +43,9 @@ import {
   exampleAnnotations,
   exampleComponents,
   exampleKeys,
-  licenseAnnotation,
+  infoAnnotations,
+  externalDocsAnnotation,
+  serverAnnotations,
 } from './annotations.js';
 
 const methods = [
@@ -636,10 +638,12 @@ function normalizeOperation(
       'security',
       'x-pom',
       'deprecated',
+      'externalDocs',
     ],
     location,
   );
   annotations(value, location);
+  externalDocsAnnotation(value, location);
   deprecatedAnnotation(value, location);
   // Presence matters: [] and [{}] deliberately clear a document bearer
   // requirement; absence inherits it. Do not merge these alternatives.
@@ -650,8 +654,8 @@ function normalizeOperation(
     text(value.operationId, `${location}.operationId`),
     `${location}.operationId`,
   );
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(id))
-    fail(`${location}.operationId`, 'expected an identifier');
+  // Operation IDs are public, case-sensitive strings, not TypeScript symbols.
+  // The emitter encodes private names without changing keys or cache identity.
   const metadata = normalizeOperationPolicy(
     Object.hasOwn(value, 'x-pom') ? value['x-pom'] : {},
     vocabulary,
@@ -711,6 +715,8 @@ export function buildDescriptor(
       'tags',
       'security',
       'x-pom-policy',
+      'servers',
+      'externalDocs',
     ],
     'OpenAPI',
   );
@@ -722,18 +728,33 @@ export function buildDescriptor(
   )
     fail('openapi', 'expected an OpenAPI 3.1.x version');
   const info = record(value.info, 'info');
-  keys(info, ['title', 'version', 'description', 'summary', 'license'], 'info');
+  keys(
+    info,
+    [
+      'title',
+      'version',
+      'description',
+      'summary',
+      'license',
+      'contact',
+      'termsOfService',
+    ],
+    'info',
+  );
   text(info.title, 'info.title');
   text(info.version, 'info.version');
   annotations(info, 'info');
-  licenseAnnotation(info);
+  infoAnnotations(info);
+  externalDocsAnnotation(value, 'OpenAPI');
+  serverAnnotations(value);
   if (Object.hasOwn(value, 'tags')) {
     if (!Array.isArray(value.tags)) fail('tags', 'expected an array');
     for (const [index, rawTag] of value.tags.entries()) {
       const tag = record(rawTag, `tags[${index}]`);
-      keys(tag, ['name', 'description'], `tags[${index}]`);
+      keys(tag, ['name', 'description', 'externalDocs'], `tags[${index}]`);
       text(tag.name, `tags[${index}].name`);
       annotations(tag, `tags[${index}]`);
+      externalDocsAnnotation(tag, `tags[${index}]`);
     }
   }
   let vocabulary = normalizeVocabulary(

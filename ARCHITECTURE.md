@@ -17,6 +17,8 @@ POM never discovers consumer repositories, invokes their backends, reads their
 databases, fetches remote contracts, or implements authentication providers.
 Applications produce inputs before invoking the compiler. A passing drift check
 establishes agreement with those inputs, not agreement with a running backend.
+Document-level server configuration belongs to the application transport:
+applications select and expand endpoints and append the generated contract paths.
 
 Use one versioned policy format and one generated API across applications. Adapt
 consumers to them rather than adding project-specific compiler branches or

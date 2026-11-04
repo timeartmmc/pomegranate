@@ -37,6 +37,11 @@ import {
 } from '../test/directional-fixture.ts';
 import { symbolFixture } from '../test/symbol-fixture.ts';
 import {
+  operationIdsFixture,
+  operationIdsSelection,
+  operationIdsTypeConsumer,
+} from '../test/operation-ids-fixture.ts';
+import {
   infiniteFixture,
   infiniteSelection,
 } from '../test/infinite-fixture.ts';
@@ -172,6 +177,8 @@ try {
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
     'symbol-fixture.ts',
+    'operation-ids-fixture.ts',
+    'operation-ids-checks.ts',
     'deep-fixture.ts',
     'query-checks.ts',
     'query-hydration.ts',
@@ -299,6 +306,7 @@ try {
     'multipart-generated/*.ts',
     'deep-generated/*.ts',
     'symbol-generated/*.ts',
+    'operation-ids-generated/*.ts',
     'query-generated/*.ts',
     'offset-generated/*.ts',
     'execution-generated/*.ts',
@@ -375,6 +383,23 @@ try {
   await writeFile(
     join(consumer, 'symbol-openapi.json'),
     JSON.stringify(symbolFixture()),
+  );
+  await writeFile(
+    join(consumer, 'operation-ids-openapi.json'),
+    JSON.stringify(operationIdsFixture()),
+  );
+  await writeFile(
+    join(consumer, 'operation-ids-types.ts'),
+    operationIdsTypeConsumer(),
+  );
+  await writeFile(
+    join(consumer, 'operation-ids-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './operation-ids-openapi.json',
+      output: './operation-ids-generated',
+      ...operationIdsSelection,
+    }),
   );
   await writeFile(
     join(consumer, 'symbol-pom.json'),
@@ -694,6 +719,16 @@ try {
     join(consumer, 'symbol-pom.json'),
   ]);
   await run(binary, ['check', '--config', join(consumer, 'symbol-pom.json')]);
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'operation-ids-pom.json'),
+  ]);
+  await run(binary, [
+    'check',
+    '--config',
+    join(consumer, 'operation-ids-pom.json'),
+  ]);
   await run(binary, ['generate', '--config', join(consumer, 'deep-pom.json')]);
   await run(binary, ['check', '--config', join(consumer, 'deep-pom.json')]);
   await run(binary, [
@@ -1161,6 +1196,10 @@ try {
   const sourceChecks = `
     import assert from 'node:assert/strict';
     import * as directionalClient from './directional-generated/client.consumer.ts';
+    import * as operationIdsClient from './operation-ids-generated/client.consumer.ts';
+    import * as operationIdsQueries from './operation-ids-generated/client.consumer.queries.ts';
+    import {verifyOperationIds} from './verification/operation-ids-checks.ts';
+    await verifyOperationIds(operationIdsClient, operationIdsQueries);
     import * as directionalQueries from './directional-generated/client.consumer.queries.ts';
     import * as directionalRequest from './directional-generated/standalone.request.ts';
     import * as directionalResponse from './directional-generated/standalone.response.ts';
@@ -1245,6 +1284,10 @@ try {
     import {verifyCompatibility} from './.build/compatibility-consumer.js';
     verifyCompatibility();
     import * as directionalClient from './.build/directional-generated/client.consumer.js';
+    import * as operationIdsClient from './.build/operation-ids-generated/client.consumer.js';
+    import * as operationIdsQueries from './.build/operation-ids-generated/client.consumer.queries.js';
+    import {verifyOperationIds} from './verification/operation-ids-checks.ts';
+    await verifyOperationIds(operationIdsClient, operationIdsQueries);
     import * as directionalQueries from './.build/directional-generated/client.consumer.queries.js';
     import * as directionalRequest from './.build/directional-generated/standalone.request.js';
     import * as directionalResponse from './.build/directional-generated/standalone.response.js';

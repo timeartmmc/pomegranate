@@ -202,11 +202,20 @@ void test('the previous policy version receives a migration diagnostic', async (
           timeout: ['interactive'],
           surfaces: ['consumer'],
         },
-        membership,
+        {
+          ...membership,
+          auth: 'public',
+          retry: 'never',
+          timeout: 'interactive',
+        },
       ),
       selected,
     ),
-    /expected policy version 3/,
+    {
+      name: 'ContractError',
+      location: 'x-pom-policy.version',
+      message: 'x-pom-policy.version: expected policy version 3',
+    },
   );
 });
 

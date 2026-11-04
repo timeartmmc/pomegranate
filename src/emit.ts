@@ -35,11 +35,12 @@ function moduleName(name: string): string {
 type Entries = [string | number, Expression][];
 
 function operationScope(id: string): string {
-  // IDs contain ASCII letters, digits and underscores. Escape every underscore
-  // so an ID cannot absorb a role suffix: read_options headers must not collide
-  // with read's options headers. Escaping the escape marker also distinguishes
-  // read_uoptions. Names depend only on this operation, not generation order.
-  return `operation_${id.replaceAll('_', '_u')}`;
+  // Escape the marker as well as punctuation so original IDs and role suffixes
+  // cannot alias: read-options, read_options and read_x2d_options stay distinct.
+  // Preserve existing ASCII symbols; names never depend on selection or order.
+  return `operation_${id.replace(/[^A-Za-z0-9]/gu, (character) =>
+    character === '_' ? '_u' : `_x${character.codePointAt(0)!.toString(16)}_`,
+  )}`;
 }
 
 // Source consumers resolve real TypeScript files; JavaScript emission rewrites
@@ -469,10 +470,12 @@ function renderClient(
 // their outer mapped Readonly: a bare interface changes the original maps'
 // implicit assignment compatibility with Record<string, unknown>.
 function renderExecution(client: Client): string {
-  const entries = client.operations.map(
-    (operation) =>
-      `${propertyKey(operation.id)}: defineCall({ operation: operations.${operation.id}, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
-  );
+  const entries = client.operations.map((operation) => {
+    const member = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(operation.id)
+      ? `.${operation.id}`
+      : `[${JSON.stringify(operation.id)}]`;
+    return `${propertyKey(operation.id)}: defineCall({ operation: operations${member}, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
+  });
   return `${banner}
     import { operations } from './client.${moduleName(client.name)}.operations.ts';
     import { defineCall } from './call-runtime.ts';

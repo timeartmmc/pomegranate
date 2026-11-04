@@ -239,16 +239,34 @@ void test('config membership does not suppress unsupported unselected operations
   await assert.rejects(compile(schemaFailure, selection), /unsupported format/);
 });
 
+void test('valid inline and configured memberships cannot both own the document', async () => {
+  await assert.rejects(compile(inlineFixture(), selection), {
+    name: 'ContractError',
+    location: 'x-pom-policy.surfaces',
+    message:
+      'x-pom-policy.surfaces: cannot combine inline and configured surface membership',
+  });
+});
+
 for (const surfaces of [[], undefined]) {
-  void test(`config memberships reject a present document membership field ${surfaces === undefined ? 'with undefined' : 'with an empty array'}`, async () => {
+  void test(`invalid inline surface vocabularies keep their value diagnostic ${surfaces === undefined ? 'with undefined' : 'with an empty array'}`, async () => {
     const document = plainFixture();
     Object.assign(document, { 'x-pom-policy': { version: 3, surfaces } });
-    await assert.rejects(compile(document, selection), /surfaces|membership/);
+    await assert.rejects(compile(document, selection), {
+      name: 'ContractError',
+      location: 'x-pom-policy.surfaces',
+      message: 'x-pom-policy.surfaces: expected a nonempty array of labels',
+    });
   });
   void test(`config memberships reject a present operation membership field ${surfaces === undefined ? 'with undefined' : 'with an empty array'}`, async () => {
     const document = plainFixture();
     Object.assign(document.paths['/items'].get, { 'x-pom': { surfaces } });
-    await assert.rejects(compile(document, selection), /surfaces|membership/);
+    await assert.rejects(compile(document, selection), {
+      name: 'ContractError',
+      location: 'paths./items.get.x-pom.surfaces',
+      message:
+        'paths./items.get.x-pom.surfaces: cannot combine inline and configured surface membership',
+    });
   });
 }
 

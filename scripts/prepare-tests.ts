@@ -9,6 +9,10 @@ import {
 } from '../test/multipart-fixture.ts';
 import { schemaFixture, standaloneSelection } from '../test/schema-fixture.ts';
 import { symbolFixture } from '../test/symbol-fixture.ts';
+import {
+  operationIdsFixture,
+  operationIdsSelection,
+} from '../test/operation-ids-fixture.ts';
 import { queryFixture, querySelection } from '../test/query-fixture.ts';
 import {
   infiniteFixture,
@@ -40,6 +44,7 @@ const fixtures: [string, unknown, CompileOptions][] = [
   ['multipart', multipartFixture(), multipartSelection],
   ['deep', deepFixture(), { clients: ['deep'] }],
   ['symbols', symbolFixture(), { clients: ['symbols', 'other'] }],
+  ['operation-ids', operationIdsFixture(), operationIdsSelection],
   ['queries', queryFixture(), querySelection],
   ['infinite', infiniteFixture(), infiniteSelection],
   ['offset', offsetFixture(), offsetSelection],

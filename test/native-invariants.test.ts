@@ -450,6 +450,41 @@ void test('tagged unions reject a discriminator that changes during branch valid
   }
 });
 
+void test('Object.prototype never fills or invalidates an omitted optional field', () => {
+  const text = { kind: 'text' as const, value: 'ok' };
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, 'hint');
+  try {
+    for (const value of ['polluted', 123]) {
+      Object.defineProperty(Object.prototype, 'hint', {
+        value,
+        configurable: true,
+      });
+      for (const registry of [
+        schemas.requestSchemas,
+        schemas.responseSchemas,
+      ]) {
+        assert.deepEqual(registry.TaggedText.parse(text), text);
+        assert.deepEqual(registry.TaggedText.parse({ ...text, hint: 'own' }), {
+          ...text,
+          hint: 'own',
+        });
+      }
+      const request = operations.checkNullableTagged.build({ body: text });
+      assert.deepEqual(request.body, text);
+      const response = request.parseResponse({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(text),
+      });
+      assert.equal(response.kind, 'success');
+      if (response.kind === 'success') assert.deepEqual(response.data, text);
+    }
+  } finally {
+    if (previous) Object.defineProperty(Object.prototype, 'hint', previous);
+    else Reflect.deleteProperty(Object.prototype, 'hint');
+  }
+});
+
 void test('Object.prototype never supplies fields, tags or unknown request keys', () => {
   const text = { kind: 'text', value: 'ok' };
   // Simulate prototype pollution by another library; removed in finally.

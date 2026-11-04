@@ -21,6 +21,14 @@ export const symbolOperationIds = [
   'type_operation_read',
   '_',
   '__',
+  'get-stations',
+  'get_stations',
+  'repos/get',
+  'repos_get',
+  'read.options',
+  'read_x2e_options',
+  '$read',
+  '9read',
 ] as const;
 
 export function symbolFixture() {
@@ -139,7 +147,10 @@ export function verifySymbols(
     };
     const request = runtimeInput(operation.build, options);
     assert.equal(request.operationId, id);
-    assert.equal(request.url, `/symbols/${id}/${id}?query=${id}`);
+    assert.equal(
+      request.url,
+      `/symbols/${id}/${encodeURIComponent(id)}?${new URLSearchParams({ query: id })}`,
+    );
     assert.deepEqual(request.body, body);
     assert.notEqual(request.body.values, body.values);
     assert.equal(request.headers['X-Hint'], id);
@@ -172,7 +183,7 @@ export function verifySymbols(
       query: { query: null },
       headers: { 'X-Hint': null, 'X-Other': null },
     });
-    assert.equal(omitted.url, `/symbols/${id}/${id}`);
+    assert.equal(omitted.url, `/symbols/${id}/${encodeURIComponent(id)}`);
     assert.equal(Object.hasOwn(omitted.headers, 'X-Hint'), false);
     assert.equal(Object.hasOwn(omitted.headers, 'X-Other'), false);
     const response = (value: unknown) =>

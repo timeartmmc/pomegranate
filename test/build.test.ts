@@ -67,6 +67,7 @@ void test('preparing test signatures replaces a symlink while preserving its tar
     'multipart-fixture.ts',
     'deep-fixture.ts',
     'symbol-fixture.ts',
+    'operation-ids-fixture.ts',
     'query-fixture.ts',
     'infinite-fixture.ts',
     'offset-fixture.ts',

@@ -9,6 +9,7 @@ const sample = () =>
   );
 
 function annotateSchema(schema: Schema) {
+  schema.externalDocs = { url: './schema-docs', description: 'Schema notes' };
   schema.example = sample();
   schema.examples = [null, false, 0, '', sample()];
   schema.deprecated = true;
@@ -48,6 +49,24 @@ const mapValues = (map: unknown) =>
 export function annotateDocument<T extends object>(document: T): T {
   const root = record(document);
   record(root.info).license = { name: 'Synthetic license', identifier: 'MIT' };
+  record(root.info).contact = {
+    name: 'Synthetic author',
+    url: 'https://example.invalid/contact',
+    email: 'author@example.invalid',
+  };
+  record(root.info).termsOfService = 'https://example.invalid/terms';
+  root.externalDocs = { url: './docs', description: 'API notes' };
+  root.tags = [{ name: 'synthetic', externalDocs: { url: './tag-docs' } }];
+  root.servers = [
+    {
+      url: 'https://{region}.example.invalid/{version}',
+      description: 'Application-owned endpoint',
+      variables: {
+        region: { default: 'demo', description: 'Synthetic region' },
+        version: { default: 'v1', enum: ['v1', 'v2'] },
+      },
+    },
+  ];
   root.components ??= {};
   const components = record(root.components);
   components.examples = {
@@ -67,6 +86,7 @@ export function annotateDocument<T extends object>(document: T): T {
     ]) {
       if (!path[method]) continue;
       const operation = record(path[method]);
+      operation.externalDocs = { url: './operation-docs' };
       operation.deprecated = true;
       const parameters: unknown[] = Array.isArray(operation.parameters)
         ? operation.parameters

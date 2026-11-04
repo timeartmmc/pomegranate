@@ -36,3 +36,18 @@ if (response.kind === 'success') {
 
 // @ts-expect-error Private-name encoding must not rename the public operation.
 void operations.read_uuoptions;
+
+const punctuated = operations['repos/get'].build({
+  path: { entry: 'repos/get' },
+  headers: { 'X-Hint': 'repos/get' },
+  body: { tag: 'repos/get', values: [null] },
+});
+const exactId: string = punctuated.operationId;
+const exactTag: 'repos/get' = punctuated.body.tag;
+void [exactId, exactTag];
+operations['get-stations'].build({
+  path: { entry: 'get-stations' },
+  headers: { 'X-Hint': 'get-stations' },
+  // @ts-expect-error Punctuation must not alias an underscore ID.
+  body: { tag: 'get_stations', values: [null] },
+});

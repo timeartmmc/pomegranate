@@ -215,7 +215,7 @@ validation, including operations excluded from output.
 | Surface     | Current support                                                                                                                                                                                                                                                |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                     |
-| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; ASCII operation identifiers; whole-segment path placeholders                                                                                                                                                     |
+| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique nonempty operation IDs; whole-segment path placeholders                                                                                                                                                   |
 | Parameters  | Path-item inheritance and operation overrides; primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
 | Bodies      | Required JSON or multipart request bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                                                                         |
 | Schemas     | Explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                           |
@@ -228,6 +228,26 @@ document with JSON-compatible values. Mapping keys are strings, including
 unquoted numeric response statuses. Scalar values keep their YAML types:
 quote string values such as `version: "1"` and the type name in
 `type: [string, "null"]`.
+
+Operation IDs preserve their exact, case-sensitive strings in operation maps,
+executable clients, query selections and cache keys. Use bracket access for IDs
+such as `operations['repos/get']` or `client['get-stations']`. Private generated
+symbols escape punctuation without renaming public IDs. `__proto__`, `prototype`
+and `constructor` remain reserved operation IDs.
+
+Document-level `servers` accepts an array of objects with required string `url`,
+optional string `description`, and optional `variables`. Each variable has a
+required string `default`, optional string `description`, and optional nonempty
+string `enum` containing the default. Empty server arrays are accepted. POM checks
+these shapes without parsing URLs or resolving template variables.
+
+The application chooses and expands a server URL, then appends the generated
+contract path, including any server base path. Builders keep returning the path
+declared in `paths`; server configuration is not included in generated output.
+For example, server `https://example.invalid/v1` and generated path `/widgets`
+need `https://example.invalid/v1/widgets`. `new URL('/widgets', server)` would
+discard `/v1`. Path-item and operation-level server overrides remain unsupported
+and receive diagnostics.
 
 YAML anchors and aliases support shared values with at most 1,000,000 expanded
 nodes, counting mapping keys, values, and collections. Repeated small anchors
@@ -244,6 +264,8 @@ generated files:
 | Location                                                 | Accepted metadata                                                                         |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `info.license`                                           | Required string `name`; optional string `identifier` or `url`, mutually exclusive         |
+| `info.contact`, `info.termsOfService`                    | Contact has optional string `name`, `url` and `email`; terms of service is a string       |
+| Document, tags, operations, schemas (including `$ref`)   | `externalDocs` with required string `url` and optional string `description`               |
 | Schemas, including `$ref` siblings                       | `example` as a JSON value; `examples` as an array of JSON values; both may coexist        |
 | Parameters, response headers, JSON/multipart media types | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive |
 | Operations, parameters, response headers, schemas        | Boolean `deprecated`; deprecated declarations remain generated                            |
@@ -257,8 +279,9 @@ and `description` annotations.
 
 Example values are documentation data, not schema rules, and are not checked
 against their associated schemas. POM checks metadata shapes rather than SPDX
-expressions or URI syntax, and never fetches license URLs or external example
-values. Unknown keywords and unrelated `x-…` extensions remain rejected.
+expressions, URI syntax or contact email syntax, and never fetches documentation,
+server or license URLs or external example values. Unknown keywords and unrelated
+`x-…` extensions remain rejected.
 
 Supported schema composition is deliberately limited:
 

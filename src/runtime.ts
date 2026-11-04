@@ -610,11 +610,7 @@ export function taggedUnion<T>(
   if (input === null || typeof input !== 'object' || Array.isArray(input))
     return report(issues, 'expected an object', true);
   const tag: unknown = Reflect.get(input, propertyName);
-  if (
-    typeof tag === 'string' &&
-    Object.hasOwn(cases, tag) &&
-    present(input, propertyName, tag)
-  ) {
+  if (typeof tag === 'string' && Object.hasOwn(cases, tag)) {
     const parse = cases[tag];
     if (parse !== undefined) return parse(input, issues);
   }

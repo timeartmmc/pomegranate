@@ -28,10 +28,14 @@ export function nativeFixture() {
       type: ['object', 'null'],
       additionalProperties: { type: 'string', minLength: 2 },
     },
-    TaggedText: object({
-      kind: { type: 'string', const: 'text' },
-      value: { type: 'string', minLength: 2 },
-    }),
+    TaggedText: object(
+      {
+        kind: { type: 'string', const: 'text' },
+        value: { type: 'string', minLength: 2 },
+        hint: { type: 'string' },
+      },
+      ['kind', 'value'],
+    ),
     TaggedCount: object({
       kind: { type: 'string', const: 'count' },
       value: { type: 'integer', minimum: 1 },
