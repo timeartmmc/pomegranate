@@ -173,12 +173,15 @@ void test('clients account for exactly their selected operations and directional
     'Widget',
     'WidgetId',
   ]);
-  assert.deepEqual(staffOperations.getStaffReport.build().policy.auth, {
-    label: 'partnerStaff',
+  assert.equal(
+    staffOperations.getStaffReport.build().policy.auth,
+    'partnerStaff',
+  );
+  assert.deepEqual(staffOperations.getStaffReport.build().security, {
     transport: 'bearer',
   });
-  assert.deepEqual(operations.checkHealth.build().policy.auth, {
-    label: 'public',
+  assert.equal(operations.checkHealth.build().policy.auth, 'public');
+  assert.deepEqual(operations.checkHealth.build().security, {
     transport: 'none',
   });
 });
@@ -357,10 +360,8 @@ void test('builders validate before transport and do not retain mutable input ob
   const request = operations.prepareWidget.build(input);
   input.body.label = 'Mutated';
   assert.equal(request.body.label, 'Example');
-  assert.deepEqual(request.policy.auth, {
-    label: 'session',
-    transport: 'bearer',
-  });
+  assert.equal(request.policy.auth, 'session');
+  assert.deepEqual(request.security, { transport: 'bearer' });
   assert.equal(request.bodyKind, 'json');
   assert.equal(request.headers['Idempotency-Key'], 'attempt');
   for (const input of [

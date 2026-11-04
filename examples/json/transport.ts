@@ -53,8 +53,8 @@ async function executeRaw(
     throw new Error('The example transport does not implement this policy');
   }
   const authHeaders: Record<string, string> = {};
-  if (request.policy.auth.transport === 'bearer') {
-    const token = await tokenFor(request.policy.auth.label);
+  if (request.security.transport === 'bearer') {
+    const token = await tokenFor(request.policy.auth);
     if (!token)
       throw new Error('The example transport requires a bearer token');
     authHeaders['Authorization'] = `Bearer ${token}`;

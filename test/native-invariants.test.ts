@@ -300,7 +300,7 @@ void test('large constrained literal enums retain checked membership in both dir
   }
 });
 
-void test('literal parsing retains runtime patterns and emits one membership failure message per direction', (t) => {
+void test('literal parsing skips proven scalar rules and emits one membership failure message per direction', (t) => {
   let checks = 0;
   // oxlint-disable-next-line typescript/unbound-method -- invoke the saved intrinsic with each original RegExp receiver below.
   const original = RegExp.prototype.test;
@@ -335,38 +335,11 @@ void test('literal parsing retains runtime patterns and emits one membership fai
   }
   assert.equal(
     checks,
-    6,
-    'matching literals retain the consuming engine pattern check',
+    0,
+    'membership completes validation of proven scalar rules',
   );
   // Both directions need the message, but neither success path needs a copy.
   assert.ok((emittedSchemas.match(/expected one of /g) ?? []).length <= 2);
-});
-
-void test('literal patterns follow consuming engine semantics after compiler validation', (t) => {
-  // Unicode property membership can differ between compiler and consumer
-  // versions. Simulate that change after compilation without requiring a
-  // second installed runtime in the ordinary test suite.
-  // oxlint-disable-next-line typescript/unbound-method -- invoke the saved intrinsic with each original RegExp receiver below.
-  const original = RegExp.prototype.test;
-  t.mock.method(
-    RegExp.prototype,
-    'test',
-    function (this: RegExp, input: string) {
-      return this.source === '^v[0-9]+$' && input === 'v1024'
-        ? false
-        : original.call(this, input);
-    },
-  );
-  for (const registry of [schemas.requestSchemas, schemas.responseSchemas]) {
-    const rejected = registry.LargeLiteral.safeParse('v1024');
-    assert.equal(rejected.success, false);
-    if (!rejected.success)
-      assert.deepEqual(rejected.error.issues, [
-        { path: [], message: 'string does not match pattern' },
-      ]);
-    assert.equal(registry.LargeLiteral.parse('v10'), 'v10');
-    assert.equal(registry.LargeLiteralAlias.safeParse('v1024').success, false);
-  }
 });
 
 void test('nullable constraints report their useful branch without expected-null noise', () => {

@@ -2,6 +2,8 @@ import { operations } from './generated/client.consumer.js';
 import type {
   PreparedRequest,
   Responses,
+  Policy,
+  Executor,
 } from './generated/client.consumer.js';
 import { execute } from './transport.js';
 import { operations as staffOperations } from './generated/client.staff.js';
@@ -33,6 +35,24 @@ const request = operations.prepareWidget.build({
   headers: { 'Idempotency-Key': 'example-key' },
   body: { acknowledged: true, label: 'Example' },
 });
+const declaredPolicy: Policy = request.policy;
+const retryLabel: 'never' = request.policy.retry;
+const timeoutLabel: 'interactive' = request.policy.timeout;
+const authLabel: 'public' | 'session' | 'partnerStaff' = request.policy.auth;
+const transport: 'none' | 'bearer' = request.security.transport;
+void [declaredPolicy, retryLabel, timeoutLabel, authLabel, transport];
+// @ts-expect-error Generated policy exposes only declared labels.
+const unknownLabel: 'administrator' = request.policy.auth;
+void unknownLabel;
+// @ts-expect-error Compiler metadata fields cannot appear on generated requests.
+void request.policy.surfaces;
+export const policyExecutor: Executor = async (prepared) => {
+  const retry: 'never' = prepared.policy.retry;
+  const timeout: 'interactive' = prepared.policy.timeout;
+  const auth: 'public' | 'session' | 'partnerStaff' = prepared.policy.auth;
+  void [retry, timeout, auth];
+  return { status: 204, headers: {}, body: '' };
+};
 const consent: true = request.body.acknowledged;
 void consent;
 

@@ -20,8 +20,12 @@ establishes agreement with those inputs, not agreement with a running backend.
 
 Use one versioned policy format and one generated API across applications. Adapt
 consumers to them rather than adding project-specific compiler branches or
-retaining obsolete formats. Policy labels describe application choices; they do
-not authorize requests or define retry and timeout behavior.
+retaining obsolete formats. OpenAPI security determines credential transport independently of optional policy
+metadata. Declared auth labels must agree with it. Application fields use explicit
+scalar types, enums and requiredness; they do not authorize requests or define
+retry and timeout behavior. Keep one shared generated policy declaration so
+executor boundaries preserve the same types as builders. Surface membership has
+one explicit owner, inline or configuration, and must classify every operation.
 
 ## One contract interpretation
 

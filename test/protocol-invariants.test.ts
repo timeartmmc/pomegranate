@@ -260,16 +260,14 @@ void test('generated protocol invariants hold across the complete byte and statu
       assert.equal(first.body.label, 'Synthetic');
       assert.equal(Reflect.set(first, 'url', '/changed'), false);
       assert.equal(Reflect.set(first.policy, 'retry', 'changed'), false);
-      assert.equal(Reflect.set(first.policy.auth, 'transport', 'none'), false);
+      assert.equal(Reflect.set(first.security, 'transport', 'none'), false);
       assert.equal(
         Reflect.set(first.headers, 'Idempotency-Key', 'changed'),
         false,
       );
       const next = operation.build(options());
-      assert.deepEqual(next.policy.auth, {
-        label: 'session',
-        transport: 'bearer',
-      });
+      assert.equal(next.policy.auth, 'session');
+      assert.deepEqual(next.security, { transport: 'bearer' });
       assert.equal(next.headers['Idempotency-Key'], 'attempt');
     },
   );

@@ -30,15 +30,16 @@ outputs change.
 
 These selection keys are shared with programmatic compilation:
 
-| Key                | Purpose                                                                                                                          |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `clients`          | Required array of declared surfaces; may be empty when `standalone` selects at least one root.                                   |
-| `standalone`       | Named component roots with `schema` and `usage: "request"` or `"response"`; see [standalone validators](#standalone-validators). |
-| `transportHeaders` | Declared request headers supplied by the transport; see [requests](#build-and-validate-a-request).                               |
-| `targets`          | Map selected clients to `"browser"` or `"native"`; required for [multipart](#multipart-requests).                                |
-| `executionClients` | Surfaces that get [executable clients](EXECUTION.md#selection-and-calls).                                                        |
-| `queries`          | Operation selections for [ordinary queries](QUERIES.md#ordinary-queries).                                                        |
-| `infiniteQueries`  | Operation bindings for [cursor](QUERIES.md#cursor-pagination) or [offset](QUERIES.md#numeric-offsets) queries.                   |
+| Key                | Purpose                                                                                                                                         |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `surfaces`         | Optional complete map of surface names to operation IDs for contracts without inline membership; see [surfaces](#client-surfaces-and-security). |
+| `clients`          | Required array of declared surfaces; may be empty when `standalone` selects at least one root.                                                  |
+| `standalone`       | Named component roots with `schema` and `usage: "request"` or `"response"`; see [standalone validators](#standalone-validators).                |
+| `transportHeaders` | Declared request headers supplied by the transport; see [requests](#build-and-validate-a-request).                                              |
+| `targets`          | Map selected clients to `"browser"` or `"native"`; required for [multipart](#multipart-requests).                                               |
+| `executionClients` | Surfaces that get [executable clients](EXECUTION.md#selection-and-calls).                                                                       |
+| `queries`          | Operation selections for [ordinary queries](QUERIES.md#ordinary-queries).                                                                       |
+| `infiniteQueries`  | Operation bindings for [cursor](QUERIES.md#cursor-pagination) or [offset](QUERIES.md#numeric-offsets) queries.                                  |
 
 Unknown configuration keys fail validation. Optional output selections are
 disabled when omitted. `CompileOptions` accepts these keys without `version`,
@@ -46,25 +47,34 @@ disabled when omitted. `CompileOptions` accepts these keys without `version`,
 
 ## Operation policy
 
-The OpenAPI document declares a versioned vocabulary of application-owned labels:
+Policy metadata is optional. OpenAPI security always determines the credential
+transport, exposed separately as `request.security.transport` (`"none"` or
+`"bearer"`). Applications supply credentials and decide readiness, retry and
+deadline behavior.
+
+To require application metadata, declare its fields and requiredness:
 
 ```json
 {
   "x-pom-policy": {
-    "version": 2,
+    "version": 3,
     "auth": {
       "public": { "transport": "none" },
       "session": { "transport": "bearer" },
       "partnerStaff": { "transport": "bearer" }
     },
-    "retry": ["never"],
-    "timeout": ["interactive"],
+    "fields": {
+      "retry": { "type": "string", "enum": ["never"] },
+      "timeout": { "type": "string", "enum": ["interactive"] },
+      "audit": { "type": "boolean" }
+    },
+    "required": ["auth", "retry", "timeout"],
     "surfaces": ["consumer", "staff"]
   }
 }
 ```
 
-Each operation selects labels and nonempty surface membership:
+Operations select flat field values alongside inline membership:
 
 ```json
 {
@@ -77,17 +87,61 @@ Each operation selects labels and nonempty surface membership:
 }
 ```
 
-The auth binding must agree with the operation's effective OpenAPI security.
-Generated requests expose `policy.auth` as `{ label, transport }`; applications
-resolve tokens and enforce the label's meaning. Retry and timeout labels remain
-opaque. No label authorizes a request, enables retries, or sets a numeric deadline.
+`auth` bindings are optional. When declared, they define the allowed auth labels
+and each supplied label must agree with effective OpenAPI security. Several
+labels may share bearer transport while describing different application
+readiness requirements. Labels never authorize a request.
+
+`fields` declares application-owned values using only `type` and optional `enum`.
+Types are `string`, `number`, `integer`, `boolean`, and `null`; numbers must be
+finite. Enums are nonempty, unique, and match the field type. `auth` and `surfaces`
+are reserved field names. Nested values, references, defaults, constraints and
+other schema keywords fail explicitly. `required` names declared fields,
+including `auth` when bindings exist. Unknown keys, invalid values and missing
+required fields fail on every operation before selection or writes.
+
+Omitted fields stay absent. `x-pom-policy` may be omitted entirely when no
+metadata is needed; omitted operation `x-pom` becomes an empty metadata object
+when requiredness and configured membership permit it. Explicit `null` or
+`undefined` is invalid. Surface membership remains explicit as described below.
+
+Generated requests expose flat values such as `policy.auth`, `policy.retry` and
+`policy.timeout`. The shared `Policy` type preserves declared enums and optional
+fields in builders, direct executors and query executors. It describes the
+whole document's vocabulary, rather than narrowing to one operation's values.
+`policy-types.ts` accompanies the runtime even for standalone-only output.
+Policy and security objects are detached and frozen. No policy field enables
+retries or sets a numeric deadline automatically.
+
+`Executor` and `QueryExecutor` default to this document's `Policy`. A transport
+shared across different generated documents can declare `Executor<SharedPolicy>`
+or `QueryExecutor<SharedPolicy>`, where `SharedPolicy` accepts the vocabularies it
+supports. Use `Readonly<Record<string, unknown>>` if the transport ignores policy;
+use an explicit field/enum type when it interprets labels. Narrow transports
+cannot serve incompatible policies. The fourth `PreparedRequest` type parameter
+accepts the same override for explicitly annotated transport helpers.
+
+This replaces policy version 2; configuration remains version 2. To migrate,
+move root `retry` and `timeout` arrays into `fields` with string enums, add
+`required: ["auth", "retry", "timeout"]`, and set policy `version` to 3.
+Operation metadata stays flat. Update transports from `policy.auth.transport`
+to `security.transport` and from `policy.auth.label` to `policy.auth`, then
+regenerate the complete output set and run application integration checks.
 
 ## Client surfaces and security
 
-POM recognizes inline `type: "http"`, `scheme: "bearer"` security schemes by their
-semantics. Scheme names are arbitrary, scheme comparison ignores case, and
+POM recognizes `type: "http"`, `scheme: "bearer"` security schemes by their
+semantics, directly or through local aliases. Scheme comparison ignores case;
 `bearerFormat` is only an annotation. A supported bearer requirement names one
 declared scheme with an empty role array, such as `security: [{ WidgetSession: [] }]`.
+
+Security-scheme aliases use `$ref: "#/components/securitySchemes/<name>"`.
+Component names match `[A-Za-z0-9._-]+`. References may add string `summary`
+and `description` annotations; these do not change credential requirements.
+Every chain must end at a supported bearer declaration. Missing targets,
+cycles, malformed references and semantic siblings fail at their declaration,
+including unused schemes. External references and encoded or escaped component
+names are unsupported; the compiler never fetches security definitions.
 
 An operation inherits document security when its own `security` field is absent.
 Its own `[]` or `[{}]` declares public access; absence at both levels also means
@@ -95,7 +149,31 @@ no security requirement. Alternatives, combined schemes, optional bearer access,
 and nonempty role requirements are rejected explicitly. The generated code never
 obtains credentials or sends Authorization headers.
 
-Every operation must name at least one declared surface. Surface names match
+Every operation must belong to at least one surface. Choose one membership
+owner: document `x-pom-policy.surfaces` with per-operation `x-pom.surfaces`, or a
+complete configuration map:
+
+```json
+{
+  "version": 2,
+  "openapi": "./openapi.json",
+  "output": "./generated",
+  "clients": ["consumer"],
+  "surfaces": {
+    "consumer": ["getWidget", "prepareWidget"],
+    "internal": ["getInternalReport"]
+  }
+}
+```
+
+This allows a supported plain OpenAPI document without POM extensions.
+Configuration membership rejects inline surface declarations, even when empty.
+It may coexist with inline policy fields. Every map entry has a nonempty array
+of operation IDs; duplicate IDs within an entry, unknown IDs, and operations
+missing from every entry fail. The same operation may belong to several surfaces.
+Unselected internal surfaces still classify and validate their operations.
+
+Surface names match
 `[a-z][a-z0-9_-]{0,62}`. Unknown or duplicate names and selected surfaces without
 operations fail generation. An internal-only operation can belong to a declared
 surface omitted from `clients`.
@@ -134,15 +212,15 @@ validation, including operations excluded from output.
 
 ## Supported vocabulary
 
-| Surface     | Current support                                                                                                                                                                                                 |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration and policy                                                                                                      |
-| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; ASCII operation identifiers; whole-segment path placeholders                                                                                                      |
-| Parameters  | Primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
-| Bodies      | Required JSON or multipart request bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                          |
-| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                 |
-| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                   |
-| Formats     | String `date`, `date-time`, and `uuid`; values remain strings without coercion                                                                                                                                  |
+| Surface     | Current support                                                                                                                                                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                     |
+| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; ASCII operation identifiers; whole-segment path placeholders                                                                                                                                                     |
+| Parameters  | Path-item inheritance and operation overrides; primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
+| Bodies      | Required JSON or multipart request bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                                                                         |
+| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                |
+| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                  |
+| Formats     | String `date`, `date-time`, and `uuid`; integer `int32`; no coercion                                                                                                                                                                                           |
 
 JSON inputs and configuration accept one leading UTF-8 byte-order mark and
 reject duplicate decoded object keys. YAML files use a single YAML 1.2 core
@@ -206,7 +284,8 @@ preserve the exact names. `__proto__`, `prototype`, and `constructor` remain
 reserved names.
 
 Request `default` values are annotations: they do not fill omitted fields,
-change requiredness, or replace explicit `undefined`. Defaults in response
+change requiredness, or replace explicit `undefined`. Their values must be JSON;
+they are not checked against the schema's type, bounds or enum. Defaults in response
 schemas are rejected, including through references, maps, and union branches.
 
 Schemas support at most 128 structural levels, including structure behind
@@ -222,6 +301,13 @@ Numbers use finite JavaScript numeric values. Integer validation checks
 integrality without adding an implicit safe-integer range; declare required
 bounds in the schema. `multipleOf` uses their decimal spelling, including
 scientific notation, without an epsilon tolerance.
+
+`type: "integer", format: "int32"` restricts values to −2,147,483,648 through
+2,147,483,647 inclusive. Explicit bounds and reference constraints intersect
+that range and cannot widen it. Types remain `number`, with runtime integer
+and range checks and no coercion. Nullable integer schemas support the same
+format. `int32` on other types, format siblings on references, and `int64`
+remain unsupported. Request defaults keep the annotation behavior above.
 
 Patterns use ECMAScript 2024 syntax in Unicode (`u`) mode with Unicode 16.0
 property names, matching the supported Node minimums. Newer syntax, including
@@ -282,8 +368,8 @@ POM: components.schemas.WidgetId.format: unsupported format; expected date, date
 
 External or recursive references, general unions and other type arrays, objects
 mixing fixed properties with dynamic entries, other formats, response defaults,
-optional request bodies, path-level parameters, status ranges/default responses,
-non-bearer or referenced security schemes
+optional request bodies, parameter reference objects, status ranges/default responses,
+non-bearer security schemes and external security-scheme references
 remain unsupported.
 
 ## Build and validate a request
@@ -314,12 +400,23 @@ if (result.kind === 'success' && result.status === 202) {
 ```
 
 Builders validate immediately and return a relative URL, endpoint headers,
-selected policy, and a validated body when declared. The application serializes
+inferred security, selected policy, and a validated body when declared. The application serializes
 that body, adds transport headers, validates the merged headers with
 `request.validateHeaders(headers)`, sends the request, and supplies response status,
 headers, and raw body text to `parseResponse`.
 Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and occupy an
 entire segment. Path values cannot be empty, `.` or `..`.
+
+Path-item `parameters` apply to every operation under that path. An operation
+replaces a declaration with the same case-sensitive `name` and `in`; other
+inherited parameters remain, including when the operation declares an empty
+`parameters` array. Both declaration lists are validated before merging, so
+overrides cannot hide unsupported schemas or serialization. Duplicates within
+either list fail. Header names must also remain unique ignoring case in the
+effective operation; changing only a header's casing does not count as an
+override. Path placeholders must match the effective path parameters exactly.
+Declaration errors retain the path-item or operation source location. Parameter
+reference objects remain unsupported.
 
 Configuration may name declared request headers in `transportHeaders`, for
 example `"transportHeaders": ["X-Origin"]`. These headers are absent from builder

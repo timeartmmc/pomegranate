@@ -30,7 +30,10 @@ export async function runExecutionBrowser() {
   let scoped = false;
   let scopedValidations = 0;
   let onBodyRead: (() => void) | undefined;
-  const execute: Executor = async (request, execution) => {
+  const execute: Executor<Readonly<Record<string, unknown>>> = async (
+    request,
+    execution,
+  ) => {
     requests++;
     let body: BodyInit | undefined;
     if (request.bodyKind === 'json') body = JSON.stringify(request.body);

@@ -123,7 +123,7 @@ export function literalViolation(
   };
 }
 
-function hasUnicodeProperty(pattern: string): boolean {
+export function hasUnicodeProperty(pattern: string): boolean {
   // Schemas already validated u-mode syntax. A property escape has the same
   // spelling inside and outside classes; skip escaped backslashes as one token.
   for (let index = 0; index < pattern.length; index++) {

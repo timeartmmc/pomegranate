@@ -75,9 +75,14 @@ export async function compile(
   document: unknown,
   options: CompileOptions,
 ): Promise<Readonly<Record<string, string>>> {
-  const descriptor = buildDescriptor(document);
   const selection = record(options, 'compile options');
   keys(selection, selectionKeys, 'compile options');
+  const descriptor = buildDescriptor(
+    document,
+    Object.hasOwn(selection, 'surfaces')
+      ? { surfaces: selection.surfaces }
+      : {},
+  );
   return renderSelection(descriptor, selection);
 }
 
@@ -106,7 +111,10 @@ export async function runProject(
     text(config.output, `${configPath}.output`),
   );
   const document = await readOpenApi(input);
-  const descriptor = buildDescriptor(document);
+  const descriptor = buildDescriptor(
+    document,
+    Object.hasOwn(config, 'surfaces') ? { surfaces: config.surfaces } : {},
+  );
   const files = await renderSelection(descriptor, config);
   return synchronizeOutputs(output, files, [configPath, input], check);
 }

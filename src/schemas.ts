@@ -394,19 +394,33 @@ function normalizeScalar(
   const allowedConstraints =
     kind === 'string'
       ? [...stringConstraints, 'format']
-      : kind === 'number' || kind === 'integer'
-        ? numberConstraints
-        : [];
+      : kind === 'integer'
+        ? [...numberConstraints, 'format']
+        : kind === 'number'
+          ? numberConstraints
+          : [];
   keys(
     value,
     [...typedSchemaKeys, 'const', 'enum', ...allowedConstraints],
     location,
   );
   const allowed = literals(value, kind, location, nullable);
-  const limits = constraints(value, location);
+  let limits = constraints(value, location);
   let format: 'date' | 'date-time' | 'uuid' | undefined;
   if (Object.hasOwn(value, 'format')) {
-    if (
+    if (kind === 'integer') {
+      if (value.format !== 'int32')
+        fail(
+          `${location}.format`,
+          'unsupported integer format; expected int32',
+        );
+      // Lower the wire format to ordinary bounds so literals, references and
+      // generated numeric parsers keep one interpretation of the integer range.
+      limits = intersectConstraints(limits, {
+        minimum: -2_147_483_648,
+        maximum: 2_147_483_647,
+      });
+    } else if (
       value.format !== 'date' &&
       value.format !== 'date-time' &&
       value.format !== 'uuid'
@@ -415,7 +429,7 @@ function normalizeScalar(
         `${location}.format`,
         'unsupported format; expected date, date-time or uuid',
       );
-    format = value.format;
+    else format = value.format;
   }
   const nonNull = nullable ? allowed?.filter((item) => item !== null) : allowed;
   // A null-only literal assertion removes the non-null branch. Sibling syntax

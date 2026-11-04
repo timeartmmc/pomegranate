@@ -24,10 +24,14 @@ export function queryFixture() {
     openapi: '3.1.0',
     info: { title: 'Synthetic query contracts', version: '1' },
     'x-pom-policy': {
-      version: 2,
+      version: 3,
       auth: { public: { transport: 'none' }, session: { transport: 'bearer' } },
-      retry: ['never'],
-      timeout: ['interactive'],
+      fields: {
+        audit: { type: 'boolean', enum: [true] },
+        retry: { type: 'string', enum: ['never'] },
+        timeout: { type: 'string', enum: ['interactive'] },
+      },
+      required: ['auth', 'retry', 'timeout'],
       surfaces: ['consumer', 'staff'],
     },
     security: [{ Session: [] }],

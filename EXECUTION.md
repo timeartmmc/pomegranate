@@ -75,7 +75,9 @@ body and forwards the signal to its transport. POM invokes this executor once;
 the executor owns recovery, retries, deadlines, locale and session fencing. A
 broad executor can serve direct calls, ordinary queries and both infinite query
 profiles without casts. `QueryExecutor` accepts only bodyless requests and is
-sufficient for query-only integrations.
+sufficient for query-only integrations. For adapters shared across generated
+documents with different policy vocabularies, declare the supported
+[policy type](REFERENCE.md#operation-policy) explicitly.
 
 For raw execution, read the final body once and return its evidence. POM parses JSON
 and applies the exact-status response schema once after the executor returns.

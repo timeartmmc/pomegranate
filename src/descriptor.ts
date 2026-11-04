@@ -29,7 +29,11 @@ import {
   validateSchema,
   schemaValidation,
 } from './schemas.js';
-import { normalizeOperationPolicy, normalizeVocabulary } from './policy.js';
+import {
+  normalizeMemberships,
+  normalizeOperationPolicy,
+  normalizeVocabulary,
+} from './policy.js';
 import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
 import {
   deprecatedAnnotation,
@@ -370,35 +374,66 @@ function multipartFields(
   });
 }
 
+function uniqueParameters(
+  parameters: readonly Parameter[],
+  location: string,
+): void {
+  const seen = new Set<string>();
+  for (const parameter of parameters) {
+    const key = `${parameter.in}:${parameter.in === 'header' ? parameter.name.toLowerCase() : parameter.name}`;
+    if (seen.has(key)) fail(location, `duplicate parameter ${key}`);
+    seen.add(key);
+  }
+}
+
+function parameterList(
+  input: unknown,
+  schemas: Readonly<Record<string, Schema>>,
+  validation: Validation,
+  examples: ReadonlySet<string>,
+  location: string,
+): readonly Parameter[] {
+  if (!Array.isArray(input)) fail(location, 'expected an array');
+  const parameters = Array.from(input, (parameter, index) =>
+    normalizeParameter(
+      parameter,
+      schemas,
+      validation,
+      examples,
+      `${location}[${index}]`,
+    ),
+  );
+  uniqueParameters(parameters, location);
+  return parameters;
+}
+
 function operationParameters(
   value: Record<string, unknown>,
+  inherited: readonly Parameter[],
   schemas: Readonly<Record<string, Schema>>,
   validation: Validation,
   examples: ReadonlySet<string>,
   path: string,
   location: string,
 ): readonly Parameter[] {
-  const rawParameters = Object.hasOwn(value, 'parameters')
-    ? value.parameters
-    : [];
-  if (!Array.isArray(rawParameters))
-    fail(`${location}.parameters`, 'expected an array');
-  const parameters = Array.from(rawParameters, (parameter, index) =>
-    normalizeParameter(
-      parameter,
-      schemas,
-      validation,
-      examples,
-      `${location}.parameters[${index}]`,
-    ),
+  const own = parameterList(
+    Object.hasOwn(value, 'parameters') ? value.parameters : [],
+    schemas,
+    validation,
+    examples,
+    `${location}.parameters`,
   );
-  const seenParameters = new Set<string>();
-  for (const parameter of parameters) {
-    const key = `${parameter.in}:${parameter.in === 'header' ? parameter.name.toLowerCase() : parameter.name}`;
-    if (seenParameters.has(key))
-      fail(`${location}.parameters`, `duplicate parameter ${key}`);
-    seenParameters.add(key);
-  }
+  // Validate both declaration lists before merging so an override cannot hide
+  // an unsupported contract. OAS 3.1 overrides use case-sensitive name/location
+  // identity; differently cased headers still collide on the wire.
+  const key = (parameter: Parameter): string =>
+    `${parameter.in}:${parameter.name}`;
+  const merged = new Map(
+    inherited.map((parameter) => [key(parameter), parameter]),
+  );
+  for (const parameter of own) merged.set(key(parameter), parameter);
+  const parameters = [...merged.values()];
+  uniqueParameters(parameters, `${location}.parameters`);
   const placeholders = [...path.matchAll(/\{([^}]+)\}/g)].map(
     (match) => match[1]!,
   );
@@ -551,6 +586,8 @@ function normalizeOperation(
   examples: ReadonlySet<string>,
   bearerSchemes: ReadonlySet<string>,
   inheritedSecurity: AuthTransport,
+  memberships: ReadonlyMap<string, readonly string[]> | undefined,
+  inheritedParameters: readonly Parameter[],
 ): Operation {
   const location = `paths.${path}.${method}`;
   const value = record(input, location);
@@ -577,18 +614,19 @@ function normalizeOperation(
   const transport = Object.hasOwn(value, 'security')
     ? normalizeSecurity(value.security, bearerSchemes, `${location}.security`)
     : inheritedSecurity;
-  const metadata = normalizeOperationPolicy(
-    value['x-pom'],
-    vocabulary,
-    transport,
-    `${location}.x-pom`,
-  );
   const id = safeKey(
     text(value.operationId, `${location}.operationId`),
     `${location}.operationId`,
   );
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(id))
     fail(`${location}.operationId`, 'expected an identifier');
+  const metadata = normalizeOperationPolicy(
+    Object.hasOwn(value, 'x-pom') ? value['x-pom'] : {},
+    vocabulary,
+    transport,
+    `${location}.x-pom`,
+    memberships === undefined ? undefined : (memberships.get(id) ?? []),
+  );
   if (
     Object.hasOwn(value, 'tags') &&
     (!stringArray(value.tags) || value.tags.some((tag) => tag.length === 0))
@@ -599,6 +637,7 @@ function normalizeOperation(
     );
   const parameters = operationParameters(
     value,
+    inheritedParameters,
     schemas,
     validation,
     examples,
@@ -625,6 +664,7 @@ function normalizeOperation(
     id,
     method: method.toUpperCase() as Operation['method'],
     path,
+    security: { transport },
     policy: metadata.policy,
     surfaces: metadata.surfaces,
     parameters,
@@ -633,7 +673,10 @@ function normalizeOperation(
   };
 }
 
-export function buildDescriptor(input: unknown): Descriptor {
+export function buildDescriptor(
+  input: unknown,
+  membership: { surfaces?: unknown } = {},
+): Descriptor {
   const value = record(input, 'OpenAPI');
   keys(
     value,
@@ -670,7 +713,34 @@ export function buildDescriptor(input: unknown): Descriptor {
       annotations(tag, `tags[${index}]`);
     }
   }
-  const vocabulary = normalizeVocabulary(value['x-pom-policy']);
+  let vocabulary = normalizeVocabulary(
+    Object.hasOwn(value, 'x-pom-policy')
+      ? value['x-pom-policy']
+      : { version: 3 },
+  );
+  let memberships: Map<string, string[]> | undefined;
+  const configured = Object.hasOwn(membership, 'surfaces')
+    ? normalizeMemberships(membership.surfaces)
+    : undefined;
+  if (configured !== undefined) {
+    if (
+      Object.hasOwn(value, 'x-pom-policy') &&
+      Object.hasOwn(record(value['x-pom-policy'], 'x-pom-policy'), 'surfaces')
+    )
+      fail(
+        'x-pom-policy.surfaces',
+        'cannot combine inline and configured surface membership',
+      );
+    vocabulary = { ...vocabulary, surfaces: Object.keys(configured) };
+    memberships = new Map();
+    for (const [surface, ids] of Object.entries(configured)) {
+      for (const id of ids) {
+        const names = memberships.get(id) ?? [];
+        names.push(surface);
+        memberships.set(id, names);
+      }
+    }
+  }
   const components = Object.hasOwn(value, 'components')
     ? record(value.components, 'components')
     : {};
@@ -714,10 +784,21 @@ export function buildDescriptor(input: unknown): Descriptor {
   for (const path of Object.keys(paths).sort()) {
     pathTemplate(path, `paths.${path}`);
     const pathItem = record(paths[path], `paths.${path}`);
-    keys(pathItem, [...methods, 'summary', 'description'], `paths.${path}`);
+    keys(
+      pathItem,
+      [...methods, 'summary', 'description', 'parameters'],
+      `paths.${path}`,
+    );
     annotations(pathItem, `paths.${path}`);
     if (!methods.some((method) => Object.hasOwn(pathItem, method)))
       fail(`paths.${path}`, 'expected at least one supported operation');
+    const inheritedParameters = parameterList(
+      Object.hasOwn(pathItem, 'parameters') ? pathItem.parameters : [],
+      schemas,
+      validation,
+      examples,
+      `paths.${path}.parameters`,
+    );
     for (const method of methods)
       if (Object.hasOwn(pathItem, method))
         operations.push(
@@ -731,6 +812,8 @@ export function buildDescriptor(input: unknown): Descriptor {
             examples,
             bearerSchemes,
             inheritedSecurity,
+            memberships,
+            inheritedParameters,
           ),
         );
   }
@@ -743,6 +826,15 @@ export function buildDescriptor(input: unknown): Descriptor {
         `duplicate operation identifier ${operation.id}; first declared at ${ids.get(operation.id)!}`,
       );
     ids.set(operation.id, location);
+  }
+  for (const [surface, configuredIds] of Object.entries(configured ?? {})) {
+    for (const id of configuredIds) {
+      if (!ids.has(id))
+        fail(
+          `surfaces.${surface}`,
+          `unknown operation identifier ${JSON.stringify(id)}`,
+        );
+    }
   }
   return {
     policy: vocabulary,

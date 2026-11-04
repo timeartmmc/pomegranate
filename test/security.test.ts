@@ -27,20 +27,23 @@ void test('bearer schemes are interpreted by semantics, not their component name
     security: [{ 'Completely.Different-Auth_1': [] }],
   });
   const descriptor = buildDescriptor(document);
-  assert.deepEqual(operation(descriptor, 'prepareWidget').policy.auth, {
-    label: 'session',
+  assert.equal(operation(descriptor, 'prepareWidget').policy.auth, 'session');
+  assert.deepEqual(operation(descriptor, 'prepareWidget').security, {
     transport: 'bearer',
   });
-  assert.deepEqual(operation(descriptor, 'getStaffReport').policy.auth, {
-    label: 'partnerStaff',
+  assert.equal(
+    operation(descriptor, 'getStaffReport').policy.auth,
+    'partnerStaff',
+  );
+  assert.deepEqual(operation(descriptor, 'getStaffReport').security, {
     transport: 'bearer',
   });
-  assert.deepEqual(operation(descriptor, 'checkHealth').policy.auth, {
-    label: 'public',
+  assert.equal(operation(descriptor, 'checkHealth').policy.auth, 'public');
+  assert.deepEqual(operation(descriptor, 'checkHealth').security, {
     transport: 'none',
   });
-  assert.deepEqual(operation(descriptor, 'widgetOptions').policy.auth, {
-    label: 'public',
+  assert.equal(operation(descriptor, 'widgetOptions').policy.auth, 'public');
+  assert.deepEqual(operation(descriptor, 'widgetOptions').security, {
     transport: 'none',
   });
 });
@@ -55,7 +58,7 @@ void test('absent document security and both explicit anonymous forms mean none'
         record(record(value)['x-pom']).auth = 'public';
     assert.ok(
       buildDescriptor(document).operations.every(
-        (value) => value.policy.auth.transport === 'none',
+        (value) => value.security.transport === 'none',
       ),
     );
     Object.assign(preparation(document), {
@@ -63,8 +66,7 @@ void test('absent document security and both explicit anonymous forms mean none'
     });
     preparation(document)['x-pom'].auth = 'session';
     assert.equal(
-      operation(buildDescriptor(document), 'prepareWidget').policy.auth
-        .transport,
+      operation(buildDescriptor(document), 'prepareWidget').security.transport,
       'bearer',
     );
   }
@@ -171,7 +173,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /unsupported keyword|unsupported security scheme/,
   ],
   [
-    'security scheme reference',
+    'missing security scheme reference',
     (d) => {
       Object.assign(d.components.securitySchemes, {
         WidgetSession: {
@@ -179,7 +181,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
         },
       });
     },
-    /\$ref.*unsupported keyword/,
+    /unresolved security scheme reference Other/,
   ],
   [
     'auth carrier mismatch',
@@ -326,7 +328,7 @@ void test('portable prefixed names cannot collide with helpers or module suffixe
   document['x-pom-policy'].surfaces.push(...names);
   document.paths['/api/health'].head['x-pom'].surfaces.push(...names);
   const files = await selected(document, ['consumer', ...names]);
-  assert.equal(Object.keys(files).length, 1 + 3 * (1 + names.length));
+  assert.equal(Object.keys(files).length, 2 + 3 * (1 + names.length));
   assert.equal(
     new Set(Object.keys(files).map((name) => name.toLowerCase())).size,
     Object.keys(files).length,
@@ -343,6 +345,7 @@ void test('selecting one client emits no aggregate or other-client module', asyn
     'client.staff.operations.ts',
     'client.staff.schemas.ts',
     'client.staff.ts',
+    'policy-types.ts',
     'runtime.ts',
   ]);
   assert.doesNotMatch(

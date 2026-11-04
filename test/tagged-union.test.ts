@@ -65,10 +65,13 @@ function document() {
     openapi: '3.1.2',
     info: { title: 'Nested tagged unions', version: '1' },
     'x-pom-policy': {
-      version: 2,
+      version: 3,
       auth: { public: { transport: 'none' } },
-      retry: ['never'],
-      timeout: ['interactive'],
+      fields: {
+        retry: { type: 'string', enum: ['never'] },
+        timeout: { type: 'string', enum: ['interactive'] },
+      },
+      required: ['auth', 'retry', 'timeout'],
       surfaces: ['nested'],
     },
     components: { schemas },

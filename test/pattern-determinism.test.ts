@@ -20,10 +20,13 @@ function document(schemas: Record<string, Schema>) {
     openapi: '3.1.0',
     info: { title: 'Synthetic pattern proofs', version: '1' },
     'x-pom-policy': {
-      version: 2,
+      version: 3,
       auth: { public: { transport: 'none' } },
-      retry: ['never'],
-      timeout: ['interactive'],
+      fields: {
+        retry: { type: 'string', enum: ['never'] },
+        timeout: { type: 'string', enum: ['interactive'] },
+      },
+      required: ['auth', 'retry', 'timeout'],
       surfaces: ['patterns'],
     },
     paths: {},
@@ -114,29 +117,54 @@ void test('Unicode-property proofs and reference candidates are independent of c
   await writeFile(join(root, 'package.json'), '{"type":"module"}');
   for (const [name, source] of Object.entries(files))
     await writeFile(join(root, name), source);
-  const native = new RegExp(positive, 'u').test(letter);
-  for (const name of roots) {
-    const negated = name === 'InlineNegated' || name === 'ReferenceNegated';
-    const stable = name === 'EscapedStable';
-    const input = stable
-      ? String.raw`\p{L}`
-      : name === 'OddSlash'
-        ? `\\${letter}`
-        : letter;
-    const expected = stable || (negated ? !native : native);
-    for (const usage of ['request', 'response']) {
-      const { schema } = (await import(
-        pathToFileURL(
-          join(root, `standalone.${name.toLowerCase()}-${usage}.ts`),
-        ).href
-      )) as StandaloneModule;
-      assert.equal(
-        schema.safeParse(input).success,
-        expected,
-        `${name}/${usage}`,
-      );
+  let stableRuntimeEvaluations = 0;
+  let referenceEvaluations = 0;
+  for (const classification of [false, true]) {
+    // Simulate a consumer Unicode version that does or does not classify this
+    // newer character as a letter. Stable ASCII rules keep their real semantics.
+    const mock = t.mock.method(
+      RegExp.prototype,
+      'test',
+      function (this: RegExp, input: string) {
+        if (this.source === escapedStable) stableRuntimeEvaluations++;
+        if (this.source === `^${letter}$`) referenceEvaluations++;
+        if (
+          propertyPatterns.has(this.source) &&
+          (input === letter || input === `\\${letter}`)
+        )
+          return this.source === negative ? !classification : classification;
+        return original.call(this, input);
+      },
+    );
+    try {
+      for (const name of roots) {
+        const negated = name === 'InlineNegated' || name === 'ReferenceNegated';
+        const stable = name === 'EscapedStable';
+        const input = stable
+          ? String.raw`\p{L}`
+          : name === 'OddSlash'
+            ? `\\${letter}`
+            : letter;
+        const expected = stable || (negated ? !classification : classification);
+        for (const usage of ['request', 'response']) {
+          const { schema } = (await import(
+            pathToFileURL(
+              join(root, `standalone.${name.toLowerCase()}-${usage}.ts`),
+            ).href
+          )) as StandaloneModule;
+          assert.equal(
+            schema.safeParse(input).success,
+            expected,
+            `${name}/${usage}/${classification}`,
+          );
+        }
+      }
+    } finally {
+      mock.mock.restore();
     }
   }
+  assert.equal(stableRuntimeEvaluations, 0);
+  assert.equal(referenceEvaluations, 4);
 });
 
 for (const [name, schema, reason] of [

@@ -93,6 +93,7 @@ void test('standalone-only generation retains transitive schemas without HTTP cl
     standalone: standaloneSelection,
   });
   assert.deepEqual(Object.keys(outputs).sort(), [
+    'policy-types.ts',
     'runtime.ts',
     'standalone.input.ts',
     'standalone.message.ts',

@@ -21,6 +21,9 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+import type { Policy } from './policy-types.ts';
+export type { Policy } from './policy-types.ts';
+
 // Generated validators are ordinary functions over unknown input. A parser
 // returns a fresh value of its declared type, or `invalid` after recording at
 // least one issue in the caller's sink. Generated return expressions are
@@ -718,11 +721,7 @@ export function nativeFile(
   };
 }
 
-export type Policy = Readonly<{
-  auth: Readonly<{ label: string; transport: 'none' | 'bearer' }>;
-  retry: string;
-  timeout: string;
-}>;
+export type Security = Readonly<{ transport: 'none' | 'bearer' }>;
 export type HeaderContext = Readonly<Record<string, string>>;
 export type ObservedResponse = Readonly<{
   status: number;
@@ -798,11 +797,13 @@ export type PreparedRequest<
   R extends Responses = Responses,
   B extends BodyKind = BodyKind,
   Body = unknown,
+  P = Policy,
 > = Readonly<{
   operationId: string;
   method: string;
   url: string;
-  policy: Policy;
+  security: Security;
+  policy: P;
   headers: HeaderContext;
   validateHeaders: (headers: HeaderContext) => HeaderContext;
   parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
@@ -858,6 +859,7 @@ type Definition<
   operationId: string;
   method: string;
   path: string;
+  security: Security;
   policy: Policy;
   bodyKind: B;
   multipart?: readonly MultipartField[];
@@ -1251,10 +1253,8 @@ export function defineOperation<
   const R extends Responses,
   const B extends BodyKind,
 >(definition: Definition<O, R, B>): Operation<O, R, B> {
-  const policy = Object.freeze({
-    ...definition.policy,
-    auth: Object.freeze({ ...definition.policy.auth }),
-  });
+  const security = Object.freeze({ ...definition.security });
+  const policy = Object.freeze({ ...definition.policy });
   const multipart = Object.freeze(
     (definition.multipart ?? []).map((field) => Object.freeze({ ...field })),
   );
@@ -1288,6 +1288,7 @@ export function defineOperation<
       operationId: definition.operationId,
       method: definition.method,
       url: serialized.url,
+      security,
       policy,
       headers: serialized.headers,
       validateHeaders,

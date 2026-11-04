@@ -18,7 +18,7 @@ interface ArrayCase {
 }
 
 const cases: ArrayCase[] = [
-  ...(['surfaces', 'retry', 'timeout'] as const).map((field): ArrayCase => ({
+  ...(['surfaces', 'required'] as const).map((field): ArrayCase => ({
     name: `policy ${field}`,
     values: (document) => document['x-pom-policy'][field],
     replace: (document, values) => {
@@ -28,6 +28,15 @@ const cases: ArrayCase[] = [
     message: /expected a nonempty string/,
     indexed: true,
   })),
+  ...(['retry', 'timeout'] as const).map((field): ArrayCase => ({
+    name: `policy ${field} enum`,
+    values: (document) => document['x-pom-policy'].fields[field].enum,
+    replace: (document, values) => {
+      Object.assign(document['x-pom-policy'].fields[field], { enum: values });
+    },
+    location: `x-pom-policy.fields.${field}`,
+    message: /literal must match type/,
+  })),
   {
     name: 'operation surfaces',
     values: (document) => preparation(document)['x-pom'].surfaces,
@@ -36,6 +45,18 @@ const cases: ArrayCase[] = [
     },
     location: `${operationLocation}.x-pom.surfaces`,
     message: /expected a nonempty string/,
+    indexed: true,
+  },
+  {
+    name: 'path-level parameters',
+    values: (document) => preparation(document).parameters,
+    replace: (document, values) => {
+      Object.assign(document.paths['/api/widgets/{widgetId}/preparations'], {
+        parameters: values,
+      });
+    },
+    location: 'paths./api/widgets/{widgetId}/preparations.parameters',
+    message: /expected an object/,
     indexed: true,
   },
   {

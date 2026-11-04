@@ -48,12 +48,18 @@ export async function verifyExecutionDeclarations(
     import { createClient } from './execution-generated/client.consumer.ts';
     import type { Execution, Executor, ObservedResponse, PreparedRequest, ResponseInspection, Responses } from './execution-generated/client.consumer.ts';
     import type { Executor as IndependentExecutor } from './execution-independent/client.consumer.ts';
+    import { createClient as createUploads } from './multipart-generated/client.browser.ts';
+    import type { Executor as UploadExecutor } from './multipart-generated/client.browser.ts';
     import { createQueries, createInfiniteQueries } from './execution-generated/client.consumer.queries.ts';
     const executeRaw = async (_request: PreparedRequest, _execution: Execution): Promise<ObservedResponse> => ({status: 204, headers: {}, body: ''});
     const execute: Executor = executeRaw;
     export const adapter = async <R extends Responses, V extends ResponseInspection<R>>(request: PreparedRequest<R>, execution: Execution<R,V>): Promise<ObservedResponse|V> => execution.validateResponse(await executeRaw(request, execution));
     const independent: IndependentExecutor = adapter;
     void independent;
+    export const sharedAdapter: Executor<Readonly<Record<string, unknown>>> = async (_request, execution) => execution.validateResponse({status:204,headers:{},body:''});
+    const uploadAdapter: UploadExecutor = sharedAdapter;
+    export const uploadClient = createUploads({namespace: 'published-upload', execute: sharedAdapter});
+    void uploadAdapter;
     export const client = createClient({namespace: 'published-client', execute});
     const queries = createQueries({namespace: 'published-client', execute});
     const infinite = createInfiniteQueries({namespace: 'published-client', execute});
@@ -84,6 +90,7 @@ export async function verifyExecutionDeclarations(
       include: [
         'execution-generated/*.ts',
         'execution-independent/*.ts',
+        'multipart-generated/*.ts',
         'execution-wrapper.ts',
       ],
     }),
@@ -96,7 +103,11 @@ export async function verifyExecutionDeclarations(
     `${(await readFile(fixture, 'utf8')).replaceAll(".ts';", ".js';")}
     import { client as published, call, isError, createApi, adapter as publishedAdapter, bodyKey as publishedBodyKey, bodyOptions as publishedBodyOptions, invalidation, cursorBody, cursorBodyOptions as publishedCursorBodyOptions, offsetBody, offsetBodyOptions as publishedOffsetBodyOptions } from './execution-wrapper.js';
     import type { Executor as IndependentExecutor } from './execution-independent/client.consumer.js';
+    import { sharedAdapter as publishedSharedAdapter, uploadClient as publishedUploadClient } from './execution-wrapper.js';
+    import type { Executor as PublishedUploadExecutor } from './multipart-generated/client.browser.js';
+    const publishedUploadAdapter: PublishedUploadExecutor = publishedSharedAdapter;
     const independentAdapter: IndependentExecutor = publishedAdapter;
+    void [publishedUploadAdapter, publishedUploadClient];
     const ordinaryBody = cache.getQueryData(publishedBodyKey);
     const ordinaryBodyOptions = cache.getQueryData(publishedBodyOptions.queryKey);
     if (ordinaryBody && ordinaryBodyOptions) {

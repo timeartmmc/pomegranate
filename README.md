@@ -30,7 +30,8 @@ Create `pom.json` beside your exported contract:
 }
 ```
 
-The contract must declare [operation policy and surface membership](REFERENCE.md#operation-policy).
+Declare [surface membership](REFERENCE.md#client-surfaces-and-security) in the contract
+or configuration. [Typed operation policy](REFERENCE.md#operation-policy) is optional.
 Use a `.yaml` or `.yml` input path for YAML; configuration stays JSON. Paths
 resolve from the configuration file's real directory.
 
@@ -53,7 +54,7 @@ platform requirements.
 
 ## Use the generated API
 
-Request builders validate inputs and prepare a relative URL, headers, policy,
+Request builders validate inputs and prepare a relative URL, headers, security, policy,
 and body. For the synthetic example:
 
 ```ts

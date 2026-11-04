@@ -74,11 +74,11 @@ export type {
 } from './execution-runtime.ts';
 // The bodyless contract remains assignable from an executor supporting all body
 // kinds; existing bodyless-only query executors need no change.
-export type QueryExecutor = <
+export type QueryExecutor<P = PreparedRequest['policy']> = <
   R extends Responses,
   V extends ResponseInspection<R>,
 >(
-  request: PreparedRequest<R, 'none'>,
+  request: PreparedRequest<R, 'none', unknown, P>,
   execution: Execution<R, V>,
 ) => Promise<ObservedResponse | V>;
 

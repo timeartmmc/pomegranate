@@ -67,16 +67,12 @@ export type Schema = { readonly hasDefault?: true } & (
 );
 
 export type AuthTransport = 'none' | 'bearer';
-export type Policy = {
-  readonly auth: Readonly<{ label: string; transport: AuthTransport }>;
-  readonly retry: string;
-  readonly timeout: string;
-};
+export type Policy = Readonly<Record<string, Scalar>>;
 export type PolicyVocabulary = {
-  readonly version: 2;
+  readonly version: 3;
   readonly auth: Readonly<Record<string, AuthTransport>>;
-  readonly retry: readonly string[];
-  readonly timeout: readonly string[];
+  readonly fields: Readonly<Record<string, Schema>>;
+  readonly required: readonly string[];
   readonly surfaces: readonly string[];
 };
 
@@ -111,6 +107,7 @@ export type Operation = {
     | 'HEAD'
     | 'OPTIONS';
   readonly path: string;
+  readonly security: Readonly<{ transport: AuthTransport }>;
   readonly policy: Policy;
   readonly surfaces: readonly string[];
   readonly parameters: readonly Parameter[];

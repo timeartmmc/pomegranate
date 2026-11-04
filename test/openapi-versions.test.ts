@@ -72,6 +72,6 @@ void test('accepting a patch version preserves schema and operation-policy diagn
   invalidPolicy['x-pom-policy'].version = 1;
   await assert.rejects(
     compile(invalidPolicy, selection),
-    /expected policy version 2/,
+    /expected policy version 3/,
   );
 });

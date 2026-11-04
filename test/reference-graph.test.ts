@@ -103,6 +103,7 @@ void test('forward reference graphs compile independently of alias depth and exe
     standalone: { leaf: { schema: ref('Leaf').$ref, usage: 'request' } },
   });
   assert.deepEqual(Object.keys(leaf).sort(), [
+    'policy-types.ts',
     'runtime.ts',
     'standalone.leaf.ts',
   ]);

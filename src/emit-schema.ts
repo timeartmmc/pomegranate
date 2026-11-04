@@ -2,6 +2,7 @@ import { data, identifier, literal, object, propertyKey } from './code.js';
 import type { Expression } from './code.js';
 import { fail } from './diagnostics.js';
 import type { Client, Constraints, Direction, Schema } from './model.js';
+import { hasUnicodeProperty } from './scalar-rules.js';
 import { schemaType } from './schema-types.js';
 
 // Follow references to the first non-reference component. Constraint sets are
@@ -443,15 +444,17 @@ export function schemaRenderer(
     // Literal outputs come from TypeScript narrowing of the input itself, so
     // the declared literal type is checked and -0 keeps its sign.
     // Normalization proves each inline literal's engine-independent scalar rules.
-    // Keep pattern checks: the consuming engine can use a different Unicode
-    // version and classify a property escape differently from the compiler.
-    // Other rules are stable; reference siblings still apply their refinements.
+    // Membership completes those checks. Only Unicode-property patterns remain
+    // deferred: the consuming engine can classify characters differently.
+    // Reference siblings still apply their separate refinements.
     const expected = (value.literals ?? []).map((item) => JSON.stringify(item));
     const message = JSON.stringify(
       `expected ${expected.length === 1 ? expected[0] : `one of ${expected.join(', ')}`}`,
     );
     const patternCheck =
-      value.kind === 'string' && value.pattern !== undefined
+      value.kind === 'string' &&
+      value.pattern !== undefined &&
+      hasUnicodeProperty(value.pattern)
         ? `if (${use('text').source}(input, issues, ${constant(
             `rules_${name}`,
             object([['pattern', literal(value.pattern)]]).source,

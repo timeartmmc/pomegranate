@@ -14,7 +14,7 @@ import { invalidOptions, record, runtimeInput } from './assertions.ts';
 import { detail, labelled, noOptions } from './native-schemas.ts';
 
 const policy = {
-  auth: { label: 'public', transport: 'none' },
+  auth: 'public',
   retry: 'never',
   timeout: 'interactive',
 } as const;
@@ -24,6 +24,7 @@ function operation(onValidate: () => void = () => {}) {
     method: 'GET',
     path: '/items',
     bodyKind: 'none',
+    security: { transport: 'none' },
     policy,
     parameters: [],
     options: noOptions,
@@ -198,6 +199,7 @@ void test('private mutable bodies preserve special map keys, -0, and deeply nest
     method: 'GET',
     path: '/json',
     bodyKind: 'none',
+    security: { transport: 'none' },
     policy,
     parameters: [],
     options: noOptions,
@@ -282,6 +284,7 @@ void test('inspection copies preserve own data when Object.prototype contains a 
       method: 'GET',
       path: '/json',
       bodyKind: 'none',
+      security: { transport: 'none' },
       policy,
       parameters: [],
       options: noOptions,

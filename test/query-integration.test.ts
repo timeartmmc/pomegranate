@@ -14,7 +14,7 @@ import { shareQueryData } from '../src/query-sharing.ts';
 import { dehydrateJson } from './query-hydration.ts';
 
 const policy = {
-  auth: { label: 'public', transport: 'none' },
+  auth: 'public',
   retry: 'never',
   timeout: 'interactive',
 } as const;
@@ -24,6 +24,7 @@ const item = defineOperation({
   method: 'GET',
   path: '/items',
   bodyKind: 'none',
+  security: { transport: 'none' },
   policy,
   parameters: [],
   options,
@@ -238,6 +239,7 @@ void test('JSON null is cacheable while any bodyless success rejects body select
     operationId: 'null',
     method: 'GET',
     path: '/null',
+    security: { transport: 'none' },
     policy,
     bodyKind: 'none',
     options,
@@ -268,6 +270,7 @@ void test('JSON null is cacheable while any bodyless success rejects body select
     operationId: 'mixed',
     method: 'GET',
     path: '/mixed',
+    security: { transport: 'none' },
     policy,
     bodyKind: 'none',
     options,
@@ -303,6 +306,7 @@ void test('offset body queries validate pagination before storing projected page
     operationId: 'page',
     method: 'GET',
     path: '/page',
+    security: { transport: 'none' },
     policy,
     bodyKind: 'none',
     options: pageOptions,

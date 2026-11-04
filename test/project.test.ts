@@ -249,6 +249,7 @@ void test('changing selected clients checks stale output read-only and cleans on
     'client.consumer.operations.ts',
     'client.consumer.schemas.ts',
     'client.consumer.ts',
+    'policy-types.ts',
     'runtime.ts',
   ]);
 });

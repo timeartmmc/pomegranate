@@ -134,6 +134,7 @@ try {
   });
   assert.ok(paths.includes('dist/cli.js'));
   assert.ok(paths.includes('dist/runtime.ts'));
+  assert.ok(paths.includes('dist/policy-types.ts'));
   assert.ok(paths.includes('dist/execution-runtime.ts'));
   assert.ok(paths.includes('dist/call-runtime.ts'));
   assert.ok(paths.includes('LICENSE'));
@@ -295,8 +296,47 @@ try {
     'query-generated/*.ts',
     'offset-generated/*.ts',
     'execution-generated/*.ts',
+    'compatibility-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
+  await writeFile(
+    join(consumer, 'compatibility-consumer.ts'),
+    `
+    import {operations, RequestValidationError} from './compatibility-generated/client.consumer.ts';
+    import {schema} from './compatibility-generated/standalone.int32.ts';
+    function equal(actual: unknown, expected: unknown): void {
+      if (actual !== expected) throw new Error('Unexpected int32 result');
+    }
+    function invalidRequest(action: () => unknown): void {
+      try { action(); } catch (error) {
+        if (error instanceof RequestValidationError) return;
+        throw error;
+      }
+      throw new Error('Expected int32 request rejection');
+    }
+    export function verifyCompatibility(): void {
+      for (const value of [-2147483648, 0, 2147483647]) {
+        const parsed: number = schema.parse(value);
+        equal(parsed, value);
+        const request = operations.roundTrip.build({body: value});
+        const body: number = request.body;
+        equal(body, value);
+        const result = request.parseResponse({status: 200, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(value)});
+        equal(result.kind, 'success');
+        if (result.kind === 'success') {
+          const response: number = result.data;
+          equal(response, value);
+        }
+      }
+      for (const value of [-2147483649, 2147483648, 0.5, '1']) {
+        equal(schema.safeParse(value).success, false);
+        invalidRequest(() => Reflect.apply(operations.roundTrip.build, undefined, [{body: value}]));
+        const result = operations.roundTrip.parseResponse({status: 200, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(value)});
+        equal(result.kind, 'protocol');
+      }
+    }
+    `,
+  );
   for (const name of [
     'consumer-types.ts',
     'schema-types.ts',
@@ -386,10 +426,13 @@ try {
       description: 'x'.repeat(8_400_000),
     },
     'x-pom-policy': {
-      version: 2,
+      version: 3,
       auth: { public: { transport: 'none' } },
-      retry: ['never'],
-      timeout: ['interactive'],
+      fields: {
+        retry: { type: 'string', enum: ['never'] },
+        timeout: { type: 'string', enum: ['interactive'] },
+      },
+      required: ['auth', 'retry', 'timeout'],
       surfaces: ['d'],
     },
     components: { schemas: { Payload: { type: 'object' } } },
@@ -818,9 +861,79 @@ try {
     const selection={clients:['consumer','staff']};
     assert.deepEqual(await pom.compile(document,selection),await pom.compile(baseline,selection));
     assert.deepEqual(document,before);
+    const aliasedSecurity=structuredClone(document);
+    const terminalSecurity=aliasedSecurity.components.securitySchemes.WidgetSession;
+    aliasedSecurity.components.securitySchemes.WidgetSession={$ref:'#/components/securitySchemes/SessionAlias',description:'Synthetic alias'};
+    aliasedSecurity.components.securitySchemes.SessionAlias={$ref:'#/components/securitySchemes/SessionBearer',summary:'Synthetic reference'};
+    aliasedSecurity.components.securitySchemes.SessionBearer=terminalSecurity;
+    const aliasBefore=structuredClone(aliasedSecurity);
+    assert.deepEqual(await pom.compile(aliasedSecurity,selection),await pom.compile(document,selection));
+    assert.deepEqual(aliasedSecurity,aliasBefore);
+    aliasedSecurity.components.securitySchemes.SessionAlias.$ref='#/components/securitySchemes/Missing';
+    await assert.rejects(pom.compile(aliasedSecurity,selection),error=>error instanceof pom.ContractError&&error.location==='components.securitySchemes.SessionAlias.$ref');
+    aliasedSecurity.components.securitySchemes.SessionAlias.$ref='#/components/securitySchemes/WidgetSession';
+    await assert.rejects(pom.compile(aliasedSecurity,selection),/cyclic security scheme reference/);
+    const int32Document={openapi:'3.1.0',info:{title:'Synthetic int32 consumer',version:'1'},paths:{'/round-trip':{post:{operationId:'roundTrip',requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/Int32'}}}},responses:{200:{description:'Round trip',content:{'application/json':{schema:{$ref:'#/components/schemas/Int32'}}}}}}}},components:{schemas:{Int32:{type:'integer',format:'int32'}}}};
+    const int32Selection={clients:['consumer'],surfaces:{consumer:['roundTrip']},standalone:{int32:{schema:'#/components/schemas/Int32',usage:'request'}}};
+    const int32Before=structuredClone(int32Document);
+    const int32Files=await pom.compile(int32Document,int32Selection);
+    assert.deepEqual(int32Document,int32Before);
+    const bounded=structuredClone(int32Document);
+    bounded.components.schemas.Int32={type:'integer',minimum:-2147483648,maximum:2147483647};
+    assert.deepEqual(int32Files,await pom.compile(bounded,int32Selection));
+    await mkdir('./compatibility-generated');
+    for(const [name,source] of Object.entries(int32Files)) await writeFile('./compatibility-generated/'+name,source);
+    int32Document.components.schemas.Int32.const=2147483648;
+    await assert.rejects(pom.compile(int32Document,int32Selection),/bounds/);
+    const inheritedParameters=structuredClone(document);
+    const inheritedPath=inheritedParameters.paths['/api/widgets/{widgetId}/preparations'];
+    inheritedPath.parameters=[inheritedPath.post.parameters[0],{name:'dryRun',in:'query',schema:{type:'boolean',const:true}}];
+    inheritedPath.post.parameters=inheritedPath.post.parameters.slice(1);
+    const inheritedBefore=structuredClone(inheritedParameters);
+    // The installed generated/runtime/type/declaration checks below exercise
+    // these exact bytes; inheritance must retain the expanded contract.
+    assert.deepEqual(await pom.compile(inheritedParameters,selection),await pom.compile(document,selection));
+    assert.deepEqual(inheritedParameters,inheritedBefore);
+    inheritedPath.parameters[1].style='spaceDelimited';
+    await assert.rejects(pom.compile(inheritedParameters,selection),error=>error instanceof pom.ContractError&&error.location==='paths./api/widgets/{widgetId}/preparations.parameters[1].style');
+    inheritedPath.parameters[1].style='form';
+    inheritedPath.parameters.push(structuredClone(inheritedPath.parameters[1]));
+    await assert.rejects(pom.compile(inheritedParameters,selection),/duplicate parameter query:dryRun/);
     const invalidMetadata=structuredClone(document);
     invalidMetadata.info.license.identifier=false;
     await assert.rejects(pom.compile(invalidMetadata,selection),/info.license.identifier/);
+    const legacyPolicy=structuredClone(document);
+    legacyPolicy['x-pom-policy'].version=2;
+    await assert.rejects(pom.compile(legacyPolicy,selection),/policy version 3/);
+    const plain=structuredClone(document);
+    delete plain['x-pom-policy'];
+    const memberships={consumer:[],staff:[]};
+    for(const item of Object.values(plain.paths)) for(const operation of Object.values(item)) {
+      for(const surface of operation['x-pom'].surfaces) memberships[surface].push(operation.operationId);
+      delete operation['x-pom'];
+    }
+    const plainBefore=structuredClone(plain);
+    const plainFiles=await pom.compile(plain,{...selection,surfaces:memberships});
+    assert.deepEqual(plain,plainBefore);
+    await mkdir('./plain-generated');
+    for(const [name,source] of Object.entries(plainFiles)) await writeFile('./plain-generated/'+name,source);
+    const plainEntry=await import('./plain-generated/client.consumer.ts');
+    assert.deepEqual(plainEntry.operations.checkHealth.build().policy,{});
+    assert.deepEqual(plainEntry.operations.checkHealth.build().security,{transport:'none'});
+    const omittedPolicy=structuredClone(document);
+    omittedPolicy['x-pom-policy']={version:3,surfaces:['consumer','staff']};
+    for(const item of Object.values(omittedPolicy.paths)) for(const operation of Object.values(item)) operation['x-pom']={surfaces:operation['x-pom'].surfaces};
+    const optionalFiles=await pom.compile(omittedPolicy,selection);
+    assert.ok(Object.hasOwn(optionalFiles,'policy-types.ts'));
+    const wrongPolicy=structuredClone(document);
+    wrongPolicy.paths['/api/widgets/{widgetId}/preparations'].post['x-pom'].retry='unknown';
+    await assert.rejects(pom.compile(wrongPolicy,selection),/x-pom.retry/);
+    const undeclaredPolicyField=structuredClone(document);
+    undeclaredPolicyField.paths['/api/widgets/{widgetId}/preparations'].post['x-pom'].audit=true;
+    await assert.rejects(pom.compile(undeclaredPolicyField,selection),/x-pom.audit/);
+    const missingRequiredPolicy=structuredClone(document);
+    delete missingRequiredPolicy.paths['/api/widgets/{widgetId}/preparations'].post['x-pom'].auth;
+    await assert.rejects(pom.compile(missingRequiredPolicy,selection),/x-pom.auth/);
     const invalidSlots = [
       [d => { d['x-pom-policy'].surfaces.length++; }, 'x-pom-policy.surfaces[2]'],
       [d => { d.paths['/api/widgets/{widgetId}/preparations'].post.parameters.length++; }, 'paths./api/widgets/{widgetId}/preparations.post.parameters[3]'],
@@ -865,7 +978,7 @@ try {
       document.openapi=version;
       assert.deepEqual(await pom.compile(document,{clients:['staff']}),files);
     }
-    assert.deepEqual(Object.keys(files).sort(), ['client.staff.operations.ts', 'client.staff.schemas.ts', 'client.staff.ts', 'runtime.ts']);
+    assert.deepEqual(Object.keys(files).sort(), ['client.staff.operations.ts', 'client.staff.schemas.ts', 'client.staff.ts', 'policy-types.ts', 'runtime.ts']);
     assert.doesNotMatch(Object.values(files).join(' '),/PreparationInput|client.consumer/);
     const unsafeHeader = structuredClone(document);
     unsafeHeader.paths['/api/staff/reports'].get.parameters = [{name:'__PROTO__',in:'header',required:true,schema:{type:'string',const:'must-match'}}];
@@ -908,6 +1021,7 @@ try {
   await run(binary, ['check', '--config', join(consumer, 'pom.json')]);
   for (const path of [
     'generated/runtime.ts',
+    'generated/policy-types.ts',
     'multipart-generated/runtime.ts',
     'multipart-generated/runtime.browser.ts',
     'query-generated/query-runtime.ts',
@@ -935,6 +1049,7 @@ try {
     'client.staff.operations.ts',
     'client.staff.schemas.ts',
     'client.staff.ts',
+    'policy-types.ts',
     'runtime.ts',
   ]);
   await run(process.execPath, [
@@ -1008,6 +1123,8 @@ try {
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
+    import {verifyCompatibility} from './compatibility-consumer.ts';
+    verifyCompatibility();
     import {schema as portablePattern} from './pattern-generated/standalone.pattern.ts';
     assert.equal(portablePattern.parse('\\u{105C0}\\u{105C0}'),'\\u{105C0}\\u{105C0}');
     assert.equal(portablePattern.safeParse('aa').success,false);
@@ -1080,6 +1197,8 @@ try {
     '-e',
     `
     import assert from 'node:assert/strict';
+    import {verifyCompatibility} from './.build/compatibility-consumer.js';
+    verifyCompatibility();
     import * as executionModule from './.build/execution-generated/client.consumer.js';
     import * as executionQueries from './.build/execution-generated/client.consumer.queries.js';
     import * as executionStaff from './.build/execution-generated/client.staff.js';
@@ -1132,8 +1251,10 @@ try {
     assert.equal(Object.hasOwn(requestSchemas,'PreparationInput'),false);
     assert.equal(Object.hasOwn(requestSchemas,'StaffReport'),false);
     assert.equal(Object.hasOwn(responseSchemas,'StaffPeriod'),true);
-    assert.deepEqual(staff.getStaffReport.build().policy.auth,{label:'partnerStaff',transport:'bearer'});
-    assert.deepEqual(operations.checkHealth.build().policy.auth,{label:'public',transport:'none'});
+    assert.equal(staff.getStaffReport.build().policy.auth, 'partnerStaff');
+  assert.deepEqual(staff.getStaffReport.build().security, { transport: 'bearer' });
+    assert.equal(operations.checkHealth.build().policy.auth, 'public');
+  assert.deepEqual(operations.checkHealth.build().security, { transport: 'none' });
     assert.throws(() => operations.prepareWidget.build({}), RequestValidationError);
     const result = operations.prepareWidget.parseResponse({status:409,headers:{'Content-Type':'application/json','X-Request-ID':'isolated','Retry-After':'7'},body:'{'});
     assert.equal(result.kind,'protocol');

@@ -299,10 +299,13 @@ before(async () => {
     openapi: '3.1.0',
     info: { title: 'Synthetic schema conformance', version: '1.0.0' },
     'x-pom-policy': {
-      version: 2,
+      version: 3,
       auth: { public: { transport: 'none' } },
-      retry: ['never'],
-      timeout: ['interactive'],
+      fields: {
+        retry: { type: 'string', enum: ['never'] },
+        timeout: { type: 'string', enum: ['interactive'] },
+      },
+      required: ['auth', 'retry', 'timeout'],
       surfaces: ['oracle'],
     },
     paths: Object.fromEntries(

@@ -5,7 +5,7 @@
     "version": "1.0.0"
   },
   "x-pom-policy": {
-    "version": 2,
+    "version": 3,
     "auth": {
       "public": {
         "transport": "none"
@@ -17,8 +17,11 @@
         "transport": "bearer"
       }
     },
-    "retry": ["never"],
-    "timeout": ["interactive"],
+    "fields": {
+      "retry": { "type": "string", "enum": ["never"] },
+      "timeout": { "type": "string", "enum": ["interactive"] }
+    },
+    "required": ["auth", "retry", "timeout"],
     "surfaces": ["consumer", "staff"]
   },
   "paths": {

@@ -5,6 +5,8 @@ export type { RequestTypes, ResponseTypes } from './client.consumer.schemas.ts';
 export { RequestValidationError } from './runtime.ts';
 export type {
   PreparedRequest,
+  Policy,
+  Security,
   Responses,
   ProtocolResult,
   ProtocolFailure,

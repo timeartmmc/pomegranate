@@ -4,6 +4,7 @@ import { copyFile } from 'node:fs/promises';
 // implementation embedded in a string template.
 for (const name of [
   'runtime.ts',
+  'policy-types.ts',
   'runtime.browser.ts',
   'execution-runtime.ts',
   'call-runtime.ts',

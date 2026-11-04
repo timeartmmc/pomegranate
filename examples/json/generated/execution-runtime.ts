@@ -64,8 +64,13 @@ export type Execution<
 // The caller supplies the receipt type, so one adapter works across independent
 // generated outputs without importing their private brands. The unbranded
 // Execution default also preserves explicitly annotated raw adapters.
-export type Executor = <R extends Responses, V extends ResponseInspection<R>>(
-  request: PreparedRequest<R>,
+// P lets a shared adapter accept the policy vocabularies of several outputs;
+// the default retains this output's exact declaration in factory callbacks.
+export type Executor<P = PreparedRequest['policy']> = <
+  R extends Responses,
+  V extends ResponseInspection<R>,
+>(
+  request: PreparedRequest<R, PreparedRequest['bodyKind'], unknown, P>,
   execution: Execution<R, V>,
 ) => Promise<ObservedResponse | V>;
 export type CancellationEvent = Readonly<{

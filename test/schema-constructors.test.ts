@@ -86,8 +86,9 @@ void test('every consumer fails and names an issue when a parser rejects silentl
     method: 'GET',
     path: '/silent',
     bodyKind: 'none',
+    security: { transport: 'none' },
     policy: {
-      auth: { label: 'public', transport: 'none' },
+      auth: 'public',
       retry: 'never',
       timeout: 'interactive',
     },

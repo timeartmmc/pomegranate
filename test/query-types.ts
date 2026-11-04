@@ -1,11 +1,30 @@
 import { QueryClient, skipToken } from '@tanstack/query-core';
 import { useQuery } from '@tanstack/react-query';
 import { createQueries } from './query-generated/client.consumer.queries.ts';
+import type { QueryExecutor } from './query-generated/client.consumer.queries.ts';
 import { createQueries as createStaff } from './query-generated/client.staff.queries.ts';
 
+const authReadiness = { public: false, session: true } as const;
+const retryBudgets = { never: 0 } as const;
+const timeoutBudgets = { interactive: 1000 } as const;
+export const policyQueryExecutor: QueryExecutor = async (request) => {
+  const readiness: boolean = authReadiness[request.policy.auth];
+  const attempts: 0 = retryBudgets[request.policy.retry];
+  const timeout: 1000 = timeoutBudgets[request.policy.timeout];
+  const audit: true | undefined = request.policy.audit;
+  void [readiness, attempts, timeout, audit];
+  return { status: 200, headers: {}, body: '' };
+};
 const queries = createQueries({
   namespace: 'synthetic',
-  execute: async () => ({ status: 200, headers: {}, body: '' }),
+  execute: async (request) => {
+    const readiness: boolean = authReadiness[request.policy.auth];
+    const attempts: 0 = retryBudgets[request.policy.retry];
+    const timeout: 1000 = timeoutBudgets[request.policy.timeout];
+    const audit: true | undefined = request.policy.audit;
+    void [readiness, attempts, timeout, audit];
+    return { status: 200, headers: {}, body: '' };
+  },
 });
 const args = {
   context: { session: 'public', locale: 'en' },

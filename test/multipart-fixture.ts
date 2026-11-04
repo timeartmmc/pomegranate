@@ -50,10 +50,13 @@ export function multipartFixture() {
     openapi: '3.1.0',
     info: { title: 'Synthetic uploads', version: '1' },
     'x-pom-policy': {
-      version: 2,
+      version: 3,
       auth: { public: { transport: 'none' } },
-      retry: ['never'],
-      timeout: ['upload'],
+      fields: {
+        retry: { type: 'string', enum: ['never'] },
+        timeout: { type: 'string', enum: ['upload'] },
+      },
+      required: ['auth', 'retry', 'timeout'],
       surfaces: ['browser', 'native'],
     },
     components: {

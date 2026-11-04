@@ -85,6 +85,7 @@ void test('compiles every supported method and keeps per-status responses distin
     'client.staff.operations.ts',
     'client.staff.schemas.ts',
     'client.staff.ts',
+    'policy-types.ts',
     'runtime.ts',
   ]);
   for (const id of [
@@ -200,11 +201,13 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /trace.*unsupported keyword/,
   ],
   [
-    'path-level parameters',
+    'path-level parameter references',
     (d) => {
-      Object.assign(d.paths['/api/health'], { parameters: [] });
+      Object.assign(d.paths['/api/health'], {
+        parameters: [{ $ref: '#/components/parameters/Health' }],
+      });
     },
-    /parameters.*unsupported keyword/,
+    /\$ref.*unsupported keyword/,
   ],
   [
     'malformed Unicode query name',
@@ -252,7 +255,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     (d) => {
       d['x-pom-policy'].version = 1;
     },
-    /policy version 2/,
+    /policy version 3/,
   ],
   [
     'undeclared policy',

@@ -11,6 +11,7 @@ import { surfaceNames } from './policy.js';
 
 export type CompileOptions = Readonly<{
   clients: readonly string[];
+  surfaces?: Readonly<Record<string, readonly string[]>>;
   executionClients?: readonly string[];
   transportHeaders?: readonly string[];
   targets?: Readonly<Record<string, 'browser' | 'native'>>;
@@ -24,6 +25,7 @@ export type CompileOptions = Readonly<{
 }>;
 export const selectionKeys = [
   'clients',
+  'surfaces',
   'executionClients',
   'transportHeaders',
   'standalone',
@@ -70,6 +72,7 @@ function standaloneSelections(input: unknown = {}): readonly RootSelection[] {
 export function parseSelection(value: Record<string, unknown>): Selection {
   // File configuration and programmatic options share this boundary. Projection
   // receives typed selections, rather than positional unknowns and mode flags.
+  // Config memberships were consumed by the complete descriptor before selection.
   const standalone = standaloneSelections(value.standalone);
   const clients =
     standalone.length > 0 &&

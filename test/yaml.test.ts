@@ -108,10 +108,13 @@ void test('handwritten YAML preserves scalar types, comments, block strings and 
       description: 'Folded text.',
     },
     'x-pom-policy': {
-      version: 2,
+      version: 3,
       auth: { public: { transport: 'none' } },
-      retry: ['never'],
-      timeout: ['interactive'],
+      fields: {
+        retry: { type: 'string', enum: ['never'] },
+        timeout: { type: 'string', enum: ['interactive'] },
+      },
+      required: ['auth', 'retry', 'timeout'],
       surfaces: ['consumer'],
     },
     components: { schemas: { Value: value } },
@@ -150,10 +153,12 @@ info:
     Folded
     text.
 x-pom-policy:
-  version: 2
+  version: 3
   auth: {public: {transport: none}}
-  retry: [never]
-  timeout: [interactive]
+  fields:
+    retry: {type: string, enum: [never]}
+    timeout: {type: string, enum: [interactive]}
+  required: [auth, retry, timeout]
   surfaces: [consumer]
 components:
   schemas:

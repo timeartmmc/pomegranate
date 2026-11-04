@@ -12,12 +12,20 @@ import type {
 } from './execution-generated/client.consumer.ts';
 import { QueryClient, skipToken } from '@tanstack/query-core';
 import type { QueryExecutor } from './execution-generated/client.consumer.queries.ts';
+import type { Executor as UploadExecutor } from './multipart-generated/client.browser.ts';
+import { createClient as createUploads } from './multipart-generated/client.browser.ts';
 import {
   createQueries,
   createInfiniteQueries,
 } from './execution-generated/client.consumer.queries.ts';
 
+const authReadiness = { public: false, session: true } as const;
+const retryBudgets = { never: 0 } as const;
 const execute: Executor = async (request, execution) => {
+  const readiness: boolean = authReadiness[request.policy.auth];
+  const attempts: 0 = retryBudgets[request.policy.retry];
+  const audit: true | undefined = request.policy.audit;
+  void [readiness, attempts, audit];
   const signal: AbortSignal = execution.signal;
   const locale: string | number | boolean | null | undefined =
     execution.context['locale'];
@@ -29,6 +37,38 @@ const execute: Executor = async (request, execution) => {
   }
   return { status: 204, headers: {}, body: '' };
 };
+export const sharedAdapter: Executor<
+  Readonly<Record<string, unknown>>
+> = async (_request, execution) =>
+  execution.validateResponse({ status: 204, headers: {}, body: '' });
+const sharedUpload: UploadExecutor = sharedAdapter;
+const sharedQuery: QueryExecutor = sharedAdapter;
+const uploadClient = createUploads({
+  namespace: 'shared-policy',
+  execute: sharedAdapter,
+});
+const sharedQueryAdapter: QueryExecutor<Readonly<Record<string, unknown>>> =
+  sharedAdapter;
+void [sharedUpload, sharedQuery, uploadClient, sharedQueryAdapter];
+// @ts-expect-error A transport declared for interactive policies cannot accept upload policy.
+const narrowUpload: UploadExecutor = execute;
+void narrowUpload;
+export const inspectedPolicyAdapter: Executor<
+  Readonly<{
+    auth: 'public' | 'session';
+    retry: 'never';
+    timeout: 'interactive' | 'upload';
+    audit?: true;
+  }>
+> = async (request, execution) => {
+  const budgets = { interactive: 1000, upload: 5000 };
+  const timeout: number = budgets[request.policy.timeout];
+  void timeout;
+  return execution.validateResponse({ status: 204, headers: {}, body: '' });
+};
+const inspectedUpload: UploadExecutor = inspectedPolicyAdapter;
+const inspectedQuery: QueryExecutor = inspectedPolicyAdapter;
+void [inspectedUpload, inspectedQuery];
 // A broad executor is assignable to the original bodyless query contract.
 const bodyless: QueryExecutor = execute;
 // Explicit imported Execution annotations must survive regeneration too.
