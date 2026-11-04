@@ -798,11 +798,23 @@ function normalizeOperation(
   };
 }
 
+export function openApiDocument(input: unknown): Record<string, unknown> {
+  const value = record(input, 'OpenAPI');
+  // OAS 3.1 patch releases clarify the same feature set. Match the whole value
+  // so malformed versions, prereleases and trailing line breaks cannot pass.
+  if (
+    typeof value.openapi !== 'string' ||
+    /^3\.1\.(?:0|[1-9][0-9]*)$/.exec(value.openapi)?.[0] !== value.openapi
+  )
+    fail('openapi', 'expected an OpenAPI 3.1.x version');
+  return value;
+}
+
 export function buildDescriptor(
   input: unknown,
   membership: { surfaces?: unknown } = {},
 ): Descriptor {
-  const value = record(input, 'OpenAPI');
+  const value = openApiDocument(input);
   keys(
     value,
     [
@@ -818,13 +830,6 @@ export function buildDescriptor(
     ],
     'OpenAPI',
   );
-  // OAS 3.1 patch releases clarify the same feature set. Match the whole value
-  // so malformed versions, prereleases and trailing line breaks cannot pass.
-  if (
-    typeof value.openapi !== 'string' ||
-    /^3\.1\.(?:0|[1-9][0-9]*)$/.exec(value.openapi)?.[0] !== value.openapi
-  )
-    fail('openapi', 'expected an OpenAPI 3.1.x version');
   const info = record(value.info, 'info');
   keys(
     info,

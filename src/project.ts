@@ -2,15 +2,20 @@ import { isUtf8 } from 'node:buffer';
 import { constants } from 'node:fs';
 import { open, realpath } from 'node:fs/promises';
 import { dirname, extname, resolve } from 'node:path';
-import { buildDescriptor } from './descriptor.js';
+import { buildDescriptor, openApiDocument } from './descriptor.js';
 import { fail, keys, record, text } from './diagnostics.js';
 import { render } from './emit.js';
+import { ignoreExtensions } from './extensions.js';
 import { parseJson } from './json.js';
 import { synchronizeOutputs } from './outputs.js';
 import type { OutputResult } from './outputs.js';
 import { selectClients, selectStandalone } from './projection.js';
 import type { Descriptor } from './model.js';
-import { parseSelection, selectionKeys } from './selection.js';
+import {
+  parseIgnoredExtensions,
+  parseSelection,
+  selectionKeys,
+} from './selection.js';
 import type { CompileOptions } from './selection.js';
 import { parseYaml } from './yaml.js';
 export type { CompileOptions } from './selection.js';
@@ -71,18 +76,28 @@ function renderSelection(
   return render(descriptor, clients, standalone);
 }
 
+function describeInput(
+  document: unknown,
+  selection: Record<string, unknown>,
+): Descriptor {
+  return buildDescriptor(
+    ignoreExtensions(
+      openApiDocument(document),
+      parseIgnoredExtensions(selection.ignoreExtensions),
+    ),
+    Object.hasOwn(selection, 'surfaces')
+      ? { surfaces: selection.surfaces }
+      : {},
+  );
+}
+
 export async function compile(
   document: unknown,
   options: CompileOptions,
 ): Promise<Readonly<Record<string, string>>> {
   const selection = record(options, 'compile options');
   keys(selection, selectionKeys, 'compile options');
-  const descriptor = buildDescriptor(
-    document,
-    Object.hasOwn(selection, 'surfaces')
-      ? { surfaces: selection.surfaces }
-      : {},
-  );
+  const descriptor = describeInput(document, selection);
   return renderSelection(descriptor, selection);
 }
 
@@ -111,10 +126,7 @@ export async function runProject(
     text(config.output, `${configPath}.output`),
   );
   const document = await readOpenApi(input);
-  const descriptor = buildDescriptor(
-    document,
-    Object.hasOwn(config, 'surfaces') ? { surfaces: config.surfaces } : {},
-  );
+  const descriptor = describeInput(document, config);
   const files = await renderSelection(descriptor, config);
   return synchronizeOutputs(output, files, [configPath, input], check);
 }

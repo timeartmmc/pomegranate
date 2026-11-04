@@ -11,6 +11,7 @@ import { surfaceNames } from './policy.js';
 
 export type CompileOptions = Readonly<{
   clients: readonly string[];
+  ignoreExtensions?: readonly string[];
   surfaces?: Readonly<Record<string, readonly string[]>>;
   executionClients?: readonly string[];
   transportHeaders?: readonly string[];
@@ -25,6 +26,7 @@ export type CompileOptions = Readonly<{
 }>;
 export const selectionKeys = [
   'clients',
+  'ignoreExtensions',
   'surfaces',
   'executionClients',
   'transportHeaders',
@@ -49,6 +51,31 @@ export type Selection = Readonly<{
   >;
   standalone: readonly RootSelection[];
 }>;
+
+export function parseIgnoredExtensions(
+  input: unknown = [],
+): ReadonlySet<string> {
+  if (!stringArray(input))
+    fail('ignoreExtensions', 'expected an array of exact x- extension names');
+  const names = new Set<string>();
+  for (const [index, name] of input.entries()) {
+    const location = `ignoreExtensions[${index}]`;
+    if (
+      !name.startsWith('x-') ||
+      name.length === 2 ||
+      ['*', '?', '[', ']', '{', '}'].some((character) =>
+        name.includes(character),
+      )
+    )
+      fail(location, 'expected an exact x- extension name without wildcards');
+    if (name === 'x-pom' || name === 'x-pom-policy')
+      fail(location, 'POM extensions x-pom and x-pom-policy cannot be ignored');
+    if (names.has(name))
+      fail(location, `duplicate extension name ${JSON.stringify(name)}`);
+    names.add(name);
+  }
+  return names;
+}
 
 function standaloneSelections(input: unknown = {}): readonly RootSelection[] {
   const selections = record(input, 'standalone');

@@ -34,6 +34,7 @@ These selection keys are shared with programmatic compilation:
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `surfaces`         | Optional complete map of surface names to operation IDs for contracts without inline membership; see [surfaces](#client-surfaces-and-security). |
 | `clients`          | Required array of declared surfaces; may be empty when `standalone` selects at least one root.                                                  |
+| `ignoreExtensions` | Exact unrelated `x-…` annotation keywords to ignore; POM metadata remains validated.                                                            |
 | `standalone`       | Named component roots with `schema` and `usage: "request"` or `"response"`; see [standalone validators](#standalone-validators).                |
 | `transportHeaders` | Declared request headers supplied by the transport; see [requests](#build-and-validate-a-request).                                              |
 | `targets`          | Map selected clients to `"browser"` or `"native"`; required for [multipart](#multipart-requests).                                               |
@@ -44,6 +45,20 @@ These selection keys are shared with programmatic compilation:
 Unknown configuration keys fail validation. Optional output selections are
 disabled when omitted. `CompileOptions` accepts these keys without `version`,
 `openapi`, or `output`.
+
+`ignoreExtensions` lists exact, case-sensitive `x-…` keyword names to ignore,
+for example `"ignoreExtensions": ["x-generator-note"]`. Use it only for metadata
+that does not affect the API contract. Unlisted extensions fail, including in
+unselected operations and unused components. Empty or omitted lists ignore
+nothing. Wildcards, duplicate names, `x-pom`, and `x-pom-policy` are rejected.
+The `x-multi-segment` keyword changes path semantics and remains unsupported,
+even when listed.
+
+Filtering applies at supported OpenAPI keyword locations. It preserves
+same-named schema properties, components, headers, named examples, and server
+variables, plus example/default payloads, discriminator mappings, security
+requirements, and POM policy metadata. Standard keywords and all remaining
+contract semantics still receive normal validation.
 
 ## Operation policy
 
@@ -280,8 +295,9 @@ and `description` annotations.
 Example values are documentation data, not schema rules, and are not checked
 against their associated schemas. POM checks metadata shapes rather than SPDX
 expressions, URI syntax or contact email syntax, and never fetches documentation,
-server or license URLs or external example values. Unknown keywords and unrelated
-`x-…` extensions remain rejected.
+server or license URLs or external example values. Unsupported standard keywords
+remain rejected. Unrelated `x-…` extension keywords require an explicit
+[`ignoreExtensions`](#configuration) entry.
 
 Supported schema composition is deliberately limited:
 

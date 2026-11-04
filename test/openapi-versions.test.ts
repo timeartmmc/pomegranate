@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compile, ContractError } from '../dist/index.js';
+import { buildDescriptor } from '../dist/descriptor.js';
 import { fixture } from './helpers.ts';
 
 const selection = { clients: ['consumer', 'staff'] };
@@ -40,16 +41,24 @@ void test('unsupported and malformed OpenAPI versions fail at the version field'
     '3.2.0',
     '4.0.0',
   ]) {
-    const document = fixture();
-    Object.assign(document, { openapi: version });
-    await assert.rejects(
-      compile(document, selection),
-      (error) =>
+    for (const extension of ['none', 'root', 'nested', 'semantic']) {
+      const document = fixture();
+      Object.assign(document, { openapi: version });
+      if (extension === 'root') Object.assign(document, { 'x-note': true });
+      if (extension === 'nested')
+        Object.assign(document.components.schemas.Widget, { 'x-note': true });
+      if (extension === 'semantic')
+        Object.assign(document.components.schemas.Widget, {
+          'x-multi-segment': true,
+        });
+      const versionError = (error: unknown) =>
         error instanceof ContractError &&
         error.location === 'openapi' &&
-        /expected an OpenAPI 3\.1\.x version/.test(error.message),
-      JSON.stringify(version),
-    );
+        /expected an OpenAPI 3\.1\.x version/.test(error.message);
+      const label = `${JSON.stringify(version)} with ${extension} extension`;
+      await assert.rejects(compile(document, selection), versionError, label);
+      assert.throws(() => buildDescriptor(document), versionError, label);
+    }
   }
 });
 

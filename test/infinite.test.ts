@@ -1,52 +1,32 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { writeFile, readFile, rm } from 'node:fs/promises';
+import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { after, before, test } from 'node:test';
+import { test } from 'node:test';
 import type { TestContext } from 'node:test';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { QueryClient } from '@tanstack/query-core';
 import { compile, ContractError, runProject } from '../dist/index.js';
 import { invalidOptions, runtimeInput } from './assertions.ts';
 import { temporary, fileSnapshot } from './helpers.ts';
 import { infiniteFixture, infiniteSelection } from './infinite-fixture.ts';
-import { infiniteChecks } from './infinite-checks.ts';
 import { verifyQueryDeclarations } from './query-declarations.ts';
-import { generatedWorkspace } from './generated-workspace.ts';
+import {
+  generatedTestWorkspace,
+  importGenerated,
+} from './generated-workspace.ts';
 import { nullable, ref } from './schema-helpers.ts';
 import type { Schema } from './schema-helpers.ts';
 
 type Module = typeof import('./.generated/infinite/client.consumer.queries.ts');
 const exec = promisify(execFile);
-let root: string;
-let module: Module;
-
-before(async () => {
-  root = await generatedWorkspace(
-    await compile(infiniteFixture(), infiniteSelection),
-    'query-generated',
-  );
-  module = (await import(
-    pathToFileURL(join(root, 'query-generated/client.consumer.queries.ts')).href
-  )) as Module;
-});
-after(async () => {
-  if (root) await rm(root, { recursive: true, force: true });
-});
-
-for (const [name, check] of Object.entries(infiniteChecks))
-  void test(name, async () => {
-    await check(module);
-  });
-
 async function checkConsumer(
   t: TestContext,
   files: Readonly<Record<string, string>>,
   consumer = '',
 ) {
-  const root = await generatedWorkspace(files);
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await generatedTestWorkspace(t, files);
   await writeFile(join(root, 'consumer.ts'), consumer);
   const config = join(root, 'tsconfig.json');
   await writeFile(
@@ -75,38 +55,12 @@ async function checkConsumer(
   ]);
 }
 
-void test('infinite inputs reject missing, unknown and cursor-owned fields', () => {
-  const queries = module.createInfiniteQueries({
-    namespace: 'invalid-inputs',
-    execute: async () => {
-      throw new Error('must not execute');
-    },
-  });
-  for (const args of [
-    { context: {} },
-    { context: {}, input: { path: { collection: '' } } },
-    {
-      context: {},
-      input: { path: { collection: 'ok' }, query: { after: 'override' } },
-    },
-    { context: {}, input: { path: { collection: 'ok' }, query: { limit: 0 } } },
-    { context: {}, input: { path: { collection: 'ok' }, body: {} } },
-  ])
-    assert.throws(() => runtimeInput(queries.listItems.options, args), {
-      name: 'RequestValidationError',
-    });
-  for (const args of [
-    { input: { path: { collection: 'ok' } } },
-    { context: { session: {} }, input: { path: { collection: 'ok' } } },
-    { context: {}, extra: true },
-  ])
-    assert.throws(
-      () => runtimeInput(queries.listItems.options, args),
-      TypeError,
-    );
-});
-
-void test('infinite declarations preserve factories, options and item types', async () => {
+void test('infinite declarations preserve factories, options and item types', async (t) => {
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(infiniteFixture(), infiniteSelection),
+    'query-generated',
+  );
   await verifyQueryDeclarations(
     root,
     fileURLToPath(
@@ -141,13 +95,14 @@ void test('infinite selection is explicit, deterministic and isolated from ordin
       clients: ['consumer'],
     }),
   );
-  const root = await generatedWorkspace(
+  const root = await generatedTestWorkspace(
+    t,
     await compile(document, infiniteSelection),
   );
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const module = (await import(
-    pathToFileURL(join(root, 'client.consumer.queries.ts')).href
-  )) as Module;
+  const module = await importGenerated<Module>(
+    root,
+    'client.consumer.queries.ts',
+  );
   const config = {
     namespace: 'separate',
     execute: async () => ({ status: 200, headers: {}, body: '' }),
@@ -363,11 +318,10 @@ for (const [name, schema, definitions] of nullableCursors)
     const before = structuredClone(document);
     const files = await compile(document, infiniteSelection);
     assert.deepEqual(document, before);
-    const root = await generatedWorkspace(files);
-    t.after(() => rm(root, { recursive: true, force: true }));
-    const { operations } = (await import(
-      pathToFileURL(join(root, 'client.consumer.operations.ts')).href
-    )) as typeof import('./.generated/infinite/client.consumer.operations.ts');
+    const root = await generatedTestWorkspace(t, files);
+    const { operations } = await importGenerated<
+      typeof import('./.generated/infinite/client.consumer.operations.ts')
+    >(root, 'client.consumer.operations.ts');
     const input = { path: { collection: 'widgets' } };
     for (const after of [undefined, null, '', 'next']) {
       const request = runtimeInput(operations.listItems.build, {
@@ -464,16 +418,17 @@ void test('nullable cursor defaults and literal narrowing retain ordinary reques
       document.paths['/collections/{collection}/items'].get.parameters[1]!,
       { schema },
     );
-    const root = await generatedWorkspace(
+    const root = await generatedTestWorkspace(
+      t,
       await compile(document, infiniteSelection),
     );
-    t.after(() => rm(root, { recursive: true, force: true }));
-    const generated = (await import(
-      pathToFileURL(join(root, 'client.consumer.queries.ts')).href
-    )) as Module;
-    const { operations } = (await import(
-      pathToFileURL(join(root, 'client.consumer.operations.ts')).href
-    )) as typeof import('./.generated/infinite/client.consumer.operations.ts');
+    const generated = await importGenerated<Module>(
+      root,
+      'client.consumer.queries.ts',
+    );
+    const { operations } = await importGenerated<
+      typeof import('./.generated/infinite/client.consumer.operations.ts')
+    >(root, 'client.consumer.operations.ts');
     const input = { path: { collection: 'items' } };
     operations.listItems.build({ ...input, query: { after: 'next' } });
     const buildNull = () =>

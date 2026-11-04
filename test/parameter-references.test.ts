@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { stringify } from 'yaml';
@@ -11,7 +11,10 @@ import type { CompileOptions } from '../dist/index.js';
 import { executionFixture, executionSelection } from './execution-fixture.ts';
 import { parseYaml } from '../dist/yaml.js';
 import { present, record } from './assertions.ts';
-import { generatedWorkspace } from './generated-workspace.ts';
+import {
+  generatedTestWorkspace,
+  importGenerated,
+} from './generated-workspace.ts';
 import { fileSnapshot, temporary } from './helpers.ts';
 import {
   inlineParameterFixture,
@@ -31,11 +34,14 @@ async function generated(
   document = fixture(),
   options: CompileOptions = selection,
 ) {
-  const root = await generatedWorkspace(await compile(document, options));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const client = (await import(
-    pathToFileURL(join(root, 'client.consumer.ts')).href
-  )) as RuntimeClient;
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(document, options),
+  );
+  const client = await importGenerated<RuntimeClient>(
+    root,
+    'client.consumer.ts',
+  );
   return { root, client };
 }
 
@@ -85,9 +91,7 @@ void test('parameter references preserve complete executable, query, cursor and 
 
 void test('referenced path, query and header parameters retain constraints and whole-parameter overrides', async (t) => {
   const { root, client } = await generated(t);
-  const staff = (await import(
-    pathToFileURL(join(root, 'client.staff.ts')).href
-  )) as RuntimeClient;
+  const staff = await importGenerated<RuntimeClient>(root, 'client.staff.ts');
   verifyParameterReferences(client, staff);
 });
 
@@ -110,9 +114,7 @@ void test('empty operation lists retain referenced inheritance and inline overri
     }).url,
     '/entries/id',
   );
-  const staff = (await import(
-    pathToFileURL(join(root, 'client.staff.ts')).href
-  )) as RuntimeClient;
+  const staff = await importGenerated<RuntimeClient>(root, 'client.staff.ts');
   const write = present(staff.operations.writeEntry);
   assert.equal(
     write.build({

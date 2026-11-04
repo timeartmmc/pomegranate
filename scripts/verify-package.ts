@@ -37,6 +37,11 @@ import {
 } from '../test/directional-fixture.ts';
 import { symbolFixture } from '../test/symbol-fixture.ts';
 import {
+  extensionFixture,
+  extensionSelection,
+  extensionKeywordTargets,
+} from '../test/extension-fixture.ts';
+import {
   parameterReferenceFixture,
   parameterReferenceSelection,
   parameterReferenceConsumer,
@@ -179,6 +184,7 @@ try {
     'schema-helpers.ts',
     'schema-fixture.ts',
     'directional-fixture.ts',
+    'extension-fixture.ts',
     'parameter-reference-fixture.ts',
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
@@ -319,6 +325,7 @@ try {
     'compatibility-generated/*.ts',
     'directional-generated/*.ts',
     'parameter-generated/*.ts',
+    'extension-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
   await writeFile(
@@ -467,6 +474,54 @@ try {
     'node_modules',
     '.bin',
     process.platform === 'win32' ? 'pom.cmd' : 'pom',
+  );
+  const extended = extensionFixture();
+  await writeFile(
+    join(consumer, 'extension-baseline.json'),
+    JSON.stringify(extended),
+  );
+  for (const { value } of extensionKeywordTargets(extended))
+    value['x-note'] = { note: 'Synthetic documentation annotation' };
+  await writeFile(
+    join(consumer, 'extension-openapi.yaml'),
+    stringify(extended),
+  );
+  await writeFile(
+    join(consumer, 'extension-openapi.json'),
+    JSON.stringify(extended),
+  );
+  await writeFile(
+    join(consumer, 'extension-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './extension-openapi.yaml',
+      output: './extension-generated',
+      ...extensionSelection,
+      ignoreExtensions: ['x-note'],
+    }),
+  );
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'extension-pom.json'),
+  ]);
+  await run(binary, [
+    'check',
+    '--config',
+    join(consumer, 'extension-pom.json'),
+  ]);
+  await writeFile(
+    join(consumer, 'extension-generated/consumer.ts'),
+    `
+    import type { CompileOptions } from 'pomegranate-compiler';
+    import { operations } from './client.consumer.ts';
+    const options: CompileOptions = {clients: ['consumer'], ignoreExtensions: ['x-note']};
+    export const request = operations.echo.build({path: {id: 'id'}, query: {'x-note': 'query'}, headers: {'x-note': 'request'}, body: {'x-note': 'kept'}});
+    const retained: string = request.body['x-note'];
+    void [retained, options];
+    // @ts-expect-error Ignoring annotations preserves required data fields.
+    operations.echo.build({path: {id: 'id'}, body: {}});
+  `,
   );
   await writeFile(
     join(consumer, 'parameter-openapi.yaml'),
@@ -962,6 +1017,21 @@ try {
     const baseline=JSON.parse(await readFile('./openapi-baseline.json', 'utf8'));
     const before=structuredClone(document);
     const selection={clients:['consumer','staff']};
+    const extensionDocument=JSON.parse(await readFile('./extension-openapi.json','utf8'));
+    const extensionBaseline=JSON.parse(await readFile('./extension-baseline.json','utf8'));
+    const extensionSelection={clients:['consumer','staff'],standalone:{tagged:{schema:'#/components/schemas/Tagged',usage:'response'}}};
+    const extensionBefore=structuredClone(extensionDocument);
+    await assert.rejects(pom.compile(extensionDocument,extensionSelection),/ignoreExtensions/);
+    assert.deepEqual(await pom.compile(extensionDocument,{...extensionSelection,ignoreExtensions:['x-note']}),await pom.compile(extensionBaseline,extensionSelection));
+    assert.deepEqual(extensionDocument,extensionBefore);
+    await assert.rejects(pom.compile(extensionDocument,{...extensionSelection,ignoreExtensions:['x-pom']}),/cannot be ignored/);
+    const unsupportedVersion=structuredClone(extensionDocument);
+    unsupportedVersion.openapi='3.0.3';
+    await assert.rejects(pom.compile(unsupportedVersion,extensionSelection),error=>error instanceof pom.ContractError&&error.location==='openapi');
+    const semanticExtension=structuredClone(extensionBaseline);
+    semanticExtension.components.parameters.Id['x-multi-segment']=true;
+    for(const ignoreExtensions of [[],['x-multi-segment']])
+      await assert.rejects(pom.compile(semanticExtension,{...extensionSelection,ignoreExtensions}),/x-multi-segment.*cannot be ignored/);
     assert.deepEqual(await pom.compile(document,selection),await pom.compile(baseline,selection));
     assert.deepEqual(document,before);
     const aliasedSecurity=structuredClone(document);
@@ -1229,6 +1299,9 @@ try {
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
+    import * as extensionClient from './extension-generated/client.consumer.ts';
+    import {verifyExtensionData} from './verification/extension-fixture.ts';
+    verifyExtensionData(extensionClient);
     import * as parameterClient from './parameter-generated/client.consumer.ts';
     import * as parameterStaff from './parameter-generated/client.staff.ts';
     import {verifyParameterReferences} from './verification/parameter-reference-fixture.ts';
@@ -1321,6 +1394,9 @@ try {
     import assert from 'node:assert/strict';
     import {verifyCompatibility} from './.build/compatibility-consumer.js';
     verifyCompatibility();
+    import * as extensionClient from './.build/extension-generated/client.consumer.js';
+    import {verifyExtensionData} from './verification/extension-fixture.ts';
+    verifyExtensionData(extensionClient);
     import * as parameterClient from './.build/parameter-generated/client.consumer.js';
     import * as parameterStaff from './.build/parameter-generated/client.staff.js';
     import {verifyParameterReferences} from './verification/parameter-reference-fixture.ts';
