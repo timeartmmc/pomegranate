@@ -343,13 +343,13 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /supported anyOf forms/,
   ],
   [
-    'readOnly',
+    'invalid readOnly annotation',
     (d) => {
       Object.assign(d.components.schemas.Widget.properties.id, {
-        readOnly: true,
+        readOnly: 'true',
       });
     },
-    /readOnly.*unsupported keyword/,
+    /readOnly.*expected a boolean/,
   ],
   [
     'schema format',

@@ -105,6 +105,54 @@ const selection: CompileOptions = {
   surfaces: memberships,
 };
 
+for (const [name, options] of [
+  ['client', { clients: ['consumer'] }],
+  [
+    'standalone',
+    {
+      clients: [],
+      standalone: {
+        item: { schema: '#/components/schemas/PublicItem', usage: 'response' },
+      },
+    },
+  ],
+] satisfies [string, CompileOptions][]) {
+  void test(`plain ${name} input names both membership options and both fixes work`, async () => {
+    const document = plainFixture();
+    const before = structuredClone(document);
+    await assert.rejects(compile(document, options), (error) => {
+      assert.ok(error instanceof ContractError);
+      assert.match(error.message, /config "surfaces" map/);
+      assert.match(error.message, /"x-pom-policy.surfaces"/);
+      assert.match(error.message, /operation "x-pom.surfaces"/);
+      return true;
+    });
+    assert.deepEqual(document, before);
+    assert.deepEqual(
+      await compile(document, { ...options, surfaces: memberships }),
+      await compile(inlineFixture(), options),
+    );
+  });
+}
+
+void test('present malformed inline memberships keep their value diagnostic', async () => {
+  for (const surfaces of [undefined, null, []]) {
+    const document = inlineFixture();
+    Object.assign(record(record(document.paths['/items'].get)['x-pom']), {
+      surfaces,
+    });
+    await assert.rejects(
+      compile(document, { clients: ['consumer'] }),
+      (error) => {
+        assert.ok(error instanceof ContractError);
+        assert.equal(error.location, 'paths./items.get.x-pom.surfaces');
+        assert.match(error.message, /expected a nonempty array/);
+        return true;
+      },
+    );
+  }
+});
+
 void test('explicit config memberships preserve inline output, overlap and input values', async () => {
   const document = plainFixture();
   const before = structuredClone({ document, selection });

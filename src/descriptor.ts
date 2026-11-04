@@ -14,6 +14,8 @@ import type {
   ContractResponse,
   AuthTransport,
   Descriptor,
+  Direction,
+  SchemaTable,
   Operation,
   MultipartField,
   Parameter,
@@ -35,6 +37,7 @@ import {
   normalizeVocabulary,
 } from './policy.js';
 import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
+import { projectSchemas } from './directional.js';
 import {
   deprecatedAnnotation,
   exampleAnnotations,
@@ -54,6 +57,41 @@ const methods = [
 ] as const;
 
 type Validation = ReturnType<typeof schemaValidation>;
+
+type SchemaContext = Readonly<{
+  source: SchemaTable;
+  projection: ReturnType<typeof projectSchemas>;
+  sourceValidation: Validation;
+  directionValidation: Readonly<Record<Direction, Validation>>;
+}>;
+
+function normalizeFor(
+  input: unknown,
+  location: string,
+  context: SchemaContext,
+  direction: Direction,
+  usage: Direction | 'multipart' = direction,
+): Schema {
+  const source = normalizeSchema(input, location);
+  // Source validation stays complete before projection: an excluded property
+  // cannot hide malformed declarations or unresolved references.
+  validateSchema(
+    source,
+    context.source,
+    location,
+    'component',
+    context.sourceValidation,
+  );
+  const schema = context.projection.schema(source, direction);
+  validateSchema(
+    schema,
+    context.projection.schemas[direction],
+    location,
+    usage,
+    context.directionValidation[direction],
+  );
+  return schema;
+}
 
 // Endpoint declarations must survive browser Fetch unchanged. These fields
 // belong to the transport, including value-dependent method overrides and the
@@ -107,6 +145,7 @@ function jsonSchema(
   input: unknown,
   location: string,
   examples: ReadonlySet<string>,
+  context: SchemaContext,
 ): Schema {
   const content = record(input, location);
   keys(content, ['application/json'], location);
@@ -118,13 +157,17 @@ function jsonSchema(
   );
   keys(media, ['schema', ...exampleKeys], `${location}.application/json`);
   exampleAnnotations(media, `${location}.application/json`, examples);
-  return normalizeSchema(media.schema, `${location}.application/json.schema`);
+  return normalizeFor(
+    media.schema,
+    `${location}.application/json.schema`,
+    context,
+    'response',
+  );
 }
 
 function normalizeParameter(
   input: unknown,
-  schemas: Readonly<Record<string, Schema>>,
-  validation: Validation,
+  context: SchemaContext,
   examples: ReadonlySet<string>,
   location: string,
 ): Parameter {
@@ -181,8 +224,13 @@ function normalizeParameter(
       `${location}.allowReserved`,
       'only false on query parameters is supported',
     );
-  const schema = normalizeSchema(value.schema, `${location}.schema`);
-  validateSchema(schema, schemas, `${location}.schema`, 'request', validation);
+  const schema = normalizeFor(
+    value.schema,
+    `${location}.schema`,
+    context,
+    'request',
+  );
+  const schemas = context.projection.schemas.request;
   const resolved = resolveSchema(schema, schemas);
   const primitive = (candidate: Schema): boolean =>
     ['string', 'number', 'integer', 'boolean'].includes(
@@ -244,8 +292,7 @@ function normalizeParameter(
 
 function normalizeHeaders(
   input: unknown,
-  schemas: Readonly<Record<string, Schema>>,
-  validation: Validation,
+  context: SchemaContext,
   examples: ReadonlySet<string>,
   location: string,
 ): readonly ResponseHeader[] {
@@ -296,15 +343,16 @@ function normalizeHeaders(
         fail(`${headerLocation}.style`, 'only simple headers are supported');
       if (Object.hasOwn(header, 'explode'))
         optionalBoolean(header, 'explode', headerLocation);
-      const schema = normalizeSchema(header.schema, `${headerLocation}.schema`);
-      validateSchema(
-        schema,
-        schemas,
+      const schema = normalizeFor(
+        header.schema,
         `${headerLocation}.schema`,
+        context,
         'response',
-        validation,
       );
-      if (resolveSchema(schema, schemas).kind !== 'string')
+      if (
+        resolveSchema(schema, context.projection.schemas.response).kind !==
+        'string'
+      )
         fail(
           `${headerLocation}.schema`,
           'response headers require string schemas',
@@ -388,20 +436,13 @@ function uniqueParameters(
 
 function parameterList(
   input: unknown,
-  schemas: Readonly<Record<string, Schema>>,
-  validation: Validation,
+  context: SchemaContext,
   examples: ReadonlySet<string>,
   location: string,
 ): readonly Parameter[] {
   if (!Array.isArray(input)) fail(location, 'expected an array');
   const parameters = Array.from(input, (parameter, index) =>
-    normalizeParameter(
-      parameter,
-      schemas,
-      validation,
-      examples,
-      `${location}[${index}]`,
-    ),
+    normalizeParameter(parameter, context, examples, `${location}[${index}]`),
   );
   uniqueParameters(parameters, location);
   return parameters;
@@ -410,16 +451,14 @@ function parameterList(
 function operationParameters(
   value: Record<string, unknown>,
   inherited: readonly Parameter[],
-  schemas: Readonly<Record<string, Schema>>,
-  validation: Validation,
+  context: SchemaContext,
   examples: ReadonlySet<string>,
   path: string,
   location: string,
 ): readonly Parameter[] {
   const own = parameterList(
     Object.hasOwn(value, 'parameters') ? value.parameters : [],
-    schemas,
-    validation,
+    context,
     examples,
     `${location}.parameters`,
   );
@@ -456,8 +495,7 @@ function operationParameters(
 function requestBody(
   value: Record<string, unknown>,
   method: (typeof methods)[number],
-  schemas: Readonly<Record<string, Schema>>,
-  validation: Validation,
+  context: SchemaContext,
   examples: ReadonlySet<string>,
   location: string,
 ): Operation['body'] {
@@ -493,20 +531,23 @@ function requestBody(
     keys(media, ['schema', ...exampleKeys], `${contentLocation}.${mediaType}`);
     exampleAnnotations(media, `${contentLocation}.${mediaType}`, examples);
     const schemaLocation = `${contentLocation}.${mediaType}.schema`;
-    const schema = normalizeSchema(media.schema, schemaLocation);
     const multipart = mediaType === 'multipart/form-data';
-    validateSchema(
-      schema,
-      schemas,
+    const schema = normalizeFor(
+      media.schema,
       schemaLocation,
+      context,
+      'request',
       multipart ? 'multipart' : 'request',
-      validation,
     );
     body = multipart
       ? {
           kind: 'multipart',
           schema,
-          fields: multipartFields(schema, schemas, schemaLocation),
+          fields: multipartFields(
+            schema,
+            context.projection.schemas.request,
+            schemaLocation,
+          ),
         }
       : { kind: 'json', schema };
   }
@@ -516,8 +557,7 @@ function requestBody(
 function operationResponses(
   value: Record<string, unknown>,
   method: (typeof methods)[number],
-  schemas: Readonly<Record<string, Schema>>,
-  validation: Validation,
+  context: SchemaContext,
   examples: ReadonlySet<string>,
   location: string,
 ): readonly ContractResponse[] {
@@ -550,21 +590,14 @@ function operationResponses(
           response.content,
           `${responseLocation}.content`,
           examples,
-        );
-        validateSchema(
-          schema,
-          schemas,
-          `${responseLocation}.content.application/json.schema`,
-          'response',
-          validation,
+          context,
         );
         responseBody = { kind: 'json', schema };
       }
       const headers = Object.hasOwn(response, 'headers')
         ? normalizeHeaders(
             response.headers,
-            schemas,
-            validation,
+            context,
             examples,
             `${responseLocation}.headers`,
           )
@@ -581,8 +614,7 @@ function normalizeOperation(
   method: (typeof methods)[number],
   path: string,
   vocabulary: PolicyVocabulary,
-  schemas: Readonly<Record<string, Schema>>,
-  validation: Validation,
+  context: SchemaContext,
   examples: ReadonlySet<string>,
   bearerSchemes: ReadonlySet<string>,
   inheritedSecurity: AuthTransport,
@@ -638,25 +670,16 @@ function normalizeOperation(
   const parameters = operationParameters(
     value,
     inheritedParameters,
-    schemas,
-    validation,
+    context,
     examples,
     path,
     location,
   );
-  const body = requestBody(
-    value,
-    method,
-    schemas,
-    validation,
-    examples,
-    location,
-  );
+  const body = requestBody(value, method, context, examples, location);
   const responses = operationResponses(
     value,
     method,
-    schemas,
-    validation,
+    context,
     examples,
     location,
   );
@@ -779,6 +802,15 @@ export function buildDescriptor(
       'component',
       validation,
     );
+  const context: SchemaContext = {
+    source: schemas,
+    projection: projectSchemas(schemas),
+    sourceValidation: validation,
+    directionValidation: {
+      request: schemaValidation(),
+      response: schemaValidation(),
+    },
+  };
   const paths = record(value.paths, 'paths');
   const operations: Operation[] = [];
   for (const path of Object.keys(paths).sort()) {
@@ -794,8 +826,7 @@ export function buildDescriptor(
       fail(`paths.${path}`, 'expected at least one supported operation');
     const inheritedParameters = parameterList(
       Object.hasOwn(pathItem, 'parameters') ? pathItem.parameters : [],
-      schemas,
-      validation,
+      context,
       examples,
       `paths.${path}.parameters`,
     );
@@ -807,8 +838,7 @@ export function buildDescriptor(
             method,
             path,
             vocabulary,
-            schemas,
-            validation,
+            context,
             examples,
             bearerSchemes,
             inheritedSecurity,
@@ -838,7 +868,7 @@ export function buildDescriptor(
   }
   return {
     policy: vocabulary,
-    schemas,
+    schemas: context.projection.schemas,
     schemaOrder,
     operations: operations.sort((left, right) =>
       left.id < right.id ? -1 : left.id > right.id ? 1 : 0,

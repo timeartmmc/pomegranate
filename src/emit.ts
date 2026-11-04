@@ -74,7 +74,7 @@ function renderComponents(
   );
   const declarations = selections.flatMap(({ direction, names }) =>
     names.map((name) => {
-      const schema = descriptor.schemas[name]!;
+      const schema = descriptor.schemas[direction][name]!;
       const parse = parseSymbol(name, direction);
       const type = typeSymbol(name, direction);
       const location = `components.schemas.${name}`;
@@ -320,8 +320,8 @@ function renderClient(
     client.target,
     true,
   );
-  const identity = parserIdentities(descriptor.schemas);
   const schemaMaps = selections.map(({ direction, names }) => {
+    const identity = parserIdentities(descriptor.schemas[direction]);
     // An explicit shape argument checks the literal once. Inferring Object.freeze's
     // T through the Readonly annotation re-checks every member several times.
     // Validators are created inside a function declaration: references there

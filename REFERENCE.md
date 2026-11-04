@@ -218,7 +218,7 @@ validation, including operations excluded from output.
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; ASCII operation identifiers; whole-segment path placeholders                                                                                                                                                     |
 | Parameters  | Path-item inheritance and operation overrides; primitive path/query parameters; optional nullable primitive queries; repeated-key primitive query arrays; string and optional nullable string request headers; simple path/header and form query serialization |
 | Bodies      | Required JSON or multipart request bodies; exact numeric response statuses 200–599 with at least one 2xx; JSON or bodyless responses; declared string response headers                                                                                         |
-| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                |
+| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                           |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                  |
 | Formats     | String `date`, `date-time`, and `uuid`; integer `int32`; no coercion                                                                                                                                                                                           |
 
@@ -371,6 +371,49 @@ mixing fixed properties with dynamic entries, other formats, response defaults,
 optional request bodies, parameter reference objects, status ranges/default responses,
 non-bearer security schemes and external security-scheme references
 remain unsupported.
+
+### Directional object fields
+
+A fixed object can share one schema across requests and responses:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "readOnly": true },
+    "secret": { "type": "string", "writeOnly": true },
+    "label": { "type": "string" }
+  },
+  "required": ["id", "secret", "label"]
+}
+```
+
+The request requires `secret` and `label`; it rejects a supplied `id`, including
+explicit `undefined`, non-enumerable properties and inherited properties before
+`Object.prototype`. Rejection checks presence without reading the excluded value.
+The response requires `id` and `label`; it strips `secret` without validating or
+reading its value. Generated types and standalone validators use the same
+projection, including nested objects, arrays and typed maps. An object with all
+properties excluded stays a fixed empty object. Returned response data remains
+mutable; these flags describe wire direction rather than TypeScript `readonly`.
+
+Both flags must be booleans. A true flag inherited through a local reference or
+alias remains true even when a sibling says false. POM rejects both flags being
+true at the same schema, including through aliases. Entire source declarations,
+including excluded fields, still receive syntax, reference and constraint checks.
+Usage checks then inspect visible fields: an excluded write-only field may have
+a request default or binary schema without affecting response validation.
+Visible response defaults and binary values retain their existing restrictions.
+
+Projection operates at fixed object property boundaries. If an active flag would
+exclude an entire body, parameter/header, standalone root, array item or map
+value, generation fails; POM does not silently omit those values. Inactive flags
+are permitted, such as a read-only response root. True flags on `anyOf` or
+`oneOf` branch roots are unsupported because their applicability can depend on
+which branch succeeds; place a shared flag on the containing property or union
+instead. A discriminator field must remain present and required in the direction
+using its `oneOf`. These are POM's explicit projection rules; application and
+server authorization remain application-owned.
 
 ## Build and validate a request
 

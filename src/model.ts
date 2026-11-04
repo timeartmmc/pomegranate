@@ -13,7 +13,11 @@ export type Constraints = {
   readonly maxItems?: number;
 };
 
-export type Schema = { readonly hasDefault?: true } & (
+export type Schema = {
+  readonly hasDefault?: true;
+  readonly readOnly?: true;
+  readonly writeOnly?: true;
+} & (
   | { readonly kind: 'binary' }
   | {
       readonly kind: 'ref';
@@ -36,6 +40,7 @@ export type Schema = { readonly hasDefault?: true } & (
       readonly kind: 'object';
       readonly properties: Readonly<Record<string, Schema>>;
       readonly required: readonly string[];
+      readonly forbidden?: readonly string[];
     }
   | {
       readonly kind: 'array';
@@ -65,6 +70,9 @@ export type Schema = { readonly hasDefault?: true } & (
       readonly literals?: readonly Scalar[];
     }
 );
+
+export type SchemaTable = Readonly<Record<string, Schema>>;
+export type DirectionalSchemas = Readonly<Record<Direction, SchemaTable>>;
 
 export type AuthTransport = 'none' | 'bearer';
 export type Policy = Readonly<Record<string, Scalar>>;
@@ -131,7 +139,7 @@ export type MultipartField = {
 
 export type Descriptor = {
   readonly policy: PolicyVocabulary;
-  readonly schemas: Readonly<Record<string, Schema>>;
+  readonly schemas: DirectionalSchemas;
   readonly schemaOrder: readonly string[];
   readonly operations: readonly Operation[];
 };

@@ -401,8 +401,8 @@ void test('deep examples, shared payloads and long reference chains remain bound
 void test('metadata never masks unsupported schema, policy or configuration semantics', async () => {
   for (const [mutate, expected] of [
     [
-      (d) => Object.assign(d.components.schemas.Widget, { readOnly: true }),
-      /readOnly.*unsupported keyword/,
+      (d) => Object.assign(d.components.schemas.Widget, { readOnly: 'true' }),
+      /readOnly.*expected a boolean/,
     ],
     [
       (d) => Object.assign(d.components.schemas.Widget, { allOf: [] }),

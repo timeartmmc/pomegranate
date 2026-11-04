@@ -240,6 +240,25 @@ export function unknownKeys(
   return true;
 }
 
+export function forbiddenKeys(
+  source: object,
+  names: readonly string[],
+  issues: Issues,
+): boolean {
+  let found = false;
+  for (const key of names) {
+    // Known read-only fields follow structural presence even when they are
+    // non-enumerable. Test membership without invoking an excluded getter.
+    if (key in source && holds(source, key)) {
+      report(issues, 'read-only property is forbidden in requests', false, [
+        key,
+      ]);
+      found = true;
+    }
+  }
+  return found;
+}
+
 function codePoints(value: string): number {
   let count = 0;
   for (let index = 0; index < value.length; index++) {
@@ -803,7 +822,7 @@ export type PreparedRequest<
   method: string;
   url: string;
   security: Security;
-  policy: P;
+  policy: Readonly<P>;
   headers: HeaderContext;
   validateHeaders: (headers: HeaderContext) => HeaderContext;
   parseResponse: (response: ObservedResponse) => ProtocolResult<R>;

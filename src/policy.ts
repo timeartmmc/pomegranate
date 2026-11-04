@@ -53,9 +53,9 @@ export function normalizeMemberships(
 export function normalizeVocabulary(input: unknown): PolicyVocabulary {
   const location = 'x-pom-policy';
   const value = record(input, location);
-  keys(value, ['version', 'auth', 'fields', 'required', 'surfaces'], location);
   if (value.version !== 3)
     fail(`${location}.version`, 'expected policy version 3');
+  keys(value, ['version', 'auth', 'fields', 'required', 'surfaces'], location);
   const auth = record(
     Object.hasOwn(value, 'auth') ? value.auth : {},
     `${location}.auth`,
@@ -192,6 +192,11 @@ export function normalizeOperationPolicy(
       );
     surfaces = configuredSurfaces;
   } else {
+    if (!Object.hasOwn(value, 'surfaces'))
+      fail(
+        `${location}.surfaces`,
+        'operation has no surface membership; assign operation IDs in the config "surfaces" map, or declare "x-pom-policy.surfaces" and operation "x-pom.surfaces"',
+      );
     surfaces = surfaceNames(value.surfaces, `${location}.surfaces`);
     for (const surface of surfaces) {
       if (!vocabulary.surfaces.includes(surface))

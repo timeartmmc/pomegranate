@@ -20,6 +20,7 @@ import {
   intersectConstraints,
   literalViolation,
 } from './scalar-rules.js';
+import { schemaAccess } from './directional.js';
 
 const stringConstraints = ['minLength', 'maxLength', 'pattern'];
 const numberConstraints = [
@@ -241,7 +242,16 @@ export function normalizeSchema(
   assertInlineSchemaNesting(nesting, location);
   const value = record(input, location);
   schemaAnnotations(value, location);
-  const schema = normalizeShape(value, location, nesting);
+  for (const name of ['readOnly', 'writeOnly'])
+    if (Object.hasOwn(value, name) && typeof value[name] !== 'boolean')
+      fail(`${location}.${name}`, 'expected a boolean');
+  if (value.readOnly === true && value.writeOnly === true)
+    fail(location, 'readOnly and writeOnly cannot both be true');
+  const schema = {
+    ...normalizeShape(value, location, nesting),
+    ...(value.readOnly === true ? { readOnly: true as const } : {}),
+    ...(value.writeOnly === true ? { writeOnly: true as const } : {}),
+  };
   // Defaults describe server behavior. Never make an omitted request field
   // present, or let a default rescue a missing required value.
   if (!Object.hasOwn(value, 'default')) return schema;
@@ -265,7 +275,7 @@ function referenceName(input: unknown, location: string): string {
   return componentName(ref.slice(prefix.length), location);
 }
 
-const annotationKeys = schemaAnnotationKeys;
+const annotationKeys = [...schemaAnnotationKeys, 'readOnly', 'writeOnly'];
 const typedSchemaKeys = [...annotationKeys, 'type'];
 
 function normalizeUnion(
@@ -768,6 +778,20 @@ function validateUsage(
   checked.add(schema);
   const visit = (value: Schema, path: string) =>
     validateUsage(value, schemas, path, usage, checked, constraintCache);
+  const access = schemaAccess(schema, schemas);
+  if (access.readOnly && access.writeOnly)
+    fail(
+      location,
+      'readOnly and writeOnly cannot both be true through references',
+    );
+  if (usage !== 'component') {
+    const excluded = usage === 'response' ? access.writeOnly : access.readOnly;
+    if (excluded)
+      fail(
+        location,
+        `${usage === 'response' ? 'writeOnly' : 'readOnly'} schemas may only be omitted as object properties in ${usage === 'response' ? 'responses' : 'requests'}`,
+      );
+  }
   if (usage === 'response' && schema.hasDefault)
     fail(`${location}.default`, 'response schemas must not declare defaults');
   if (
@@ -825,12 +849,16 @@ function validateUsage(
     for (const [name, value] of Object.entries(schema.properties))
       visit(value, `${location}.properties.${name}`);
   else if (schema.kind === 'union') {
-    schema.branches.forEach((value, index) =>
-      visit(
-        value,
-        `${location}.${schema.discriminator ? 'oneOf' : 'anyOf'}[${index}]`,
-      ),
-    );
+    schema.branches.forEach((value, index) => {
+      const branchLocation = `${location}.${schema.discriminator ? 'oneOf' : 'anyOf'}[${index}]`;
+      const branchAccess = schemaAccess(value, schemas);
+      if (branchAccess.readOnly || branchAccess.writeOnly)
+        fail(
+          branchLocation,
+          'readOnly and writeOnly on union branches are unsupported; annotate the containing property or union schema',
+        );
+      visit(value, branchLocation);
+    });
     validateUnion(schema, schemas, location);
   }
 }

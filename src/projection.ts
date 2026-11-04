@@ -2,6 +2,7 @@ import { fail } from './diagnostics.js';
 import type {
   Client,
   Descriptor,
+  Direction,
   Operation,
   Schema,
   Standalone,
@@ -32,6 +33,7 @@ function roots(
 function closure(
   descriptor: Descriptor,
   roots: readonly Schema[],
+  direction: Direction,
 ): readonly string[] {
   const needed = new Set<string>();
   const pending = [...roots];
@@ -41,7 +43,7 @@ function closure(
       if (needed.has(name)) continue;
       needed.add(name);
       // buildDescriptor already resolved every reference and rejected cycles.
-      pending.push(descriptor.schemas[name]!);
+      pending.push(descriptor.schemas[direction][name]!);
     }
   }
   return descriptor.schemaOrder.filter((name) => needed.has(name));
@@ -128,10 +130,12 @@ export function selectClients(
       requestSchemas: closure(
         descriptor,
         operations.flatMap((operation) => roots(operation, 'request')),
+        'request',
       ),
       responseSchemas: closure(
         descriptor,
         operations.flatMap((operation) => roots(operation, 'response')),
+        'response',
       ),
     };
   });
@@ -150,7 +154,7 @@ export function selectStandalone(
     );
     validateSchema(
       schema,
-      descriptor.schemas,
+      descriptor.schemas[value.usage],
       `${location}.schema`,
       value.usage,
     );
@@ -158,7 +162,7 @@ export function selectStandalone(
       name,
       schema,
       direction: value.usage,
-      schemaOrder: closure(descriptor, [schema]),
+      schemaOrder: closure(descriptor, [schema], value.usage),
     };
   });
 }

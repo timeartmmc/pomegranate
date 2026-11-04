@@ -153,8 +153,8 @@ const invalidSchemas: [string, unknown, RegExp][] = [
   ],
   [
     'null-only enum with unsupported assertion',
-    { type: ['string', 'null'], enum: [null], readOnly: true },
-    /readOnly.*unsupported keyword/,
+    { type: ['string', 'null'], enum: [null], not: { type: 'null' } },
+    /not.*unsupported keyword/,
   ],
   [
     'null-only const with malformed constraint',

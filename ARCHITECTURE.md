@@ -35,6 +35,11 @@ response parsers, and optional helpers derive from that descriptor. Every
 operation and response must be represented or rejected with a useful diagnostic,
 including declarations excluded from the selected clients.
 
+Directional fields produce request and response schema graphs before usage
+validation, closure and emission. Validate all source declarations first, then
+use the same projected graph for types, parsers and protocol bindings. Preserve
+fixed-object identity when every property is excluded.
+
 Client projection retains only transitive request and response dependencies.
 Client modules must not import another client's operations or schemas. Shared
 runtime code is independent of surface membership. Surfaces govern generated

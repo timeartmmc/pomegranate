@@ -53,17 +53,17 @@ void [sharedUpload, sharedQuery, uploadClient, sharedQueryAdapter];
 // @ts-expect-error A transport declared for interactive policies cannot accept upload policy.
 const narrowUpload: UploadExecutor = execute;
 void narrowUpload;
-export const inspectedPolicyAdapter: Executor<
-  Readonly<{
-    auth: 'public' | 'session';
-    retry: 'never';
-    timeout: 'interactive' | 'upload';
-    audit?: true;
-  }>
-> = async (request, execution) => {
+export const inspectedPolicyAdapter: Executor<{
+  auth: 'public' | 'session';
+  retry: 'never';
+  timeout: 'interactive' | 'upload';
+  audit?: true;
+}> = async (request, execution) => {
   const budgets = { interactive: 1000, upload: 5000 };
   const timeout: number = budgets[request.policy.timeout];
   void timeout;
+  // @ts-expect-error Frozen metadata stays readonly for mutable policy overrides.
+  request.policy.timeout = 'upload';
   return execution.validateResponse({ status: 204, headers: {}, body: '' });
 };
 const inspectedUpload: UploadExecutor = inspectedPolicyAdapter;

@@ -30,6 +30,11 @@ import {
   multipartSelection,
 } from '../test/multipart-fixture.ts';
 import { schemaFixture, standaloneSelection } from '../test/schema-fixture.ts';
+import {
+  directionalFixture,
+  directionalSelection,
+  directionalTypeConsumer,
+} from '../test/directional-fixture.ts';
 import { symbolFixture } from '../test/symbol-fixture.ts';
 import {
   infiniteFixture,
@@ -163,6 +168,7 @@ try {
     'assertions.ts',
     'schema-helpers.ts',
     'schema-fixture.ts',
+    'directional-fixture.ts',
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
     'symbol-fixture.ts',
@@ -297,8 +303,26 @@ try {
     'offset-generated/*.ts',
     'execution-generated/*.ts',
     'compatibility-generated/*.ts',
+    'directional-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
+  await writeFile(
+    join(consumer, 'directional-types.ts'),
+    directionalTypeConsumer(),
+  );
+  await writeFile(
+    join(consumer, 'directional-openapi.json'),
+    JSON.stringify(directionalFixture()),
+  );
+  await writeFile(
+    join(consumer, 'directional-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './directional-openapi.json',
+      output: './directional-generated',
+      ...directionalSelection,
+    }),
+  );
   await writeFile(
     join(consumer, 'compatibility-consumer.ts'),
     `
@@ -728,6 +752,16 @@ try {
     join(consumer, 'schema-pom.json'),
   ]);
   await run(binary, ['check', '--config', join(consumer, 'schema-pom.json')]);
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'directional-pom.json'),
+  ]);
+  await run(binary, [
+    'check',
+    '--config',
+    join(consumer, 'directional-pom.json'),
+  ]);
   // The installed executable resolves paths from config even when launched from
   // a working directory outside both the source checkout and the consumer.
   await run(
@@ -913,6 +947,9 @@ try {
       delete operation['x-pom'];
     }
     const plainBefore=structuredClone(plain);
+    for(const options of [selection,{clients:[],standalone:{widget:{schema:'#/components/schemas/Widget',usage:'response'}}}]) {
+      await assert.rejects(pom.compile(plain,options),error=>error instanceof pom.ContractError&&/config "surfaces" map/.test(error.message)&&/"x-pom-policy.surfaces"/.test(error.message)&&/operation "x-pom.surfaces"/.test(error.message));
+    }
     const plainFiles=await pom.compile(plain,{...selection,surfaces:memberships});
     assert.deepEqual(plain,plainBefore);
     await mkdir('./plain-generated');
@@ -1123,6 +1160,14 @@ try {
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
+    import * as directionalClient from './directional-generated/client.consumer.ts';
+    import * as directionalQueries from './directional-generated/client.consumer.queries.ts';
+    import * as directionalRequest from './directional-generated/standalone.request.ts';
+    import * as directionalResponse from './directional-generated/standalone.response.ts';
+    import * as directionalEmptyRequest from './directional-generated/standalone.empty-request.ts';
+    import * as directionalEmptyResponse from './directional-generated/standalone.empty-response.ts';
+    import {verifyDirectional} from './verification/directional-fixture.ts';
+    await verifyDirectional(directionalClient,directionalQueries,directionalRequest,directionalResponse,directionalEmptyRequest,directionalEmptyResponse);
     import {verifyCompatibility} from './compatibility-consumer.ts';
     verifyCompatibility();
     import {schema as portablePattern} from './pattern-generated/standalone.pattern.ts';
@@ -1199,6 +1244,14 @@ try {
     import assert from 'node:assert/strict';
     import {verifyCompatibility} from './.build/compatibility-consumer.js';
     verifyCompatibility();
+    import * as directionalClient from './.build/directional-generated/client.consumer.js';
+    import * as directionalQueries from './.build/directional-generated/client.consumer.queries.js';
+    import * as directionalRequest from './.build/directional-generated/standalone.request.js';
+    import * as directionalResponse from './.build/directional-generated/standalone.response.js';
+    import * as directionalEmptyRequest from './.build/directional-generated/standalone.empty-request.js';
+    import * as directionalEmptyResponse from './.build/directional-generated/standalone.empty-response.js';
+    import {verifyDirectional} from './verification/directional-fixture.ts';
+    await verifyDirectional(directionalClient,directionalQueries,directionalRequest,directionalResponse,directionalEmptyRequest,directionalEmptyResponse);
     import * as executionModule from './.build/execution-generated/client.consumer.js';
     import * as executionQueries from './.build/execution-generated/client.consumer.queries.js';
     import * as executionStaff from './.build/execution-generated/client.staff.js';

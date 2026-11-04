@@ -29,15 +29,15 @@ function forwardAliases(count = 10000) {
 
 void test('terminal resolution traverses shared aliases once per normalized table', () => {
   const descriptor = buildDescriptor(documentWith(forwardAliases(512)));
-  const leaf = entry(descriptor.schemas, 'Leaf');
+  const leaf = entry(descriptor.schemas.request, 'Leaf');
   let reads = 0;
-  const schemas = new Proxy(descriptor.schemas, {
+  const schemas = new Proxy(descriptor.schemas.request, {
     get(target, key, receiver): unknown {
       reads++;
       return Reflect.get(target, key, receiver);
     },
   });
-  for (const schema of Object.values(descriptor.schemas))
+  for (const schema of Object.values(descriptor.schemas.request))
     assert.equal(resolveSchema(schema, schemas), leaf);
   // Count table lookups rather than elapsed time: resolving each suffix must
   // take linear total work, including when aliases appear before their target.
@@ -50,9 +50,9 @@ void test('terminal resolution separates tables even for the same reference node
   const list = buildDescriptor(
     documentWith({ Leaf: { type: 'array', items: { type: 'integer' } } }),
   );
-  assert.equal(resolveSchema(reference, text.schemas).kind, 'string');
-  assert.equal(resolveSchema(reference, list.schemas).kind, 'array');
-  assert.equal(resolveSchema(reference, text.schemas).kind, 'string');
+  assert.equal(resolveSchema(reference, text.schemas.request).kind, 'string');
+  assert.equal(resolveSchema(reference, list.schemas.request).kind, 'array');
+  assert.equal(resolveSchema(reference, text.schemas.request).kind, 'string');
 });
 
 void test('recompiling mutable input preserves alias siblings and specialized array validation', async (t) => {

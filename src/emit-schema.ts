@@ -1,7 +1,13 @@
 import { data, identifier, literal, object, propertyKey } from './code.js';
 import type { Expression } from './code.js';
 import { fail } from './diagnostics.js';
-import type { Client, Constraints, Direction, Schema } from './model.js';
+import type {
+  Client,
+  Constraints,
+  Direction,
+  DirectionalSchemas,
+  Schema,
+} from './model.js';
 import { hasUnicodeProperty } from './scalar-rules.js';
 import { schemaType } from './schema-types.js';
 
@@ -84,12 +90,15 @@ function rules(
 // semantics stay in the shared runtime. Named child references bound both
 // expression nesting and inference depth as schemas grow.
 export function schemaRenderer(
-  schemas: Readonly<Record<string, Schema>>,
+  schemas: DirectionalSchemas,
   reference: (name: string, direction: Direction) => Expression,
   typeReference: (name: string, direction: Direction) => string,
   target?: Client['target'],
 ) {
-  const identity = parserIdentities(schemas);
+  const identities = {
+    request: parserIdentities(schemas.request),
+    response: parserIdentities(schemas.response),
+  };
   const helpers = new Set<string>();
   const typeImports = new Set<string>();
   const declarations: string[] = [];
@@ -101,7 +110,7 @@ export function schemaRenderer(
   // Reference a component's parser. A pure alias chain has no binding of its
   // own: it shares the first constrained target, or the terminal parser.
   const component = (name: string, direction: Direction): Expression => {
-    return reference(identity(name), direction);
+    return reference(identities[direction](name), direction);
   };
   function declareType(
     name: string,
@@ -134,6 +143,32 @@ export function schemaRenderer(
     return name;
   }
 
+  function objectChecks(
+    body: string[],
+    failures: string[],
+    name: string,
+    fields: readonly ObjectField[],
+    forbidden: readonly string[],
+  ): void {
+    if (forbidden.length) {
+      const blocked = constant(`forbidden_${name}`, data(forbidden).source);
+      body.push(
+        `const blocked = ${use('forbiddenKeys').source}(source, ${blocked}, issues);`,
+      );
+      failures.push('blocked');
+    }
+    // Forbidden keys are known declarations: report their presence once, rather
+    // than also classifying them as unknown enumerable fields.
+    const known = [...fields.map((entry) => entry.name), ...forbidden];
+    const keys = known.length
+      ? constant(`keys_${name}`, data(known).source)
+      : use('noKeys').source;
+    body.push(
+      `const extra = ${use('unknownKeys').source}(source, ${keys}, issues);`,
+    );
+    failures.push('extra');
+  }
+
   // Declare a fixed-object parser. Request objects reject unknown keys; response
   // objects strip them because only declared fields enter the fresh result.
   // Optional keys use a conditional spread: TypeScript merges it into an
@@ -144,6 +179,7 @@ export function schemaRenderer(
     fields: readonly ObjectField[],
     strict: boolean,
     exported = false,
+    forbidden: readonly string[] = [],
   ): void {
     // Bound TypeScript's failure-condition flow graph while retaining a checked
     // return for every field. Parse every chunk before testing failures so a
@@ -167,16 +203,7 @@ export function schemaRenderer(
         body.push(`const ${value} = ${parser}(source, issues);`);
       }
       const failures = values.map((value) => `${value} === invalid`);
-      if (strict) {
-        const keys = constant(
-          `keys_${name}`,
-          data(fields.map((entry) => entry.name)).source,
-        );
-        body.push(
-          `const extra = ${use('unknownKeys').source}(source, ${keys}, issues);`,
-        );
-        failures.push('extra');
-      }
+      if (strict) objectChecks(body, failures, name, fields, forbidden);
       body.push(`if (${failures.join(' || ')}) return invalid;`);
       body.push(`return {${values.map((value) => `...${value}`).join(',')}};`);
       declarations.push(functionDeclaration(name, type, body, exported));
@@ -194,18 +221,7 @@ export function schemaRenderer(
       );
       return `v${index} === invalid`;
     });
-    if (strict) {
-      const keys = fields.length
-        ? constant(
-            `keys_${name}`,
-            data(fields.map((entry) => entry.name)).source,
-          )
-        : use('noKeys').source;
-      body.push(
-        `const extra = ${use('unknownKeys').source}(source, ${keys}, issues);`,
-      );
-      failures.push('extra');
-    }
+    if (strict) objectChecks(body, failures, name, fields, forbidden);
     if (failures.length)
       body.push(`if (${failures.join(' || ')}) return invalid;`);
     const properties = fields.map((entry, index) => {
@@ -312,9 +328,9 @@ export function schemaRenderer(
         // Resolve alias chains here: a pure alias binds the terminal parser
         // itself, and constrained chains become one wrapper with ordered rule
         // data. Neither runtime depth nor validator identity grows with chains.
-        const { terminal, sets } = aliasChain(value, schemas);
+        const { terminal, sets } = aliasChain(value, schemas[direction]);
         const base = reference(terminal, direction).source;
-        const terminalSchema = schemas[terminal]!;
+        const terminalSchema = schemas[direction][terminal]!;
         if (terminalSchema.kind === 'array') {
           const minimum = [
             terminalSchema.minItems,
@@ -400,6 +416,7 @@ export function schemaRenderer(
           })),
           direction === 'request',
           exported,
+          value.forbidden,
         );
       case 'array': {
         const limits = rules(value, arrayRules);

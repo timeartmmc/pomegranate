@@ -12,6 +12,8 @@ export function validatePagination(
   if (operation.method !== 'GET' || operation.body.kind !== 'none')
     fail(location, 'infinite queries require a bodyless GET operation');
   const offset = 'offset' in binding;
+  const requestSchemas = descriptor.schemas.request;
+  const responseSchemas = descriptor.schemas.response;
   const parameter = operation.parameters.find(
     (parameter) =>
       parameter.in === 'query' &&
@@ -20,7 +22,7 @@ export function validatePagination(
   if (
     !parameter ||
     (!offset && parameter.required) ||
-    resolveSchema(parameter.schema, descriptor.schemas).kind !==
+    resolveSchema(parameter.schema, requestSchemas).kind !==
       (offset ? 'integer' : 'string')
   )
     fail(
@@ -39,7 +41,7 @@ export function validatePagination(
           `${location}.offset`,
           'offset schema must accept the initial value 0',
         );
-      schema = descriptor.schemas[schema.name]!;
+      schema = requestSchemas[schema.name]!;
     }
     if (
       schema.kind !== 'integer' ||
@@ -66,7 +68,7 @@ export function validatePagination(
     const path = `${location}.responses.${response.status}`;
     if (response.body.kind !== 'json')
       fail(path, 'every infinite-query success must have a JSON object body');
-    const body = resolveSchema(response.body.schema, descriptor.schemas);
+    const body = resolveSchema(response.body.schema, responseSchemas);
     if (body.kind !== 'object')
       fail(path, 'every infinite-query success must have a fixed object body');
     const fields = offset
@@ -82,7 +84,7 @@ export function validatePagination(
         fail(path, `pagination field ${JSON.stringify(name)} must be required`);
     const items = resolveSchema(
       body.properties[binding.items]!,
-      descriptor.schemas,
+      responseSchemas,
     );
     if (items.kind !== 'array')
       fail(`${path}.${binding.items}`, 'items must name an array field');
@@ -93,7 +95,7 @@ export function validatePagination(
         binding.total,
       ])
         if (
-          resolveSchema(body.properties[name]!, descriptor.schemas).kind !==
+          resolveSchema(body.properties[name]!, responseSchemas).kind !==
           'integer'
         )
           fail(
@@ -104,17 +106,17 @@ export function validatePagination(
     }
     const next = resolveSchema(
       body.properties[binding.nextCursor]!,
-      descriptor.schemas,
+      responseSchemas,
     );
     if (
       next.kind !== 'union' ||
       next.discriminator ||
       next.branches.length !== 2 ||
       !next.branches.some(
-        (branch) => resolveSchema(branch, descriptor.schemas).kind === 'null',
+        (branch) => resolveSchema(branch, responseSchemas).kind === 'null',
       ) ||
       !next.branches.some(
-        (branch) => resolveSchema(branch, descriptor.schemas).kind === 'string',
+        (branch) => resolveSchema(branch, responseSchemas).kind === 'string',
       )
     )
       fail(

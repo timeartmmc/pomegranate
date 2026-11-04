@@ -57,6 +57,11 @@ export async function verifyExecutionDeclarations(
     const independent: IndependentExecutor = adapter;
     void independent;
     export const sharedAdapter: Executor<Readonly<Record<string, unknown>>> = async (_request, execution) => execution.validateResponse({status:204,headers:{},body:''});
+    export const mutablePolicyAdapter: Executor<{timeout: 'interactive' | 'upload'}> = async (request, execution) => {
+      // @ts-expect-error The runtime freezes policy even with a mutable override.
+      request.policy.timeout = 'upload';
+      return execution.validateResponse({status:204,headers:{},body:''});
+    };
     const uploadAdapter: UploadExecutor = sharedAdapter;
     export const uploadClient = createUploads({namespace: 'published-upload', execute: sharedAdapter});
     void uploadAdapter;
@@ -104,6 +109,12 @@ export async function verifyExecutionDeclarations(
     import { client as published, call, isError, createApi, adapter as publishedAdapter, bodyKey as publishedBodyKey, bodyOptions as publishedBodyOptions, invalidation, cursorBody, cursorBodyOptions as publishedCursorBodyOptions, offsetBody, offsetBodyOptions as publishedOffsetBodyOptions } from './execution-wrapper.js';
     import type { Executor as IndependentExecutor } from './execution-independent/client.consumer.js';
     import { sharedAdapter as publishedSharedAdapter, uploadClient as publishedUploadClient } from './execution-wrapper.js';
+    import { mutablePolicyAdapter as publishedMutablePolicyAdapter } from './execution-wrapper.js';
+    function verifyPublishedReadonly(request: Parameters<typeof publishedMutablePolicyAdapter>[0]) {
+      // @ts-expect-error Published policy overrides retain readonly fields.
+      request.policy.timeout = 'upload';
+    }
+    void verifyPublishedReadonly;
     import type { Executor as PublishedUploadExecutor } from './multipart-generated/client.browser.js';
     const publishedUploadAdapter: PublishedUploadExecutor = publishedSharedAdapter;
     const independentAdapter: IndependentExecutor = publishedAdapter;

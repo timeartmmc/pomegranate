@@ -15,6 +15,13 @@ export const policyQueryExecutor: QueryExecutor = async (request) => {
   void [readiness, attempts, timeout, audit];
   return { status: 200, headers: {}, body: '' };
 };
+export const sharedPolicyQueryExecutor: QueryExecutor<{
+  timeout: string;
+}> = async (request) => {
+  // @ts-expect-error Shared transport policy overrides are still frozen.
+  request.policy.timeout = 'changed';
+  return { status: 200, headers: {}, body: '' };
+};
 const queries = createQueries({
   namespace: 'synthetic',
   execute: async (request) => {

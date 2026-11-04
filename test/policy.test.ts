@@ -195,7 +195,13 @@ void test('the previous policy version receives a migration diagnostic', async (
   await assert.rejects(
     compile(
       document(
-        { version: 2, auth: ['public'], surfaces: ['consumer'] },
+        {
+          version: 2,
+          auth: { public: { transport: 'none' } },
+          retry: ['never'],
+          timeout: ['interactive'],
+          surfaces: ['consumer'],
+        },
         membership,
       ),
       selected,
