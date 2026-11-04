@@ -137,8 +137,18 @@ void test('response body legality is checked at every method/status use includin
     record(operation.responses)[status] = ref('PageAlias');
     await rejectsAt(
       document,
+      `paths.${path}.${method}.responses.${status}.$ref`,
+      /this HTTP method\/status cannot carry a body \(response reference "#\/components\/responses\/PageAlias"\)/,
+    );
+    const inline = fixture();
+    const inlineOperation = record(record(record(inline.paths)[path])[method]);
+    record(inlineOperation.responses)[status] = structuredClone(
+      present(inline.components.responses.Page),
+    );
+    await rejectsAt(
+      inline,
       `paths.${path}.${method}.responses.${status}.content`,
-      /this HTTP method\/status cannot carry a body/,
+      /this HTTP method\/status cannot carry a body$/,
     );
   }
   const bodyless = fixture();

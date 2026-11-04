@@ -10,6 +10,7 @@ import type {
 } from './model.js';
 import { hasUnicodeProperty, intersectConstraints } from './scalar-rules.js';
 import { schemaType } from './schema-types.js';
+import { sourceBudget } from './source-budget.js';
 import type { StringFormat } from './runtime.js';
 
 // Follow references to the first non-reference component. Constraint sets are
@@ -114,6 +115,13 @@ export function schemaRenderer(
   const typeImports = new Set<string>();
   const declarations: string[] = [];
   const parts = new Map<string, number>();
+  const account = sourceBudget();
+  const append = (declaration: string, location = 'generated schema') => {
+    // Charge each declaration before retaining it or joining a module. Draining
+    // declarations must not reset the renderer's lifetime source budget.
+    account(declaration, location);
+    declarations.push(declaration);
+  };
   const use = (name: string): Expression => {
     helpers.add(name);
     return identifier(name);
@@ -136,10 +144,11 @@ export function schemaRenderer(
     type: string,
     body: readonly string[],
     exported: boolean,
+    extraParameters = '',
   ): string {
     typeImports.add('Issues');
     typeImports.add('Invalid');
-    return `${exported ? 'export ' : ''}function ${name}(input: unknown, issues: Issues): ${type} | Invalid {
+    return `${exported ? 'export ' : ''}function ${name}(input: unknown, issues: Issues${extraParameters}): ${type} | Invalid {
       ${body.join('\n')}
     }`;
   }
@@ -150,7 +159,10 @@ export function schemaRenderer(
   // by the function instead of walking the whole generated module.
   function constant(name: string, value: string, type?: string): string {
     if (type && /^\w+$/.test(type)) typeImports.add(type);
-    declarations.push(`const ${name}${type ? `: ${type}` : ''} = ${value};`);
+    append(
+      `const ${name}${type ? `: ${type}` : ''} = ${value};`,
+      `generated parser ${name}`,
+    );
     return name;
   }
 
@@ -233,7 +245,10 @@ export function schemaRenderer(
         sizeCheck(body);
         body.push('return output;');
       } else body.push(`return ${output};`);
-      declarations.push(functionDeclaration(name, type, body, exported));
+      append(
+        functionDeclaration(name, type, body, exported),
+        `generated parser ${name}`,
+      );
       return;
     }
     helpers.add('invalid');
@@ -264,7 +279,10 @@ export function schemaRenderer(
       sizeCheck(body);
       body.push('return output;');
     } else body.push(`return ${output};`);
-    declarations.push(functionDeclaration(name, type, body, exported));
+    append(
+      functionDeclaration(name, type, body, exported),
+      `generated parser ${name}`,
+    );
   }
 
   // Return a Parse function name for a child schema. Unconstrained references,
@@ -345,8 +363,9 @@ export function schemaRenderer(
     const child = (schema: Schema, path: string) =>
       part(schema, direction, path, scope);
     const returns = (expression: string): void => {
-      declarations.push(
+      append(
         functionDeclaration(name, type, [`return ${expression};`], exported),
+        location,
       );
     };
     const call = (helper: string, ...args: string[]) =>
@@ -360,52 +379,35 @@ export function schemaRenderer(
         return call(target === 'browser' ? 'browserFile' : 'nativeFile');
       case 'ref': {
         if (Object.keys(value.constraints).length === 0) return;
-        // Resolve aliases here: container bounds combine into one parser;
-        // scalar siblings use one wrapper with ordered rule data. Runtime
-        // depth and validator identity never grow with alias-chain depth.
+        // Flatten aliases before delegation. Rebuilding a terminal container's
+        // children here would expand shared bounded-reference graphs into trees.
         const { terminal, sets } = aliasChain(value, schemas[direction]);
         const terminalSchema = schemas[direction][terminal]!;
+        const base = reference(terminal, direction).source;
         if (terminalSchema.kind === 'object' || terminalSchema.kind === 'map') {
-          // Rebuild one parser with intersected bounds. Refining the base's
-          // returned object would count already-stripped response fields, and
-          // chaining wrappers would repeatedly enumerate the same input.
           const merged = sets.reduce<Constraints>(
             intersectConstraints,
             terminalSchema,
           );
-          return define(
-            { ...terminalSchema, ...merged },
-            direction,
-            location,
-            scope,
-            name,
-            type,
-            exported,
+          const limits = rules(merged, objectRules)!;
+          return call(
+            'refineObject',
+            base,
+            constant(`rules_${name}`, limits.source, 'ObjectRules'),
+            JSON.stringify(terminalSchema.kind === 'map' ? 'map' : direction),
           );
         }
-        const base = reference(terminal, direction).source;
         if (terminalSchema.kind === 'array') {
-          const minimum = [
-            terminalSchema.minItems,
-            ...sets.map((set) => set.minItems),
-          ].filter((n): n is number => n !== undefined);
-          const maximum = [
-            terminalSchema.maxItems,
-            ...sets.map((set) => set.maxItems),
-          ].filter((n): n is number => n !== undefined);
-          const merged: Constraints = {
-            ...(minimum.length ? { minItems: Math.max(...minimum) } : {}),
-            ...(maximum.length ? { maxItems: Math.min(...maximum) } : {}),
-          };
-          const limits = rules(merged, arrayRules);
-          const items = child(terminalSchema.items, `${location}.items`).source;
-          return limits
-            ? call(
-                'list',
-                items,
-                constant(`rules_${name}`, limits.source, 'ArrayRules'),
-              )
-            : call('list', items);
+          const merged = sets.reduce<Constraints>(
+            intersectConstraints,
+            terminalSchema,
+          );
+          const limits = rules(merged, arrayRules)!;
+          // The canonical parser owns its item parser and observes length once.
+          // Supply the full intersection so all bounds run before any item read.
+          return returns(
+            `${base}(input, issues, ${constant(`rules_${name}`, limits.source, 'ArrayRules')})`,
+          );
         }
         const isText = terminalSchema.kind === 'string';
         const keys = isText ? stringRules : numberRules;
@@ -482,13 +484,25 @@ export function schemaRenderer(
       case 'array': {
         const limits = rules(value, arrayRules);
         const items = child(value.items, `${location}.items`).source;
-        return limits
-          ? call(
-              'list',
-              items,
-              constant(`rules_${name}`, limits.source, 'ArrayRules'),
-            )
-          : call('list', items);
+        const defaults = limits
+          ? constant(`rules_${name}`, limits.source, 'ArrayRules')
+          : undefined;
+        typeImports.add('ArrayRules');
+        // An optional internal override lets constrained references reuse this
+        // item's graph. Generated callers always pass the full bound intersection.
+        append(
+          functionDeclaration(
+            name,
+            type,
+            [`return ${use('list').source}(input, issues, ${items}, rules);`],
+            exported,
+            defaults
+              ? `, rules: ArrayRules = ${defaults}`
+              : ', rules?: ArrayRules',
+          ),
+          location,
+        );
+        return;
       }
       case 'boolean':
       case 'null':
@@ -548,7 +562,7 @@ export function schemaRenderer(
       `default: return ${use('report').source}(issues, ${message}, true);`,
       '}',
     ];
-    declarations.push(functionDeclaration(name, type, body, exported));
+    append(functionDeclaration(name, type, body, exported), location);
   }
 
   return {
@@ -561,9 +575,7 @@ export function schemaRenderer(
     helpers,
     typeImports,
     use,
-    push: (declaration: string) => {
-      declarations.push(declaration);
-    },
+    push: append,
     takeDeclarations: () => declarations.splice(0).join('\n'),
   };
 }

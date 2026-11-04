@@ -709,8 +709,11 @@ function operationResponses(
         (method === 'head' || [204, 205, 304].includes(status))
       )
         fail(
-          `${responseLocation}.content`,
-          'this HTTP method/status cannot carry a body',
+          `${responseLocation}.${target === undefined ? 'content' : '$ref'}`,
+          'this HTTP method/status cannot carry a body' +
+            (target === undefined
+              ? ''
+              : ` (response reference ${JSON.stringify(`#/components/responses/${target}`)})`),
         );
       return { status, ...response };
     });

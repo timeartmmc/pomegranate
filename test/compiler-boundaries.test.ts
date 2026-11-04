@@ -6,13 +6,74 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
-import { compile, runProject } from '../dist/index.js';
+import { compile, ContractError, runProject } from '../dist/index.js';
+import { identifier } from '../dist/code.js';
+import { schemaRenderer } from '../dist/emit-schema.js';
+import { parseYaml } from '../dist/yaml.js';
 import { fileSnapshot, fixture, temporary } from './helpers.ts';
 import { queryFixture } from './query-fixture.ts';
 import { record } from './assertions.ts';
 
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+
+void test('declaration budgets count UTF-8 bytes across drained schema chunks', () => {
+  const renderer = schemaRenderer(
+    { request: {}, response: {} },
+    () => identifier('unused'),
+    () => 'unknown',
+  );
+  const chunk = `//${'é'.repeat(512 * 1024 - 1)}`;
+  assert.equal(Buffer.byteLength(chunk), 1024 * 1024);
+  for (let index = 0; index < 32; index++) {
+    renderer.push(chunk);
+    renderer.takeDeclarations();
+  }
+  // renderComponents drains declarations after every schema. Draining must not
+  // reset the budget while the caller retains those module fragments.
+  assert.throws(
+    () => renderer.push('x'),
+    (error) =>
+      error instanceof ContractError &&
+      /generated source exceeds the 32 MiB limit/.test(error.message),
+  );
+});
+
+void test('shared policy metadata is budgeted before joining operation declarations', async () => {
+  const metadata = { note: 'x'.repeat(768 * 1024) };
+  const ids = Array.from({ length: 48 }, (_, index) => `large${index}`);
+  const document = {
+    openapi: '3.1.1',
+    info: { title: 'Synthetic shared policy', version: '1' },
+    'x-pom-policy': { version: 3, fields: { note: { type: 'string' } } },
+    paths: Object.fromEntries(
+      ids.map((id) => [
+        `/${id}`,
+        {
+          get: {
+            operationId: id,
+            'x-pom': metadata,
+            responses: { 204: { description: 'Empty' } },
+          },
+        },
+      ]),
+    ),
+  };
+  const yaml = stringify(document);
+  assert.ok(Buffer.byteLength(yaml) < 1024 * 1024);
+  await assert.rejects(
+    compile(parseYaml(yaml, 'policy.yaml'), {
+      clients: ['consumer'],
+      surfaces: { consumer: ids },
+    }),
+    (error) => {
+      assert.ok(error instanceof ContractError);
+      assert.match(error.message, /generated source exceeds the 32 MiB limit/);
+      assert.match(error.location, /^paths\.\/large\d+\.get$/);
+      return true;
+    },
+  );
+});
 
 for (const existing of [false, true]) {
   void test(`input file failures preserve ${existing ? 'existing' : 'missing'} outputs`, async (t) => {
@@ -197,10 +258,15 @@ void test('generation diagnoses excessive source before formatting or writing', 
     const snapshot = () => (existing ? fileSnapshot(output) : readdir(root));
     const before = await snapshot();
     for (const check of [true, false]) {
-      await assert.rejects(
-        runProject(config, { check }),
-        /generated source exceeds the 32 MiB limit/,
-      );
+      await assert.rejects(runProject(config, { check }), (error) => {
+        assert.ok(error instanceof ContractError);
+        assert.match(
+          error.message,
+          /generated source exceeds the 32 MiB limit/,
+        );
+        assert.notEqual(error.location, 'generated output');
+        return true;
+      });
       assert.deepEqual(await snapshot(), before);
     }
   }

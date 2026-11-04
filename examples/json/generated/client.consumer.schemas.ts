@@ -61,13 +61,9 @@ const rules_parse_PreparationInput_request_part2: ArrayRules = { maxItems: 3 };
 function parse_PreparationInput_request_part2(
   input: unknown,
   issues: Issues,
+  rules: ArrayRules = rules_parse_PreparationInput_request_part2,
 ): Array<string> | Invalid {
-  return list(
-    input,
-    issues,
-    parse_PreparationInput_request_part3,
-    rules_parse_PreparationInput_request_part2,
-  );
+  return list(input, issues, parse_PreparationInput_request_part3, rules);
 }
 const keys_parse_PreparationInput_request = ['acknowledged', 'label', 'tags'];
 export function parse_PreparationInput_request(

@@ -25,6 +25,7 @@ import {
 } from './ip-comment-fixture.ts';
 import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 import type { Schema } from './schema-helpers.ts';
+import { ipv4ConformanceCases } from './ipv4-conformance-fixture.ts';
 
 const exec = promisify(execFile);
 const samples: Record<'ipv4' | 'ipv6', readonly [string, boolean][]> = {
@@ -175,7 +176,7 @@ void test('standalone IP validators check decimal octets, compression and embedd
   }
 });
 
-void test('IP syntax agrees with independent octet and native IPv6 oracles over generated neighboring values', async (t) => {
+void test('IP syntax agrees with pinned IPv4 conformance cases and a native IPv6 oracle', async (t) => {
   const root = await generatedTestWorkspace(
     t,
     await compile(fixture(), selection),
@@ -188,34 +189,13 @@ void test('IP syntax agrees with independent octet and native IPv6 oracles over 
     root,
     'standalone.ipv6.ts',
   );
-  for (const octet of [
-    '0',
-    '00',
-    '000',
-    '1',
-    '01',
-    '001',
-    '9',
-    '99',
-    '100',
-    '249',
-    '250',
-    '255',
-    '256',
-    '999',
-    '0000',
-    '-1',
-    '+1',
-    '1e2',
-    '',
-  ])
-    for (let position = 0; position < 4; position++) {
-      const parts = ['192', '0', '2', '1'];
-      parts[position] = octet;
-      const value = parts.join('.');
-      const expected = /^\d{1,3}$/.test(octet) && Number(octet) <= 255;
-      assert.equal(ipv4.safeParse(value).success, expected, value);
-    }
+  for (const [value, expected] of ipv4ConformanceCases)
+    assert.equal(ipv4.safeParse(value).success, expected, value);
+  // Format validation preserves decimal dotted-quad spelling. URL host parsing
+  // has different numeric rules, so it cannot serve as the IPv4 format oracle.
+  assert.equal(ipv4.safeParse('010.000.000.001').success, true);
+  assert.equal(new URL('http://010.000.000.001').hostname, '8.0.0.1');
+  assert.equal(ipv4.safeParse('0177.000.000.001').success, false);
   const values = new Set(samples.ipv6.map(([value]) => value));
   let seed = 0x53a9bc12;
   const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);

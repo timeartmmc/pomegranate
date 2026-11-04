@@ -266,7 +266,7 @@ void test('bounded maps retain their bounds when getters change the captured mem
       if (result.success) assert.deepEqual(result.data, { a: 1 });
       else
         assert.deepEqual(result.error.issues, [
-          { path: [], message: 'expected at most 1 properties' },
+          { path: [], message: 'expected at most 1 property' },
         ]);
     }
   }

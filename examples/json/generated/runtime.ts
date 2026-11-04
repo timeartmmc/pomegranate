@@ -736,13 +736,17 @@ function propertyBounds(
   rules: ObjectRules,
 ): boolean {
   if (rules.maxProperties !== undefined && count > rules.maxProperties) {
-    report(issues, `expected at most ${rules.maxProperties} properties`, false);
+    report(
+      issues,
+      `expected at most ${rules.maxProperties} ${rules.maxProperties === 1 ? 'property' : 'properties'}`,
+      false,
+    );
     return true;
   }
   if (rules.minProperties !== undefined && count < rules.minProperties) {
     report(
       issues,
-      `expected at least ${rules.minProperties} properties`,
+      `expected at least ${rules.minProperties} ${rules.minProperties === 1 ? 'property' : 'properties'}`,
       false,
     );
     return true;
@@ -835,6 +839,35 @@ export function map<T>(
   )
     return invalid;
   return issues.length === start ? Object.fromEntries(entries) : invalid;
+}
+
+// Constrained references delegate to one terminal parser instead of rebuilding
+// its children. Responses count raw members before stripping; requests count the
+// detached JSON snapshot. Maps check both counts, including getter-driven changes
+// while their entries are captured. Alias chains become one wrapper.
+export function refineObject<T extends object>(
+  input: unknown,
+  issues: Issues,
+  base: Parse<T>,
+  rules: ObjectRules,
+  mode: 'request' | 'response' | 'map',
+): T | Invalid {
+  if (
+    ((mode === 'map' && plainRecord(input)) ||
+      (mode === 'response' &&
+        typeof input === 'object' &&
+        input !== null &&
+        !Array.isArray(input))) &&
+    propertyCount(input, issues, rules)
+  )
+    return invalid;
+  const start = issues.length;
+  const value = base(input, issues);
+  if (value === invalid || issues.length !== start) return invalid;
+  if (mode === 'response') return value;
+  return propertyCount(value, issues, rules, mode === 'request')
+    ? invalid
+    : value;
 }
 
 export function emptyOptions(
