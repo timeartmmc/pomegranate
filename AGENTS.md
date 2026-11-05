@@ -1,8 +1,7 @@
 # Working on Pomegranate
 
-Pomegranate (POM) compiles a supported OpenAPI vocabulary into TypeScript, native
-validators, request builders, and protocol helpers. It is an independent tool
-used by personal projects and intended for a public GitHub repository.
+Pomegranate (POM) compiles supported OpenAPI contracts into TypeScript validators,
+request builders, and protocol helpers.
 
 Read [README.md](README.md) for an introduction,
 [REFERENCE.md](REFERENCE.md) for supported contracts and usage,
@@ -11,14 +10,13 @@ Read [README.md](README.md) for an introduction,
 
 ## Working agreement
 
-- Prefer a complete, carefully verified milestone over broad unfinished work.
-  Report the behavior delivered, evidence, and remaining scope accurately.
-- Preserve concurrent work and avoid overwriting unrelated changes.
-- Start additional agents only when the user requests them. Do not commit,
-  publish, or deploy without an explicit request.
-- The local agent coordination board is closed. Do not create or use a board
-  unless the user explicitly reopens it.
-- Keep proposals, sprint plans, and working notes in ignored `.local/` storage.
+- Finish and verify each change before expanding scope. Report results and
+  remaining limits accurately.
+- Preserve unrelated changes.
+- Delegate work only when explicitly requested.
+- Do not commit, publish, or deploy without an explicit request.
+- Local coordination tracking is disabled. Do not recreate its records.
+- Keep plans and working notes in ignored `.local/` storage.
   Never track or package them, or link to them from public documentation.
 
 ## Boundaries
@@ -45,10 +43,8 @@ Read [README.md](README.md) for an introduction,
   verification.
 - Test observable guarantees and meaningful failure paths. Exercise the package
   as installed, including a standalone synthetic example, at coherent milestones.
-- Evaluate review findings by a realistic trigger and concrete user impact.
-  Do not pursue impossible or contrived scenarios that offer no meaningful
-  correctness, reliability, usability, or adoption benefit. Keep the maintenance
-  cost of added machinery and tests proportional to that benefit.
+- Evaluate findings by a realistic trigger and concrete user impact. Keep the
+  implementation and tests proportional to that impact.
 - Keep non-obvious contract and boundary rationale beside the owning code. Use
   types and tests for routine facts; keep necessary lint exceptions local and
   explain the behavior they preserve.

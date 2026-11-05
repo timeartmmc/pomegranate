@@ -78,9 +78,8 @@ body and forwards the signal to its transport. JSON and text requests expose
 `request.contentType` for the transport's Content-Type header; send text bodies
 directly and serialize JSON bodies with `JSON.stringify`. POM invokes this
 executor once; the executor owns recovery, retries, deadlines, locale and session
-fencing. A
-broad executor can serve direct calls, ordinary queries and both infinite query
-profiles without casts. `QueryExecutor` accepts only bodyless requests and is
+fencing. One executor can serve direct calls, ordinary queries, and both infinite
+query profiles without casts. `QueryExecutor` accepts only bodyless requests and is
 sufficient for query-only integrations. For adapters shared across generated
 documents with different policy vocabularies, declare the supported
 [policy type](REFERENCE.md#operation-policy) explicitly.
@@ -104,8 +103,7 @@ hook with a call to `execution.validateResponse`, retain the original inspection
 handle, and return that handle after the transport completes successfully. The
 transport still owns serialization, localization, recovery, deadlines, and error
 policy. The adapter must preserve the correspondence between the transport's
-completed response and the handle it returns. This needs no additional POM
-transport interface or per-endpoint bridge.
+completed response and the handle it returns.
 
 ### Context and snapshots
 
@@ -169,11 +167,8 @@ JavaScript assignments throw. Transform response data after the generated call
 or through application-owned domain adapters. Cache updates still need immutable
 updates as described in [query integration](QUERIES.md).
 
-Keeping the saved response private prevents edits between validation and handoff.
-Handing the executor the real mutable result would avoid the inspection copy but
-would give up that boundary. Freezing all public responses would instead change
-application editing and hydrated-cache behavior. The isolated inspection keeps
-final bodies mutable and places copying only on the scoped-validation path.
+Only scoped validation creates the inspection copy. Raw execution avoids that
+copy while keeping the public response body mutable.
 
 Status-based recovery already works with `request.parseResponse` and can leave
 successful responses for POM to parse once. Use the callback when complete response

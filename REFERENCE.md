@@ -421,7 +421,7 @@ server or license URLs or external example values. Unsupported standard keywords
 remain rejected. Unrelated `x-…` extension keywords require an explicit
 [`ignoreExtensions`](#configuration) entry.
 
-Supported schema composition is deliberately limited:
+Supported schema composition:
 
 - `anyOf` has two branches: a schema and `null`, or `string` and `integer`.
   A `type: "null"` branch requires 3.1; 3.0 nullable schemas use `nullable: true`
@@ -494,8 +494,7 @@ references remain unsupported. Defaults keep the annotation behavior above.
 −9,007,199,254,740,991 through 9,007,199,254,740,991 inclusive. It retains the
 `number` type and intersects explicit or referenced bounds just like `int32`.
 Unsafe integers, fractions, strings, and bigints fail validation without coercion.
-This deliberately supports the safe numeric subset of signed 64-bit integers;
-applications needing the full range can use `type: "string", format: "int64"`.
+For the full signed 64-bit range, use `type: "string", format: "int64"`.
 Validation observes JavaScript numbers, so it cannot recover or detect every
 rounding that occurred while parsing a JSON token or computing a value.
 

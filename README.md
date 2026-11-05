@@ -1,14 +1,13 @@
 # Pomegranate
 
-Pomegranate (POM) compiles a supported subset of OpenAPI 3.0 and 3.1 JSON or YAML into
-TypeScript request builders, native validators, and response parsers keyed by
-HTTP status. Optional executable clients and TanStack Query factories use an
-application-supplied executor. Applications own transport, authentication,
-retries, and deadlines.
+Pomegranate (POM) compiles supported OpenAPI 3.0 and 3.1 contracts in JSON or YAML
+into TypeScript request builders, native validators, and response parsers.
+Optional clients and TanStack Query factories call a transport you provide.
+Your application owns authentication, retries, and deadlines.
 
-Generated core and execution modules have no package runtime dependencies.
-Validators use local runtime files copied into the output. Query modules also
-require Query Core. The compiler is a development dependency.
+Core modules and executable clients have no package runtime dependencies.
+Generated modules use local runtime helpers; query modules also require Query
+Core. Install the compiler as a development dependency.
 
 ## Quick start
 
@@ -30,8 +29,9 @@ Create `pom.json` beside your exported contract:
 }
 ```
 
-Declare [surface membership](REFERENCE.md#client-surfaces-and-security) in the contract
-or configuration. [Typed operation policy](REFERENCE.md#operation-policy) is optional.
+Declare [surface membership](REFERENCE.md#client-surfaces-and-security) in the
+contract or configuration. [Operation policy](REFERENCE.md#operation-policy) is
+optional.
 Use a `.yaml` or `.yml` input path for YAML; configuration stays JSON. Paths
 resolve from the configuration file's real directory.
 
@@ -54,8 +54,8 @@ platform requirements.
 
 ## Use the generated API
 
-Request builders validate inputs and prepare a relative URL, headers, security, policy,
-and body. For the synthetic example:
+Request builders validate inputs and prepare the relative URL, headers, security,
+policy, and body. For the example:
 
 ```ts
 import { operations } from './generated/client.consumer.ts';
@@ -83,18 +83,21 @@ Choose the integration needed by the application:
 
 ## Supported contracts
 
-POM supports JSON, plain text, and multipart requests, exact response statuses, bearer or
-public security, selected client surfaces, and a restricted schema vocabulary, including unconstrained JSON values. Unrelated extensions require an explicit
-ignore list.
+POM supports JSON, plain text, and multipart requests; exact response statuses;
+bearer or public security; selected client surfaces; and a restricted schema
+vocabulary that includes unconstrained JSON. Unrelated extensions require an
+explicit ignore list.
+
 Unsupported features fail with a location-specific diagnostic before outputs
-change. General unions, recursive or external schema references, optional multipart
-bodies, and non-bearer authentication schemes are unsupported. The
+change. General unions, recursive or external schema references, optional
+multipart uploads, and non-bearer authentication schemes are unsupported. The
 [contract reference](REFERENCE.md#supported-vocabulary) defines the complete
 supported vocabulary and limits.
 
 Formats must be built in or explicitly defined in `pom.json`. A registered
 string format supplies a pattern that POM validates in generated code; unknown
-or misspelled names stop compilation. See [registered formats](REFERENCE.md#registered-formats).
+or misspelled names stop compilation. See
+[registered formats](REFERENCE.md#registered-formats).
 
 ## Run the example
 
@@ -109,8 +112,8 @@ bun run example:check
 bun run example:run
 ```
 
-The example makes no network request. It uses an injected response, synthetic
-credentials, direct calls, and a selected query with one executor. It prints:
+The example uses synthetic data and an injected response, with no network
+requests. Direct calls and a query share one executor. It prints:
 
 ```text
 POST /api/widgets/demo%2Fwidget/preparations → 202 synthetic-123

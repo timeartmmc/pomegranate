@@ -1,7 +1,7 @@
 # Architecture
 
-POM interprets an explicit local contract and generates a self-contained client
-API. This document explains its design constraints. Use the
+POM reads a local contract and generates a client API. This document describes
+the compiler's boundaries. Use the
 [contract reference](REFERENCE.md) for supported syntax and current behavior, and
 [Contributing](CONTRIBUTING.md) for verification and releases.
 
@@ -15,34 +15,31 @@ API. This document explains its design constraints. Use the
 
 POM never discovers consumer repositories, invokes their backends, reads their
 databases, fetches remote contracts, or implements authentication providers.
-Applications produce inputs before invoking the compiler. A passing drift check
-establishes agreement with those inputs, not agreement with a running backend.
+Applications provide the inputs. Drift checks compare generated files with
+those inputs; they do not test a running backend.
 Document-level server configuration belongs to the application transport:
 applications select and expand endpoints and append the generated contract paths.
 
-Use one versioned policy format and one generated API across applications. Adapt
-consumers to them rather than adding project-specific compiler branches or
-retaining obsolete formats. OpenAPI security determines credential transport independently of optional policy
-metadata. Declared auth labels must agree with it. Application fields use explicit
-scalar types, enums and requiredness; they do not authorize requests or define
-retry and timeout behavior. Keep one shared generated policy declaration so
-executor boundaries preserve the same types as builders. Surface membership has
-one explicit owner, inline or configuration, and must classify every operation.
+Use one versioned policy format and generated API across applications. Keep
+application-specific behavior in adapters. OpenAPI security determines credential
+transport, and optional auth labels must agree with it. Policy fields declare
+types, enums, and requiredness; applications implement authorization, retries,
+and timeouts. Builders and executors share one generated policy declaration.
+Every operation must declare surface membership through either inline metadata
+or configuration.
 
 ## One contract interpretation
 
-The compiler reads JSON or YAML, validates the complete document, and builds one
-normalized descriptor before selecting output. OpenAPI 3.0 input syntax is
-lowered at the document boundary into the same schema vocabulary as 3.1;
-dialect differences do not enter the descriptor, emitters, or generated runtime. Types, validators, builders,
-response parsers, and optional helpers derive from that descriptor. Every
-operation and response must be represented or rejected with a useful diagnostic,
-including declarations excluded from the selected clients.
+The compiler validates the complete JSON or YAML document before selecting output.
+It converts OpenAPI 3.0 syntax to the same schema vocabulary used for 3.1. Types,
+validators, builders, response parsers, and optional helpers use one normalized
+descriptor. Every operation and response must be represented or rejected with a
+useful diagnostic, including declarations excluded from selected clients.
 
-Directional fields produce request and response schema graphs before usage
-validation, closure and emission. Validate all source declarations first, then
-use the same projected graph for types, parsers and protocol bindings. Preserve
-fixed-object identity when every property is excluded.
+Validate source declarations before projecting request and response fields.
+Use those projected schema graphs for usage validation, dependency selection,
+types, parsers, and protocol bindings. Keep fixed-object identity when projection
+excludes every property.
 
 Client projection retains only transitive request and response dependencies.
 Client modules must not import another client's operations or schemas. Shared
@@ -64,11 +61,9 @@ in the [reference](REFERENCE.md#supported-vocabulary).
 
 ## Generated runtime boundaries
 
-Applications run from generated code and declared runtime dependencies, without
-the compiler. Author generic helpers in POM and copy them once into an output
-set; a separate runtime package is unnecessary. Core and direct-call modules
-remain independent of TanStack and React. Query modules declare their Query Core
-dependency.
+Applications run generated code and its declared runtime dependencies. Shared
+helpers are copied into each output set. Core and direct-call modules remain
+independent of TanStack and React; query modules require Query Core.
 
 Requests and responses retain direction-specific validation. Validated JSON and
 native file references must not retain mutable caller data. Immutable browser
@@ -118,9 +113,8 @@ compiler version. Keep wrappers that implement domain behavior; remove thin
 wrappers as their callers migrate. Query factories require their own cache-access
 migration and can be adopted independently of direct calls.
 
-Compiler and installed-package checks do not establish application parity,
-maintenance savings, or device budget acceptance. Applications need their own
-contract inventory, scalar parity, platform checks, and integration tests. Use the
+Applications need their own contract, platform, scalar, and integration checks.
+Measure maintenance costs and device budgets in the application. Use the
 [measurement guidance](CONTRIBUTING.md#measurements-and-adoption) to assess adoption.
 Add capabilities for demonstrated needs, with observable tests and explicit
 diagnostics for unsupported neighboring forms.

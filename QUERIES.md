@@ -218,7 +218,7 @@ when status or response headers affect the application. Repeated `.body()`
 selection keeps the same cache identity; factory object identity is irrelevant.
 Storage is an application choice, so there is no additional `pom.json` setting.
 
-The representations deliberately use separate keys:
+The representations use separate keys:
 
 | Query profile | Envelope family   | Body family            |
 | ------------- | ----------------- | ---------------------- |
@@ -231,7 +231,7 @@ identity. Cache access, hydration, and page selectors retain the selected stored
 type. Operation error guards work across these families for the same generated
 operation, namespace, and client.
 
-If representations coexist intentionally, they are independent cache entries:
+If both representations are used, they have independent cache entries:
 requests are not deduplicated between them, and `setQueryData` on one does not
 update the other. `invalidationFilter` can refresh both but does not synchronize
 direct writes. Applications own updates to every representation they keep. This
@@ -372,7 +372,7 @@ results follow the same executor rules. Preserve the generated key, query
 function, initial page parameter, next-page callback, retry, and structural-sharing
 settings when adding application options.
 
-Infinite options intentionally keep their outer object extensible: Query Core
+Infinite options keep their outer object extensible: Query Core
 5.104.5 marks it as an infinite query before copying options. They can be passed
 directly to `fetchInfiniteQuery`, `ensureInfiniteQueryData`, and
 `prefetchInfiniteQuery`. Keys remain frozen, base inputs are copied, and executor
