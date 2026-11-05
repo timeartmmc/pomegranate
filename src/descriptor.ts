@@ -768,11 +768,14 @@ function normalizeOperation(
     ? normalizeSecurity(value.security, bearerSchemes, `${location}.security`)
     : inheritedSecurity;
   const id = safeKey(
-    text(value.operationId, `${location}.operationId`),
+    Object.hasOwn(value, 'operationId')
+      ? text(value.operationId, `${location}.operationId`)
+      : `${method.toUpperCase()} ${path}`,
     `${location}.operationId`,
   );
   // Operation IDs are public, case-sensitive strings, not TypeScript symbols.
   // The emitter encodes private names without changing keys or cache identity.
+  // Derive missing IDs from the exact method and path so ordering never renames them.
   const metadata = normalizeOperationPolicy(
     Object.hasOwn(value, 'x-pom') ? value['x-pom'] : {},
     vocabulary,

@@ -271,7 +271,7 @@ validation, including operations excluded from output.
 | Surface     | Current support                                                                                                                                                                                                                                                                                                                        |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                             |
-| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique nonempty operation IDs; whole-segment path placeholders                                                                                                                                                                                                                           |
+| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; whole-segment path placeholders                                                                                                                                                                                                              |
 | Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; string and optional nullable string request headers; simple path/header and form query serialization |
 | Bodies      | Required or optional JSON bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON or bodyless responses; string response headers; local component references and aliases                                                                                                                        |
 | Schemas     | {} and annotation-only schemas; explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                   |
@@ -284,6 +284,14 @@ document with JSON-compatible values. Mapping keys are strings, including
 unquoted numeric response statuses. Scalar values keep their YAML types:
 quote string values such as `version: "1"` and the type name in
 `type: [string, "null"]`.
+
+When `operationId` is absent, POM generates the exact uppercase method, one
+space, and the declared path: `GET /widgets/{id}`. Use that name in configured
+surface membership, query selections, and generated member access such as
+`operations['GET /widgets/{id}']`. Names depend only on method and path;
+reordering or adding unrelated operations never changes them. A collision with
+an explicit ID receives the existing duplicate-ID diagnostic. Explicit IDs must
+still be nonempty strings; null and empty values do not request a generated name.
 
 Operation IDs preserve their exact, case-sensitive strings in operation maps,
 executable clients, query selections and cache keys. Use bracket access for IDs
