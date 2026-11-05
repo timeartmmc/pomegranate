@@ -185,12 +185,19 @@ mapped rejection with its cancellation result.
 ## Choose cache storage once per operation
 
 Factories store exact-status success envelopes by default. For an operation whose
-every declared success has a JSON body, `.body()` creates a factory that stores
-only the validated API body. Any bodyless success makes body mode unavailable in
+every declared success has a JSON or text body, `.body()` creates a factory that
+stores only the validated API body. Envelope results retain the validated `contentType`
+and its data correlation; body-only storage retains the payload union without
+that discriminator. Any bodyless success makes body mode unavailable in
 types and rejects JavaScript selection before transport. JSON `null` is valid;
 successful `undefined` query data is never stored. All response and bound
 pagination checks finish before projection. Observer `select` only changes an
 observer's view, not the stored representation.
+
+When upgrading generated output that introduces response `contentType` metadata,
+rotate the application's cache namespace or migrate persisted envelope data.
+Response media types are not request-key inputs: the server's choice is known
+only after execution.
 
 Select and export the representation in one application query module, and have
 components and cache writers use that export:
@@ -294,8 +301,7 @@ Bind forward cursor pagination explicitly in configuration or `CompileOptions`:
 ```
 
 `listItems` must be a bodyless GET operation on the selected client. `after`
-must name an optional string or nullable string query parameter. Every declared 2xx
-response must have a fixed JSON object body with a required nullable string
+must name an optional string or nullable string query parameter. Every declared 2xx response representation must have a fixed JSON object body with a required nullable string
 `continuation` field and a required array `results` field. Component references
 are supported. Bindings name top-level fields; nested paths, tagged-union page
 objects, numeric cursors, backward pagination, and bodyless
@@ -397,7 +403,7 @@ binding instead of a cursor binding:
 The binding names the request query parameter and four distinct top-level response
 fields; names need not follow this example. The request offset must be a
 nonnullable integer parameter whose constraints accept `0`; it may be required.
-Every declared 2xx response must have a fixed JSON object body with the bound
+Every declared representation of each 2xx response must have a fixed JSON object body with the bound
 fields required: integer offset, limit and total, and an array of items.
 Component references are supported. Nested fields and mixed cursor/offset
 bindings receive diagnostics.

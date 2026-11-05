@@ -51,7 +51,7 @@ Every operation on the surface has `call(args)` and `isError(error)`, including
 POST, PUT, PATCH, DELETE, HEAD and OPTIONS. Required path, query, header and body
 inputs retain their builder types; when all generated fields are optional,
 `call({ context })` may omit `input`. An
-[optional JSON body](REFERENCE.md#build-and-validate-a-request) does not relax
+[optional request body](REFERENCE.md#build-and-validate-a-request) does not relax
 other required inputs. Calls return promises. Invalid requests reject before the
 executor runs. Successes retain the exact declared 2xx status, raw normalized headers,
 validated declared headers and schema-validated data. Bodyless success has an own
@@ -65,24 +65,32 @@ augmentation does not add runtime operations.
 ## One application executor
 
 Client entries export `Executor`, `Execution`, `ExecutionContext` and `ClientConfig`. An
-`Executor` accepts a `PreparedRequest` with body kind `none`, `json` or `multipart`
-and a frozen `{ signal, context, validateResponse }` execution object. It can return raw
+`Executor` accepts a `PreparedRequest` with body kind `none`, `json`, `text` or
+`multipart` and a frozen `{ signal, context, validateResponse }` execution object.
+It can return raw
 `{ status, headers, body }` evidence, with numeric status, a plain string header
 record, and body text, or an inspection handle from `validateResponse`. It may reject
 with an application error. Raw executors can ignore the callback.
 
 The application resolves the API origin, credentials and declared policy labels,
 validates merged headers with `request.validateHeaders`, serializes the prepared
-body and forwards the signal to its transport. POM invokes this executor once;
-the executor owns recovery, retries, deadlines, locale and session fencing. A
+body and forwards the signal to its transport. JSON and text requests expose
+`request.contentType` for the transport's Content-Type header; send text bodies
+directly and serialize JSON bodies with `JSON.stringify`. POM invokes this
+executor once; the executor owns recovery, retries, deadlines, locale and session
+fencing. A
 broad executor can serve direct calls, ordinary queries and both infinite query
 profiles without casts. `QueryExecutor` accepts only bodyless requests and is
 sufficient for query-only integrations. For adapters shared across generated
 documents with different policy vocabularies, declare the supported
 [policy type](REFERENCE.md#operation-policy) explicitly.
 
-For raw execution, read the final body once and return its evidence. POM parses JSON
-and applies the exact-status response schema once after the executor returns.
+For raw execution, read the final body once and return its evidence. POM parses
+JSON when selected and validates text as a string. It applies the exact-status
+response schema once after the executor returns. When a status declares several
+media types, the observed Content-Type selects the decoder and schema; the
+returned `contentType` identifies the validated representation and narrows its
+`data` type. Bodyless results use `contentType: undefined`.
 The JSON example's `createExecutor` shows this boundary and forwards
 cancellation. Its parsed `execute` helper uses the same raw path. Returning domain
 data or reconstructing status and headers from a discarded parsed success is

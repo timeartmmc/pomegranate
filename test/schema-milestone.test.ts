@@ -323,11 +323,11 @@ for (const [name, mutate, pattern] of [
     /pattern.*valid Unicode/,
   ],
   [
-    'unknown format',
+    'malformed format',
     (d) => {
-      Object.assign(d.components.schemas.Label, { format: 'custom' });
+      Object.assign(d.components.schemas.Label, { format: false });
     },
-    /unsupported format/,
+    /format.*expected a string/,
   ],
   [
     'nonpositive multiple',

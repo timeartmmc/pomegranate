@@ -71,7 +71,7 @@ async function executeRaw(
       ...request.headers,
       ...authHeaders,
       ...(request.bodyKind === 'json'
-        ? { 'Content-Type': 'application/json' }
+        ? { 'Content-Type': request.contentType }
         : {}),
     }),
     ...(request.bodyKind === 'json'

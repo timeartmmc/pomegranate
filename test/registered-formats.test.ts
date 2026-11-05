@@ -21,7 +21,8 @@ import {
   registeredFormatsConsumer,
   verifyRegisteredFormats,
 } from './registered-formats-fixture.ts';
-import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
+import type { MediaClient } from './media-fixture.ts';
+import type { StandaloneModule } from './runtime-types.ts';
 
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -29,16 +30,21 @@ const tsc = fileURLToPath(
   new URL('../node_modules/typescript/bin/tsc', import.meta.url),
 );
 
-void test('registered formats preserve JSON, YAML and source/config immutability while emitting only reachable rules', async () => {
+void test('registered formats preserve JSON, YAML, dialect and source/config immutability while emitting only reachable rules', async () => {
   const expected = await compile(fixture(), selection);
-  const document = fixture();
-  const before = structuredClone({ document, selection });
-  assert.deepEqual(await compile(document, selection), expected);
-  assert.deepEqual(
-    await compile(parseYaml(stringify(document), 'registered.yaml'), selection),
-    expected,
-  );
-  assert.deepEqual({ document, selection }, before);
+  for (const modern of [true, false]) {
+    const document = fixture(modern);
+    const before = structuredClone({ document, selection });
+    assert.deepEqual(await compile(document, selection), expected);
+    assert.deepEqual(
+      await compile(
+        parseYaml(stringify(document), 'registered.yaml'),
+        selection,
+      ),
+      expected,
+    );
+    assert.deepEqual({ document, selection }, before);
+  }
   const projected = fixture();
   Reflect.deleteProperty(projected.components.schemas, 'Unused');
   assert.deepEqual(
@@ -50,7 +56,7 @@ void test('registered formats preserve JSON, YAML and source/config immutability
   );
 });
 
-void test('registered validators intersect format/schema patterns across runtime, directions, enums and generated types', async (t) => {
+void test('registered validators intersect format/schema patterns across runtime, directions, enums, text and generated types', async (t) => {
   const root = await generatedTestWorkspace(
     t,
     await compile(fixture(), selection),
@@ -58,7 +64,7 @@ void test('registered validators intersect format/schema patterns across runtime
   const standalone = (name: string) =>
     importGenerated<StandaloneModule>(root, `standalone.${name}.ts`);
   verifyRegisteredFormats(
-    await importGenerated<RuntimeClient>(root, 'client.consumer.ts'),
+    await importGenerated<MediaClient>(root, 'client.consumer.ts'),
     await standalone('slug'),
     await standalone('input'),
     await standalone('output'),
@@ -85,6 +91,53 @@ void test('registered validators intersect format/schema patterns across runtime
     }),
   );
   await exec(process.execPath, [tsc, '-p', join(root, 'tsconfig.json')]);
+});
+
+void test('shared YAML schema aliases retain registered assertions in every schema context', async (t) => {
+  const document = parseYaml(
+    `
+openapi: 3.0.4
+info: {title: Registered YAML aliases, version: '1'}
+paths: {}
+components:
+  schemas:
+    Shared: &slug {type: string, format: slug, nullable: true}
+    Value:
+      type: object
+      required: [a, b]
+      properties:
+        a: *slug
+        b: {type: array, items: *slug}
+      example: *slug
+`,
+    'shared-registered.yaml',
+  );
+  const options = {
+    clients: [],
+    formats: { slug: registeredFormats.slug },
+    standalone: {
+      value: {
+        schema: '#/components/schemas/Value',
+        usage: 'request' as const,
+      },
+    },
+  };
+  const before = JSON.stringify(document);
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(document, options),
+  );
+  assert.equal(JSON.stringify(document), before);
+  const { schema } = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.value.ts',
+  );
+  assert.deepEqual(schema.parse({ a: null, b: ['ready', null] }), {
+    a: null,
+    b: ['ready', null],
+  });
+  assert.equal(schema.safeParse({ a: 'INVALID', b: ['ready'] }).success, false);
+  assert.equal(schema.safeParse({ a: null, b: ['INVALID'] }).success, false);
 });
 
 function scalarDocument(schema: object) {
@@ -213,6 +266,12 @@ void test('registered formats reject wrong schema types and invalid enums while 
   assert.equal(schema.parse('x-1'), 'x-1');
   for (const value of ['other', 'x_1'])
     assert.equal(schema.safeParse(value).success, false);
+  input.openapi = '3.0.4';
+  await assert.rejects(compile(input, options), (error) => {
+    assert.ok(error instanceof ContractError);
+    assert.equal(error.location, 'components.schemas.Value.pattern');
+    return true;
+  });
 });
 
 void test('registered Unicode-property formats keep literal matching at runtime', async (t) => {
@@ -282,7 +341,7 @@ void test('JSON CLI registry matches library output and invalid definitions pres
   const input = join(root, 'openapi.yaml');
   const config = join(root, 'pom.json');
   const output = join(root, 'generated');
-  const source = stringify(fixture());
+  const source = stringify(fixture(false));
   await writeFile(input, source);
   const configuration = {
     version: 2,
@@ -293,7 +352,7 @@ void test('JSON CLI registry matches library output and invalid definitions pres
   await writeFile(config, JSON.stringify(configuration));
   await exec(process.execPath, [cli, 'generate', '--config', config]);
   await exec(process.execPath, [cli, 'check', '--config', config]);
-  const expected = await compile(fixture(), selection);
+  const expected = await compile(fixture(false), selection);
   for (const [name, contents] of Object.entries(expected))
     assert.equal(await readFile(join(output, name), 'utf8'), contents);
   const before = await fileSnapshot(output);

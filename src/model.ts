@@ -119,7 +119,15 @@ export type ContractResponse = {
   readonly status: number;
   readonly body:
     | { readonly kind: 'none' }
-    | { readonly kind: 'json'; readonly schema: Schema };
+    | {
+        readonly kind: 'content';
+        readonly content: Readonly<
+          Record<
+            string,
+            { readonly kind: 'json' | 'text'; readonly schema: Schema }
+          >
+        >;
+      };
   readonly headers: readonly ResponseHeader[];
 };
 
@@ -141,7 +149,8 @@ export type Operation = {
   readonly body:
     | { readonly kind: 'none' }
     | {
-        readonly kind: 'json';
+        readonly kind: 'json' | 'text';
+        readonly contentType: string;
         readonly schema: Schema;
         readonly required: boolean;
       }

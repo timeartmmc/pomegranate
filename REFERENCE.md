@@ -47,13 +47,13 @@ Unknown configuration keys fail validation. Optional output selections are
 disabled when omitted. `CompileOptions` accepts these keys without `version`,
 `openapi`, or `output`.
 
-`ignoreExtensions` lists exact, case-sensitive `x-…` keyword names to ignore,
-for example `"ignoreExtensions": ["x-generator-note"]`. Use it only for metadata
-that does not affect the API contract. Unlisted extensions fail, including in
-unselected operations and unused components. Empty or omitted lists ignore
-nothing. Wildcards, duplicate names, `x-pom`, and `x-pom-policy` are rejected.
-The `x-multi-segment` keyword changes path semantics and remains unsupported,
-even when listed.
+Unrelated `x-…` extension keywords require an explicit `ignoreExtensions` list,
+for example `"ignoreExtensions": ["x-generator-note"]`. Unlisted extensions
+fail, including in unselected operations and unused components. The list accepts
+exact, unique names; wildcards and reserved POM names are rejected. Empty or
+omitted lists ignore nothing. POM metadata (`x-pom`, `x-pom-policy`) remains
+validated. The known semantic extension `x-multi-segment` changes path behavior
+and always receives a diagnostic, even when listed.
 
 Filtering applies at supported OpenAPI keyword locations. It preserves
 same-named schema properties, components, headers, named examples, and server
@@ -262,8 +262,8 @@ For a non-HTTP payload, add an explicit root to configuration:
 ```
 
 This emits `standalone.message.ts` with `schema`, `Input`, and `Output` exports
-and all transitive schema dependencies. Request roots reject unknown fields;
-response roots strip them. `clients` may be empty when at
+and all transitive schema dependencies. Fixed request objects reject unknown fields;
+fixed response objects strip them. Defaults are documentation in both directions. `clients` may be empty when at
 least one standalone root is selected. The complete input still receives
 validation, including operations excluded from output.
 
@@ -274,7 +274,7 @@ validation, including operations excluded from output.
 | Input       | Local OpenAPI 3.0.x or 3.1.x JSON or YAML 1.2 with any patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                          |
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; whole-segment path placeholders                                                                                                                                                                                                              |
 | Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; string and optional nullable string request headers; simple path/header and form query serialization |
-| Bodies      | Required or optional JSON bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON or bodyless responses; string response headers; local component references and aliases                                                                                                                        |
+| Bodies      | Required or optional JSON/text bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON, text, or bodyless responses; string response headers; local component references and aliases                                                                                                            |
 | Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; acyclic local component references; restricted unions and maps described below                                                            |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                  |
 | Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, and `ipv6`; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                                                             |
@@ -310,6 +310,46 @@ equivalent contracts produce identical output. See the
 [3.0 schema specification](https://spec.openapis.org/oas/v3.0.4.html#schema-object)
 and [3.1 migration guide](https://learn.openapis.org/upgrading/v3.0-to-v3.1.html).
 OpenAPI 2.0 and 3.2 are unsupported.
+
+Request and response content supports `application/json`, concrete media types
+with a `+json` suffix, and `text/plain`; requests also support multipart as below.
+One representation is selected for each request. Request preference
+is `application/json`, then other `+json` types sorted by their lowercase names,
+then `text/plain`, then multipart. Request selection is independent of
+declaration order. All declarations still receive validation, including nonpreferred request entries;
+unsupported media types and schemas still fail compilation.
+The multipart requiredness restriction applies only when multipart is selected;
+an optional JSON or text request may also declare a valid multipart alternative.
+
+Content-map keys must be concrete media types without parameters or wildcards.
+Case-insensitive duplicates fail. JSON suffixes select JSON decoding, but do not
+make different media types interchangeable. Responses retain every supported
+declaration for each exact status. The observed Content-Type selects its declared
+schema and one JSON or text decoder. Valid parameters such as `charset=utf-8`
+are accepted when matching that media type. Missing, malformed, duplicate or
+undeclared Content-Type produces a protocol failure without decoding or trying
+another schema; there is no body sniffing or fallback. Applications own Accept
+negotiation. Unsupported media declarations still fail compilation.
+
+Successful and declared-error results expose `contentType`, the validated
+lowercase media type without parameters. It is a literal discriminator tied to
+`data`; checking it narrows the corresponding generated body type. Bodyless
+results have `contentType: undefined` and `data: undefined`. Original observed
+header values remain available in `headers`. All representation schemas enter
+the selected client's transitive projection.
+
+`text/plain` requires a nonnullable string schema, including supported constraints
+and local references. Text is passed through without JSON quoting or parsing;
+empty strings and line breaks remain data. Transports own byte encoding/decoding.
+POM receives already-decoded JavaScript text; matching a Content-Type parameter
+does not decode bytes or validate the declared charset. Decode response bytes
+according to the endpoint's charset before calling `parseResponse`.
+[Fetch `Response.text()`](https://fetch.spec.whatwg.org/#dom-body-text) always
+decodes as UTF-8; other encodings need `arrayBuffer()` and an appropriate decoder.
+For text requests, send a Content-Type charset consistent with the encoded bytes.
+Text requests reject isolated UTF-16 surrogates because transport encoding would
+replace them after validation. Form-encoded bodies and binary downloads remain
+unsupported.
 
 JSON inputs and configuration accept one leading UTF-8 byte-order mark and
 reject duplicate decoded object keys. YAML files use a single YAML 1.2 core
@@ -364,7 +404,7 @@ generated files:
 | `info.contact`, `info.termsOfService`                                  | Contact has optional string `name`, `url` and `email`; terms of service is a string         |
 | Document, tags, operations, schemas (3.1 also permits `$ref` siblings) | `externalDocs` with required string `url` and optional string `description`                 |
 | Schemas (3.1 also permits `$ref` siblings)                             | `example` as a JSON value; 3.1 also accepts string `$comment` and an `examples` array       |
-| Parameters, response headers, JSON/multipart media types               | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive   |
+| Parameters, response headers, supported media types                    | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive   |
 | Operations, parameters, response headers, schemas                      | Boolean `deprecated`; deprecated declarations remain generated                              |
 
 Example Objects accept string `summary` and `description`, and a JSON `value` or
@@ -380,12 +420,6 @@ expressions, URI syntax or contact email syntax, and never fetches documentation
 server or license URLs or external example values. Unsupported standard keywords
 remain rejected. Unrelated `x-…` extension keywords require an explicit
 [`ignoreExtensions`](#configuration) entry.
-
-An empty Schema Object (`{}`), or one containing only supported annotations,
-accepts any JSON value: null, booleans, finite numbers, strings, arrays and
-objects. Generated types use `JsonValue`; validators reject non-JSON values
-and return detached copies while preserving payload keys. `{ type: "object" }`
-still accepts objects only. Other implicit types remain unsupported.
 
 Supported schema composition is deliberately limited:
 
@@ -484,6 +518,14 @@ Formats must be built in or explicitly registered. Unknown or misspelled names
 receive a diagnostic; a non-string `format` value also fails. Recognized numeric
 and binary formats keep their existing type/usage restrictions.
 
+An empty schema `{}`, or a schema containing only supported annotations, accepts
+any JSON value. Generated types use the recursive `JsonValue` type. Validation
+returns detached JSON copies and rejects undefined, non-finite numbers, bigints,
+functions, sparse arrays, class instances, and cycles. An explicit
+`type: "object"` still requires an object; untyped assertions such as
+`{ "minimum": 1 }` remain unsupported. References to unconstrained JSON cannot
+add constraints that POM cannot represent.
+
 Patterns use ECMAScript 2024 syntax in Unicode (`u`) mode with Unicode 16.0
 property names, matching the supported Node minimums. Newer syntax, including
 inline flag modifiers and duplicate named capture groups, and newer Unicode
@@ -542,10 +584,10 @@ Use `pattern` to restrict schemes or impose a narrower application profile.
 
 Both formats preserve the original string, including case and percent spelling;
 neither resolves, decodes or normalizes values. `idn-email`, `iri`, and
-`uri-reference` remain unsupported. Documentation URLs and contact emails remain
+`uri-reference` have no built-in validator and require an explicit definition to be used. Documentation URLs and contact emails remain
 shape-checked annotations, independent of schema format assertions.
 
-Declared formats are enforced on requests and responses. A response string that
+Recognized formats are enforced on requests and responses. A response string that
 violates its format produces a protocol failure, just like a wrong type or an
 invalid date. For example, a bare hostname does not satisfy `format: "uri"`;
 schemas for such values should use a string without that format assertion.
@@ -570,8 +612,9 @@ Path and query names/values must contain well-formed Unicode. Header values use
 HTTP byte characters, permit internal horizontal tabs, and reject other ASCII
 controls or leading/trailing SP/HTAB so transport serialization preserves them.
 Header names must be ASCII HTTP tokens. Declarations reserve `__proto__`,
-`prototype`, and `constructor` regardless of casing. JSON responses require a single
-valid `application/json` Content-Type value; quoted parameters are supported.
+`prototype`, and `constructor` regardless of casing. Responses with content require a single
+valid Content-Type matching a declared media type for that status; quoted
+parameters are supported.
 
 Fixed schema property and parameter names that belong to `Object.prototype`,
 such as `toString`, `valueOf`, or `hasOwnProperty`, are unsupported. These names are legal
@@ -580,15 +623,15 @@ runtime omission behavior. Dynamic maps preserve their own JSON keys, including
 `__proto__` and `constructor`.
 
 Unsupported semantics stop generation with a location-specific diagnostic before
-outputs change. For example, adding `format: "idn-email"` to the example's
+outputs change. For example, adding `format: 17` to the example's
 `components.schemas.WidgetId` produces:
 
 ```text
-POM: components.schemas.WidgetId.format: unsupported format; expected date, date-time, uuid, email, uri, ipv4 or ipv6
+POM: components.schemas.WidgetId.format: expected a string
 ```
 
 External or recursive references, general unions and other type arrays, objects
-mixing fixed properties with dynamic entries, other formats,
+mixing fixed properties with dynamic entries,
 optional multipart request bodies, status ranges/default
 responses, non-bearer security schemes and external security-scheme references
 remain unsupported.
@@ -615,11 +658,11 @@ including unused entries. Missing targets, cycles, and external references fail
 with diagnostics.
 
 Request body components keep the declared `required` flag, media type, and
-schema. [Optional JSON bodies](#build-and-validate-a-request) and
+schema. [Optional JSON and text bodies](#build-and-validate-a-request) and
 [multipart bodies](#multipart-requests) follow the same rules as inline bodies.
 GET and HEAD request bodies remain unsupported, including through references.
 
-Response components require a string `description` and may declare JSON content
+Response components require a string `description` and may declare JSON or text content
 and response headers using the same rules as inline responses. Each operation
 binds the resolved body and headers to its declared exact status. HEAD responses
 and statuses 204, 205, and 304 must be bodyless, including through references.
@@ -706,7 +749,7 @@ application serializes that body, adds transport headers, validates the merged h
 `request.validateHeaders(headers)`, sends the request, and supplies response status,
 headers, and raw body text to `parseResponse`.
 
-JSON request bodies are optional when `requestBody.required` is omitted or
+JSON and text request bodies are optional when `requestBody.required` is omitted or
 `false`. The generated `body` input is optional; the whole options argument is
 optional only when no other generated input is required. Omitting `body` or
 supplying `undefined` prepares `bodyKind: 'none'` without a `body` property.
@@ -715,10 +758,13 @@ valid `false`, `0`, empty strings and empty objects also remain JSON data.
 Optional bodies retain their schemas, constraints and directional validation
 when present. Defaults remain annotations and never create an omitted body.
 
-An optional JSON operation returns a request with `bodyKind: 'none' | 'json'`.
-Narrow by `bodyKind` before reading `body`. Applications serialize JSON and add
-its Content-Type only for the `json` branch; the example transport already does
-this. Required JSON bodies and multipart bodies retain their required inputs.
+An optional JSON operation returns `bodyKind: 'none' | 'json'`; optional text
+returns `'none' | 'text'`. Narrow by `bodyKind` before reading `body` or
+`contentType`. Present JSON/text requests expose the selected `contentType`.
+Applications JSON-encode the `json` branch, send the `text` branch as its raw
+string, and set Content-Type from `request.contentType`. Omitted bodies expose
+neither field. Required JSON/text bodies and multipart bodies retain their
+required inputs.
 Optional multipart and all GET/HEAD request bodies remain unsupported. Response
 validation is independent of whether a request body was sent.
 

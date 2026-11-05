@@ -24,16 +24,18 @@ import {
 import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 import type { Schema } from './schema-helpers.ts';
 
-void test('numeric wire profiles preserve YAML bytes and source inputs', async () => {
+void test('numeric wire profiles preserve dialect/YAML bytes and source inputs', async () => {
   const expected = await compile(fixture(), selection);
-  const document = fixture();
-  const before = structuredClone(document);
-  assert.deepEqual(await compile(document, selection), expected);
-  assert.deepEqual(
-    await compile(parseYaml(stringify(document), 'profiles.yaml'), selection),
-    expected,
-  );
-  assert.deepEqual(document, before);
+  for (const modern of [true, false]) {
+    const document = fixture(modern);
+    const before = structuredClone(document);
+    assert.deepEqual(await compile(document, selection), expected);
+    assert.deepEqual(
+      await compile(parseYaml(stringify(document), 'profiles.yaml'), selection),
+      expected,
+    );
+    assert.deepEqual(document, before);
+  }
 });
 
 void test('string int64 and numeric float/double profiles validate their wire values and generated types', async (t) => {

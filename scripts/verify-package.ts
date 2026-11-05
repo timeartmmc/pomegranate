@@ -72,6 +72,36 @@ import {
   queryCsvConsumer,
 } from '../test/query-csv-fixture.ts';
 import {
+  openapi30Fixture,
+  openapi30Selection,
+  openapi30Consumer,
+} from '../test/openapi30-fixture.ts';
+import {
+  toleranceFixture,
+  toleranceSelection,
+  toleranceConsumer,
+} from '../test/tolerance-fixture.ts';
+import {
+  anyJsonFixture,
+  anyJsonSelection,
+  anyJsonConsumer,
+} from '../test/any-json-fixture.ts';
+import {
+  mediaFixture,
+  mediaSelection,
+  mediaConsumer,
+} from '../test/media-fixture.ts';
+import {
+  registeredFormatsFixture,
+  registeredFormatsSelection,
+  registeredFormatsConsumer,
+} from '../test/registered-formats-fixture.ts';
+import {
+  numericFormatProfilesFixture,
+  numericFormatProfilesSelection,
+  numericFormatProfilesConsumer,
+} from '../test/numeric-format-profiles-fixture.ts';
+import {
   operationIdsFixture,
   operationIdsSelection,
   operationIdsTypeConsumer,
@@ -216,6 +246,12 @@ try {
     'ip-comment-fixture.ts',
     'property-count-fixture.ts',
     'query-csv-fixture.ts',
+    'openapi30-fixture.ts',
+    'tolerance-fixture.ts',
+    'any-json-fixture.ts',
+    'media-fixture.ts',
+    'registered-formats-fixture.ts',
+    'numeric-format-profiles-fixture.ts',
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
     'symbol-fixture.ts',
@@ -360,6 +396,12 @@ try {
     'ip-comment-generated/*.ts',
     'property-count-generated/*.ts',
     'query-csv-generated/*.ts',
+    'openapi30-generated/*.ts',
+    'tolerance-generated/*.ts',
+    'any-json-generated/*.ts',
+    'media-generated/*.ts',
+    'registered-formats-generated/*.ts',
+    'numeric-format-profiles-generated/*.ts',
     'extension-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
@@ -585,6 +627,22 @@ try {
       propertyCountConsumer,
     ],
     ['query-csv', queryCsvFixture(), queryCsvSelection, queryCsvConsumer],
+    ['openapi30', openapi30Fixture(), openapi30Selection, openapi30Consumer],
+    ['tolerance', toleranceFixture(), toleranceSelection, toleranceConsumer],
+    ['any-json', anyJsonFixture(), anyJsonSelection, anyJsonConsumer],
+    ['media', mediaFixture(), mediaSelection, mediaConsumer],
+    [
+      'registered-formats',
+      registeredFormatsFixture(),
+      registeredFormatsSelection,
+      registeredFormatsConsumer,
+    ],
+    [
+      'numeric-format-profiles',
+      numericFormatProfilesFixture(),
+      numericFormatProfilesSelection,
+      numericFormatProfilesConsumer,
+    ],
   ] as const) {
     await writeFile(
       join(consumer, `${name}-openapi.yaml`),
@@ -1066,7 +1124,27 @@ try {
     import assert from 'node:assert/strict';
     import * as pom from 'pomegranate-compiler';
     import {mkdir, readFile, writeFile} from 'node:fs/promises';
+    import {openapi30Fixture,openapi30Selection} from './verification/openapi30-fixture.ts';
+    import {toleranceFixture,toleranceSelection} from './verification/tolerance-fixture.ts';
+    import {registeredFormatsFixture,registeredFormatsSelection} from './verification/registered-formats-fixture.ts';
+    import {numericFormatProfilesFixture,numericFormatProfilesSelection} from './verification/numeric-format-profiles-fixture.ts';
     assert.deepEqual(Object.keys(pom).sort(), ['ContractError', 'compile', 'runProject']);
+    const openapi30Document=openapi30Fixture();
+    const openapi30Before=structuredClone(openapi30Document);
+    assert.deepEqual(await pom.compile(openapi30Document,openapi30Selection),await pom.compile(openapi30Fixture(true),openapi30Selection));
+    assert.deepEqual(openapi30Document,openapi30Before);
+    const toleranceDocument=toleranceFixture();
+    const toleranceBefore=structuredClone(toleranceDocument);
+    assert.deepEqual(await pom.compile(toleranceDocument,toleranceSelection),await pom.compile(toleranceFixture(false),toleranceSelection));
+    assert.deepEqual(toleranceDocument,toleranceBefore);
+    const registeredDocument=registeredFormatsFixture();
+    const registeredBefore=structuredClone(registeredDocument);
+    assert.deepEqual(await pom.compile(registeredDocument,registeredFormatsSelection),await pom.compile(registeredFormatsFixture(false),registeredFormatsSelection));
+    assert.deepEqual(registeredDocument,registeredBefore);
+    const numericDocument=numericFormatProfilesFixture();
+    const numericBefore=structuredClone(numericDocument);
+    assert.deepEqual(await pom.compile(numericDocument,numericFormatProfilesSelection),await pom.compile(numericFormatProfilesFixture(false),numericFormatProfilesSelection));
+    assert.deepEqual(numericDocument,numericBefore);
     const document=JSON.parse(await readFile('./openapi.json', 'utf8'));
     const baseline=JSON.parse(await readFile('./openapi-baseline.json', 'utf8'));
     const before=structuredClone(document);
@@ -1350,6 +1428,92 @@ try {
     consumer,
     join(consumer, 'node_modules/typescript/bin/tsc'),
   );
+  await writeFile(
+    join(consumer, 'media-declarations.json'),
+    JSON.stringify({
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        strict: true,
+        declaration: true,
+        emitDeclarationOnly: true,
+        rewriteRelativeImportExtensions: true,
+        rootDir: './media-generated',
+        outDir: './media-declarations',
+      },
+      include: ['media-generated/*.ts'],
+    }),
+  );
+  await run(process.execPath, [
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+    '-p',
+    join(consumer, 'media-declarations.json'),
+  ]);
+  await writeFile(
+    join(consumer, 'media-published.ts'),
+    `
+    import {parsePreferred} from './media-declarations/consumer.js';
+    const result=parsePreferred({status:200,headers:{},body:''});
+    if(result.kind!=='protocol' && result.status===200) {
+      if(result.contentType==='application/vnd.alpha+json') {
+        const flag:true=result.data;
+        // @ts-expect-error Published media discrimination excludes other JSON payloads.
+        void result.data.code;
+        void flag;
+      } else if(result.contentType==='application/json') {
+        const code:'ok'=result.data.code; void code;
+      }
+    }
+  `,
+  );
+  await writeFile(
+    join(consumer, 'media-published.json'),
+    JSON.stringify({
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        strict: true,
+        noEmit: true,
+      },
+      include: ['media-published.ts', 'media-declarations/*.d.ts'],
+    }),
+  );
+  await run(process.execPath, [
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+    '-p',
+    join(consumer, 'media-published.json'),
+  ]);
+  const mediaExecutionChecks = `
+    for(const scoped of [false,true]) {
+      let observed;
+      const execute=async (_request,execution)=>scoped?execution.validateResponse(observed):observed;
+      const config={namespace:'installed-media-'+scoped,execute};
+      const api=mediaClient.createClient(config);
+      const query=mediaQueries.createQueries(config).readRepresentations;
+      const cache=new (await import('@tanstack/query-core')).QueryClient({defaultOptions:{queries:{gcTime:Infinity,retry:false}}});
+      try {
+        for(const [contentType,body,data] of [
+          ['application/json','{"code":"ok"}',{code:'ok'}],
+          ['application/vnd.alpha+json','true',true],
+          ['application/vnd.zeta+json','2',2],
+          ['text/plain','{"ok":true}','{"ok":true}'],
+        ]) {
+          observed={status:200,headers:{'Content-Type':contentType},body};
+          const called=await api.readRepresentations.call({context:{}});
+          assert.equal(called.contentType,contentType);
+          assert.deepEqual(called.data,data);
+          const envelope=await cache.fetchQuery(query.options({context:{}}));
+          assert.equal(envelope.contentType,contentType);
+          assert.deepEqual(envelope.data,data);
+          assert.deepEqual(await cache.fetchQuery(query.body().options({context:{}})),data);
+        }
+        observed={status:400,headers:{'Content-Type':'text/plain'},body:'hello'};
+        await assert.rejects(api.readRepresentations.call({context:{}}),error=>api.readRepresentations.isError(error)&&error.result.kind==='error'&&error.result.contentType==='text/plain'&&error.result.data==='hello');
+      } finally {cache.clear();}
+    }
+  `;
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
@@ -1380,6 +1544,36 @@ try {
     import * as queryCsvClient from './query-csv-generated/client.consumer.ts';
     import {verifyQueryCsv} from './verification/query-csv-fixture.ts';
     verifyQueryCsv(queryCsvClient);
+    import * as openapi30Client from './openapi30-generated/client.consumer.ts';
+    import * as openapi30Request from './openapi30-generated/standalone.request.ts';
+    import * as openapi30Response from './openapi30-generated/standalone.response.ts';
+    import {verifyOpenapi30} from './verification/openapi30-fixture.ts';
+    verifyOpenapi30(openapi30Client, openapi30Request, openapi30Response);
+    import * as toleranceClient from './tolerance-generated/client.consumer.ts';
+    import * as toleranceInt64 from './tolerance-generated/standalone.int64.ts';
+    import {verifyTolerance} from './verification/tolerance-fixture.ts';
+    verifyTolerance(toleranceClient, toleranceInt64);
+    import * as anyJsonClient from './any-json-generated/client.json.ts';
+    import * as anyJsonInput from './any-json-generated/standalone.input.ts';
+    import * as anyJsonOutput from './any-json-generated/standalone.output.ts';
+    import {verifyAnyJson} from './verification/any-json-fixture.ts';
+    verifyAnyJson(anyJsonClient, anyJsonInput, anyJsonOutput);
+    import * as mediaClient from './media-generated/client.consumer.ts';
+    import * as mediaQueries from './media-generated/client.consumer.queries.ts';
+    import {verifyMedia} from './verification/media-fixture.ts';
+    verifyMedia(mediaClient);
+    ${mediaExecutionChecks}
+    import * as registeredFormatsClient from './registered-formats-generated/client.consumer.ts';
+    import * as registeredSlug from './registered-formats-generated/standalone.slug.ts';
+    import * as registeredInput from './registered-formats-generated/standalone.input.ts';
+    import * as registeredOutput from './registered-formats-generated/standalone.output.ts';
+    import {verifyRegisteredFormats} from './verification/registered-formats-fixture.ts';
+    verifyRegisteredFormats(registeredFormatsClient, registeredSlug, registeredInput, registeredOutput);
+    import * as numericProfilesClient from './numeric-format-profiles-generated/client.consumer.ts';
+    import * as numericDecimal from './numeric-format-profiles-generated/standalone.decimal.ts';
+    import * as numericSingle from './numeric-format-profiles-generated/standalone.single.ts';
+    import {verifyNumericFormatProfiles} from './verification/numeric-format-profiles-fixture.ts';
+    verifyNumericFormatProfiles(numericProfilesClient, numericDecimal, numericSingle);
     import * as directionalClient from './directional-generated/client.consumer.ts';
     import * as operationIdsClient from './operation-ids-generated/client.consumer.ts';
     import * as operationIdsQueries from './operation-ids-generated/client.consumer.queries.ts';
@@ -1495,6 +1689,36 @@ try {
     import * as queryCsvClient from './.build/query-csv-generated/client.consumer.js';
     import {verifyQueryCsv} from './verification/query-csv-fixture.ts';
     verifyQueryCsv(queryCsvClient);
+    import * as openapi30Client from './.build/openapi30-generated/client.consumer.js';
+    import * as openapi30Request from './.build/openapi30-generated/standalone.request.js';
+    import * as openapi30Response from './.build/openapi30-generated/standalone.response.js';
+    import {verifyOpenapi30} from './verification/openapi30-fixture.ts';
+    verifyOpenapi30(openapi30Client, openapi30Request, openapi30Response);
+    import * as toleranceClient from './.build/tolerance-generated/client.consumer.js';
+    import * as toleranceInt64 from './.build/tolerance-generated/standalone.int64.js';
+    import {verifyTolerance} from './verification/tolerance-fixture.ts';
+    verifyTolerance(toleranceClient, toleranceInt64);
+    import * as anyJsonClient from './.build/any-json-generated/client.json.js';
+    import * as anyJsonInput from './.build/any-json-generated/standalone.input.js';
+    import * as anyJsonOutput from './.build/any-json-generated/standalone.output.js';
+    import {verifyAnyJson} from './verification/any-json-fixture.ts';
+    verifyAnyJson(anyJsonClient, anyJsonInput, anyJsonOutput);
+    import * as mediaClient from './.build/media-generated/client.consumer.js';
+    import * as mediaQueries from './.build/media-generated/client.consumer.queries.js';
+    import {verifyMedia} from './verification/media-fixture.ts';
+    verifyMedia(mediaClient);
+    ${mediaExecutionChecks}
+    import * as registeredFormatsClient from './.build/registered-formats-generated/client.consumer.js';
+    import * as registeredSlug from './.build/registered-formats-generated/standalone.slug.js';
+    import * as registeredInput from './.build/registered-formats-generated/standalone.input.js';
+    import * as registeredOutput from './.build/registered-formats-generated/standalone.output.js';
+    import {verifyRegisteredFormats} from './verification/registered-formats-fixture.ts';
+    verifyRegisteredFormats(registeredFormatsClient, registeredSlug, registeredInput, registeredOutput);
+    import * as numericProfilesClient from './.build/numeric-format-profiles-generated/client.consumer.js';
+    import * as numericDecimal from './.build/numeric-format-profiles-generated/standalone.decimal.js';
+    import * as numericSingle from './.build/numeric-format-profiles-generated/standalone.single.js';
+    import {verifyNumericFormatProfiles} from './verification/numeric-format-profiles-fixture.ts';
+    verifyNumericFormatProfiles(numericProfilesClient, numericDecimal, numericSingle);
     import * as directionalClient from './.build/directional-generated/client.consumer.js';
     import * as operationIdsClient from './.build/operation-ids-generated/client.consumer.js';
     import * as operationIdsQueries from './.build/operation-ids-generated/client.consumer.queries.js';

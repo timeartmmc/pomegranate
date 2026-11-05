@@ -421,8 +421,8 @@ void test('metadata never masks unsupported schema, policy or configuration sema
       /undeclared policy label/,
     ],
     [
-      (d) => Object.assign(d, { 'x-vendor': {} }),
-      /x-vendor.*unsupported keyword/,
+      (d) => Object.assign(d, { 'x-multi-segment': {} }),
+      /x-multi-segment.*unsupported semantic extension/,
     ],
   ] satisfies [(d: Fixture) => void, RegExp][]) {
     const document = annotateDocument(fixture());

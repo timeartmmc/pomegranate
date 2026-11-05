@@ -37,7 +37,7 @@ const ref = (name: string): Schema => ({
   $ref: `#/components/schemas/${name}`,
 });
 
-export function numericFormatProfilesFixture() {
+export function numericFormatProfilesFixture(modern = true) {
   const decimal: Schema = { type: 'string', format: 'int64' };
   const single: Schema = { type: 'number', format: 'float' };
   const schemas: Record<string, Schema> = {
@@ -47,11 +47,15 @@ export function numericFormatProfilesFixture() {
       ...decimal,
       enum: [minimumInt64String, maximumInt64String, '0001'],
     },
-    NullableDecimal: { ...decimal, type: ['string', 'null'] },
+    NullableDecimal: modern
+      ? { ...decimal, type: ['string', 'null'] }
+      : { ...decimal, nullable: true },
     Float: single,
     FloatAlias: ref('Float'),
     FloatEnum: { ...single, enum: [0.1, 3.4028235e38, -3.4028235e38] },
-    NullableFloat: { ...single, type: ['number', 'null'] },
+    NullableFloat: modern
+      ? { ...single, type: ['number', 'null'] }
+      : { ...single, nullable: true },
     Double: { type: 'number', format: 'double' },
   };
   const operation = (name: string, operationId: string) => ({
@@ -68,7 +72,7 @@ export function numericFormatProfilesFixture() {
     },
   });
   return {
-    openapi: '3.1.2',
+    openapi: modern ? '3.1.2' : '3.0.4',
     info: { title: 'Synthetic numeric wire profiles', version: '1' },
     components: { schemas },
     paths: {

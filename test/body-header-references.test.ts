@@ -285,26 +285,36 @@ void test('body/header references accept only string annotations and reject sema
 void test('unused body definitions eagerly retain requiredness, content, schema and request-direction validation', async () => {
   const cases: [Record<string, unknown>, string, RegExp][] = [
     [{ required: null, content: {} }, '.required', /expected a boolean/],
-    [{ content: {} }, '.content', /exactly one JSON or multipart/],
+    [{ content: {} }, '.content', /expected at least one supported media type/],
     [
-      { content: { 'text/plain': { schema: { type: 'string' } } } },
-      '.content.text/plain',
+      { content: { 'application/xml': { schema: { type: 'string' } } } },
+      '.content.application/xml',
       /unsupported keyword/,
     ],
     [
       { content: { 'application/json': {}, 'multipart/form-data': {} } },
-      '.content',
-      /exactly one JSON or multipart/,
+      '.content.application/json.schema',
+      /expected an object/,
     ],
     [
-      { content: { 'multipart/form-data': { schema: { type: 'object' } } } },
+      {
+        content: {
+          'multipart/form-data': {
+            schema: { type: 'object', additionalProperties: false },
+          },
+        },
+      },
       '.required',
       /optional multipart/,
     ],
     [
       {
         required: false,
-        content: { 'multipart/form-data': { schema: { type: 'object' } } },
+        content: {
+          'multipart/form-data': {
+            schema: { type: 'object', additionalProperties: false },
+          },
+        },
       },
       '.required',
       /optional multipart/,

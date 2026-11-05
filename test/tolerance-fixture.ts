@@ -3,14 +3,16 @@ import { present } from './assertions.ts';
 import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 import type { Schema } from './schema-helpers.ts';
 
-export function toleranceFixture() {
+export function toleranceFixture(modern = true) {
   const value: Schema = {
     type: 'integer',
     format: 'int64',
     default: 0,
     'x-vendor': { note: 'Retained only in the source contract' },
   };
-  const nullable: Schema = { type: ['integer', 'null'], format: 'int64' };
+  const nullable: Schema = modern
+    ? { type: ['integer', 'null'], format: 'int64' }
+    : { type: 'integer', nullable: true, format: 'int64' };
   const schemas: Record<string, Schema> = {
     Value: value,
     Payload: {
@@ -32,7 +34,7 @@ export function toleranceFixture() {
     'application/json': { schema: { $ref: `#/components/schemas/${name}` } },
   });
   return {
-    openapi: '3.1.2',
+    openapi: modern ? '3.1.2' : '3.0.4',
     info: {
       title: 'Synthetic defaults, explicit extensions and safe int64',
       version: '1',
@@ -42,7 +44,6 @@ export function toleranceFixture() {
     paths: {
       '/values': {
         post: {
-          operationId: 'POST /values',
           'x-vendor': { nullable: true, format: 'private' },
           requestBody: { required: true, content: content('Payload') },
           responses: {
@@ -52,7 +53,6 @@ export function toleranceFixture() {
       },
       '/value': {
         get: {
-          operationId: 'GET /value',
           parameters: [
             {
               name: 'amount',

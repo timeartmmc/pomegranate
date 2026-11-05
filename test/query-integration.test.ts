@@ -32,8 +32,10 @@ const item = defineOperation({
   responses: {
     200: {
       headers: {},
-      bodyKind: 'json',
-      schema: labelledAttributes,
+      bodyKind: 'content',
+      content: {
+        'application/json': { bodyKind: 'json', schema: labelledAttributes },
+      },
     },
   },
 });
@@ -245,7 +247,15 @@ void test('JSON null is cacheable while any bodyless success rejects body select
     options,
     parameters: [],
     headers: {},
-    responses: { 200: { bodyKind: 'json', headers: {}, schema: nullValue } },
+    responses: {
+      200: {
+        bodyKind: 'content',
+        headers: {},
+        content: {
+          'application/json': { bodyKind: 'json', schema: nullValue },
+        },
+      },
+    },
   });
   const factory = defineQuery({
     operation,
@@ -277,7 +287,13 @@ void test('JSON null is cacheable while any bodyless success rejects body select
     parameters: [],
     headers: {},
     responses: {
-      200: { bodyKind: 'json', headers: {}, schema: nullValue },
+      200: {
+        bodyKind: 'content',
+        headers: {},
+        content: {
+          'application/json': { bodyKind: 'json', schema: nullValue },
+        },
+      },
       204: { bodyKind: 'none', headers: {} },
     },
   });
@@ -315,7 +331,13 @@ void test('offset body queries validate pagination before storing projected page
       { name: 'limit', in: 'query', required: true },
     ],
     headers: {},
-    responses: { 200: { bodyKind: 'json', headers: {}, schema: page } },
+    responses: {
+      200: {
+        bodyKind: 'content',
+        headers: {},
+        content: { 'application/json': { bodyKind: 'json', schema: page } },
+      },
+    },
   });
   let wrongOffset = true;
   const envelope = defineOffsetQuery({

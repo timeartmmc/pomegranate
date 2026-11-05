@@ -39,8 +39,8 @@ import type {
   ClientConfig,
   ErrorScope,
   InputArguments,
+  ResponseErrorGuard,
   Success,
-  TypedQueryResponseError,
 } from './execution-runtime.ts';
 
 // Default-signal construction belongs only to direct calls. Query-only output
@@ -50,7 +50,7 @@ export type CallArguments<Input> = InputArguments<Input> &
 
 export interface OperationCall<Input, R extends Responses> {
   readonly call: (args: CallArguments<Input>) => Promise<Success<R>>;
-  readonly isError: (error: unknown) => error is TypedQueryResponseError<R>;
+  readonly isError: ResponseErrorGuard<R>;
 }
 
 type ExecutableOperation = Readonly<{

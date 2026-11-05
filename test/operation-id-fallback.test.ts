@@ -121,6 +121,10 @@ void test('missing operation IDs use the exact method and path across JSON, YAML
       if (!Object.hasOwn(value, 'operationId'))
         value.operationId = `${method.toUpperCase()} ${path}`;
   assert.deepEqual(await compile(explicit, selection), files);
+  for (const version of ['3.0.0', '3.0.4']) {
+    document.openapi = version;
+    assert.deepEqual(await compile(document, selection), files);
+  }
 });
 
 void test('adding unrelated routes preserves existing generated operation identities', async () => {

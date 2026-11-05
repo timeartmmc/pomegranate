@@ -168,28 +168,113 @@ function optionalBoolean(
   return value[key];
 }
 
-function jsonSchema(
+type ContentDefinition = {
+  kind: 'json' | 'text' | 'multipart';
+  contentType: string;
+  schema: Schema;
+  fields?: readonly MultipartField[];
+};
+
+function contentDefinitions(
   input: unknown,
   location: string,
   examples: ReadonlySet<string>,
   context: SchemaContext,
-): Schema {
+  direction: Direction,
+): readonly ContentDefinition[] {
   const content = record(input, location);
-  keys(content, ['application/json'], location);
-  if (!Object.hasOwn(content, 'application/json'))
-    fail(location, 'expected exactly application/json');
-  const media = record(
-    content['application/json'],
-    `${location}.application/json`,
-  );
-  keys(media, ['schema', ...exampleKeys], `${location}.application/json`);
-  exampleAnnotations(media, `${location}.application/json`, examples);
-  return normalizeFor(
-    media.schema,
-    `${location}.application/json.schema`,
-    context,
-    'response',
-  );
+  const seen = new Set<string>();
+  // Validate every declaration before request selection or response dispatch.
+  const candidates = Object.keys(content)
+    .sort()
+    .map((name): ContentDefinition => {
+      const path = `${location}.${name}`;
+      const contentType = name.toLowerCase();
+      if (
+        !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(
+          name,
+        ) ||
+        contentType.includes('*')
+      )
+        fail(
+          path,
+          'expected a concrete media type without parameters or wildcards',
+        );
+      if (seen.has(contentType))
+        fail(path, 'duplicate case-insensitive media type');
+      seen.add(contentType);
+      const subtype = contentType.slice(contentType.indexOf('/') + 1);
+      const kind =
+        contentType === 'application/json' ||
+        (subtype.length > 5 && subtype.endsWith('+json'))
+          ? 'json'
+          : contentType === 'text/plain'
+            ? 'text'
+            : direction === 'request' && contentType === 'multipart/form-data'
+              ? 'multipart'
+              : undefined;
+      if (kind === undefined)
+        fail(
+          path,
+          'unsupported keyword; supported media types are application/json, concrete +json types, text/plain and multipart requests',
+        );
+      const media = record(content[name], path);
+      keys(media, ['schema', ...exampleKeys], path);
+      exampleAnnotations(media, path, examples);
+      const schemaLocation = `${path}.schema`;
+      const schema = normalizeFor(
+        media.schema,
+        schemaLocation,
+        context,
+        direction,
+        kind === 'multipart' ? 'multipart' : direction,
+      );
+      if (
+        kind === 'text' &&
+        resolveSchema(schema, context.projection.schemas[direction]).kind !==
+          'string'
+      )
+        fail(schemaLocation, 'text/plain requires a nonnullable string schema');
+      return {
+        kind,
+        contentType,
+        schema,
+        ...(kind === 'multipart'
+          ? {
+              fields: multipartFields(
+                schema,
+                context.projection.schemas.request,
+                schemaLocation,
+              ),
+            }
+          : {}),
+      };
+    });
+  if (candidates.length === 0)
+    fail(location, 'expected at least one supported media type');
+  return candidates;
+}
+
+function preferredContent(
+  candidates: readonly ContentDefinition[],
+): ContentDefinition {
+  const rank = (value: ContentDefinition) =>
+    value.contentType === 'application/json'
+      ? 0
+      : value.kind === 'json'
+        ? 1
+        : value.kind === 'text'
+          ? 2
+          : 3;
+  return [...candidates].sort(
+    (left, right) =>
+      rank(left) - rank(right) ||
+      (left.contentType < right.contentType
+        ? -1
+        : left.contentType > right.contentType
+          ? 1
+          : 0),
+  )[0]!;
 }
 
 function normalizeParameter(
@@ -577,40 +662,34 @@ function normalizeRequestBody(
   keys(request, ['description', 'required', 'content'], location);
   annotations(request, location);
   const required = optionalBoolean(request, 'required', location);
-  const contentLocation = `${location}.content`;
-  const content = record(request.content, contentLocation);
-  keys(content, ['application/json', 'multipart/form-data'], contentLocation);
-  const mediaType = Object.keys(content)[0];
-  if (Object.keys(content).length !== 1 || !mediaType)
-    fail(contentLocation, 'expected exactly one JSON or multipart media type');
-  const media = record(content[mediaType], `${contentLocation}.${mediaType}`);
-  keys(media, ['schema', ...exampleKeys], `${contentLocation}.${mediaType}`);
-  exampleAnnotations(media, `${contentLocation}.${mediaType}`, examples);
-  const schemaLocation = `${contentLocation}.${mediaType}.schema`;
-  const multipart = mediaType === 'multipart/form-data';
-  if (multipart && !required)
+  const selected = preferredContent(
+    contentDefinitions(
+      request.content,
+      `${location}.content`,
+      examples,
+      context,
+      'request',
+    ),
+  );
+  // Multipart requiredness constrains the generated request, not alternatives
+  // that have already been validated but were not selected.
+  if (selected.kind === 'multipart' && !required)
     fail(
       `${location}.required`,
       'optional multipart request bodies are unsupported',
     );
-  const schema = normalizeFor(
-    media.schema,
-    schemaLocation,
-    context,
-    'request',
-    multipart ? 'multipart' : 'request',
-  );
-  return multipart
+  return selected.kind === 'multipart'
     ? {
         kind: 'multipart',
-        schema,
-        fields: multipartFields(
-          schema,
-          context.projection.schemas.request,
-          schemaLocation,
-        ),
+        schema: selected.schema,
+        fields: selected.fields!,
       }
-    : { kind: 'json', schema, required };
+    : {
+        kind: selected.kind,
+        contentType: selected.contentType,
+        schema: selected.schema,
+        required,
+      };
 }
 
 function requestBody(
@@ -647,17 +726,31 @@ function normalizeResponse(
   keys(response, ['description', 'content', 'headers'], location);
   if (typeof response.description !== 'string')
     fail(`${location}.description`, 'expected a response description');
-  const body: ContractResponse['body'] = Object.hasOwn(response, 'content')
-    ? {
-        kind: 'json',
-        schema: jsonSchema(
-          response.content,
-          `${location}.content`,
-          examples,
-          context,
-        ),
-      }
-    : { kind: 'none' };
+  let body: ContractResponse['body'] = { kind: 'none' };
+  if (Object.hasOwn(response, 'content')) {
+    const representations = contentDefinitions(
+      response.content,
+      `${location}.content`,
+      examples,
+      context,
+      'response',
+    );
+    body = {
+      kind: 'content',
+      content: Object.fromEntries(
+        representations.map((representation) => {
+          // Response validation above excludes multipart. The shared helper's
+          // return type also covers requests, so narrow it before building content.
+          if (representation.kind === 'multipart')
+            fail(`${location}.content`, 'multipart responses are unsupported');
+          return [
+            representation.contentType,
+            { kind: representation.kind, schema: representation.schema },
+          ];
+        }),
+      ),
+    };
+  }
   const responseHeaders = Object.hasOwn(response, 'headers')
     ? normalizeHeaders(
         response.headers,
@@ -777,7 +870,8 @@ function normalizeOperation(
   );
   // Operation IDs are public, case-sensitive strings, not TypeScript symbols.
   // The emitter encodes private names without changing keys or cache identity.
-  // Derive missing IDs from the exact method and path so ordering never renames them.
+  // A missing ID uses the exact method and path: slugging or suffix counters
+  // would merge distinct routes or change identities when another route is added.
   const metadata = normalizeOperationPolicy(
     Object.hasOwn(value, 'x-pom') ? value['x-pom'] : {},
     vocabulary,
@@ -984,8 +1078,8 @@ export function buildDescriptor(
       ]),
   );
   const schemaOrder = orderSchemas(schemas);
-  // Share traversal work only within this descriptor. The cache separates
-  // usage checks so request defaults and multipart values cannot weaken responses.
+  // Share traversal work only within this descriptor. Separate usage checks
+  // keep multipart binary fields from weakening ordinary JSON validation.
   const validation = schemaValidation();
   for (const name of schemaOrder)
     validateSchema(

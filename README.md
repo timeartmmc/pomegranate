@@ -83,13 +83,18 @@ Choose the integration needed by the application:
 
 ## Supported contracts
 
-POM supports JSON and multipart requests, exact response statuses, bearer or
-public security, selected client surfaces, and a restricted schema vocabulary.
+POM supports JSON, plain text, and multipart requests, exact response statuses, bearer or
+public security, selected client surfaces, and a restricted schema vocabulary, including unconstrained JSON values. Unrelated extensions require an explicit
+ignore list.
 Unsupported features fail with a location-specific diagnostic before outputs
 change. General unions, recursive or external schema references, optional multipart
 bodies, and non-bearer authentication schemes are unsupported. The
 [contract reference](REFERENCE.md#supported-vocabulary) defines the complete
 supported vocabulary and limits.
+
+Formats must be built in or explicitly defined in `pom.json`. A registered
+string format supplies a pattern that POM validates in generated code; unknown
+or misspelled names stop compilation. See [registered formats](REFERENCE.md#registered-formats).
 
 ## Run the example
 

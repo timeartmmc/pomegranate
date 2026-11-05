@@ -233,10 +233,13 @@ void test('config membership does not suppress unsupported unselected operations
   Object.assign(
     schemaFailure.components.schemas.SecretRecord.properties.secret,
     {
-      format: 'idn-email',
+      format: false,
     },
   );
-  await assert.rejects(compile(schemaFailure, selection), /unsupported format/);
+  await assert.rejects(
+    compile(schemaFailure, selection),
+    /format.*expected a string/,
+  );
 });
 
 void test('valid inline and configured memberships cannot both own the document', async () => {

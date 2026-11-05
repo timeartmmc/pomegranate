@@ -26,7 +26,11 @@ function roots(
     ];
   return operation.responses.flatMap((response) => [
     ...response.headers.map((header) => header.schema),
-    ...(response.body.kind === 'json' ? [response.body.schema] : []),
+    ...(response.body.kind !== 'none'
+      ? Object.values(response.body.content).map(
+          (representation) => representation.schema,
+        )
+      : []),
   ]);
 }
 

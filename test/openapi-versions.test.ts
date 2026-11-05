@@ -73,12 +73,12 @@ void test('accepting a patch version preserves schema and operation-policy diagn
   Object.assign(unsupportedSchema.components.schemas.Widget.properties, {
     id: {
       type: 'string',
-      format: 'idn-email',
+      format: false,
     },
   });
   await assert.rejects(
     compile(unsupportedSchema, selection),
-    /unsupported format/,
+    /format.*expected a string/,
   );
 
   const invalidPolicy = fixture();

@@ -149,6 +149,7 @@ export const queryErrorChecks = {
         status: 404,
         headers: {},
         validatedHeaders: {},
+        contentType: 'application/json',
         data: { detail: 7 },
       });
       try {

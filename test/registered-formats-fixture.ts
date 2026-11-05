@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { present } from './assertions.ts';
-import type { RuntimeClient } from './runtime-types.ts';
+import type { MediaClient } from './media-fixture.ts';
 import type { StandaloneModule } from './runtime-types.ts';
 import type { Schema } from './schema-helpers.ts';
 
@@ -12,7 +12,7 @@ export const registeredFormats = {
   unused: { type: 'string', pattern: '^private-unused-[0-9]+$' },
 } as const;
 
-export function registeredFormatsFixture() {
+export function registeredFormatsFixture(modern = true) {
   const slug = (): Schema => ({ type: 'string', format: 'slug' });
   const schemas: Record<string, Schema> = {
     Slug: slug(),
@@ -23,9 +23,13 @@ export function registeredFormatsFixture() {
       minLength: 3,
       maxLength: 12,
     },
-    Nullable: { type: ['string', 'null'], format: 'slug' },
+    Nullable: modern
+      ? { type: ['string', 'null'], format: 'slug' }
+      : { ...slug(), nullable: true },
     Enum: { ...slug(), enum: ['ready', 'draft-1'] },
-    NullOnly: { type: ['string', 'null'], format: 'slug', enum: [null] },
+    NullOnly: modern
+      ? { type: ['string', 'null'], format: 'slug', enum: [null] }
+      : { ...slug(), nullable: true, enum: [null] },
     Payload: {
       type: 'object',
       required: ['value', 'id', 'secret'],
@@ -56,12 +60,12 @@ export function registeredFormatsFixture() {
     },
   });
   return {
-    openapi: '3.1.2',
+    openapi: modern ? '3.1.2' : '3.0.4',
     info: { title: 'Synthetic explicit format registration', version: '1' },
     components: { schemas },
     paths: {
       '/slug': { post: operation('roundTrip', 'Payload') },
-      '/text': { post: operation('text', 'Constrained') },
+      '/text': { post: operation('text', 'Constrained', 'text/plain') },
       '/nullable': { post: operation('nullable', 'Nullable') },
       '/enum': { post: operation('enum', 'Enum') },
     },
@@ -81,7 +85,7 @@ export const registeredFormatsSelection = {
 } as const;
 
 export function verifyRegisteredFormats(
-  client: RuntimeClient,
+  client: MediaClient,
   slug: StandaloneModule,
   input: StandaloneModule,
   output: StandaloneModule,
@@ -133,12 +137,12 @@ export function verifyRegisteredFormats(
   const text = present(client.operations.text);
   for (const value of ['a-1', 'ready-12']) {
     const request = text.build({ body: value });
-    assert.equal(request.bodyKind, 'json');
+    assert.equal(request.bodyKind, 'text');
     assert.equal(
       text.parseResponse({
         status: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(value),
+        headers: { 'Content-Type': 'text/plain' },
+        body: value,
       }).kind,
       'success',
     );
@@ -152,8 +156,8 @@ export function verifyRegisteredFormats(
     assert.equal(
       text.parseResponse({
         status: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(value),
+        headers: { 'Content-Type': 'text/plain' },
+        body: value,
       }).kind,
       'protocol',
     );

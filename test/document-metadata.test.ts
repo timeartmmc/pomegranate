@@ -70,7 +70,7 @@ for (const [name, target, location] of docTargets) {
       [{}, '.url'],
       [{ url: 1 }, '.url'],
       [{ url: '/docs', description: false }, '.description'],
-      [{ url: '/docs', 'x-unknown': true }, '.x-unknown'],
+      [{ url: '/docs', unknown: true }, '.unknown'],
     ] as const) {
       const document = fixture();
       Object.assign(target(document), { externalDocs });
@@ -180,7 +180,12 @@ void test('metadata cannot hide unsupported server overrides, extensions or unus
       /paths.*servers/,
     ],
     [preparation, 'callbacks', {}, /callbacks.*unsupported keyword/],
-    [(d: Fixture) => d, 'x-vendor', {}, /x-vendor.*unsupported keyword/],
+    [
+      (d: Fixture) => d,
+      'x-multi-segment',
+      {},
+      /x-multi-segment.*unsupported semantic extension/,
+    ],
     [
       (d: Fixture) => d.components.schemas,
       'Unused',

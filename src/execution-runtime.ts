@@ -112,6 +112,12 @@ export interface TypedQueryResponseError<
   readonly result: Failure<R>;
 }
 
+// Keep the callable boundary named when applications publish inferred isError
+// exports; expanding the status/media predicate can otherwise emit only boolean.
+export interface ResponseErrorGuard<R extends Responses> {
+  (error: unknown): error is TypedQueryResponseError<R>;
+}
+
 export type ErrorScope<R extends Responses = Responses> = Readonly<{
   operation: Readonly<{
     parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
@@ -125,7 +131,9 @@ const responseErrors = new WeakMap<
   Readonly<{ scope: ErrorScope; result: Failure }>
 >();
 
-export function operationErrorGuard<R extends Responses>(scope: ErrorScope<R>) {
+export function operationErrorGuard<R extends Responses>(
+  scope: ErrorScope<R>,
+): ResponseErrorGuard<R> {
   const identity = { ...scope };
   return (error: unknown): error is TypedQueryResponseError<R> => {
     if (error === null || typeof error !== 'object') return false;

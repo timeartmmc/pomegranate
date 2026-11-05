@@ -326,9 +326,9 @@ void test('unused response definitions undergo full response schema and header v
       'unsupported media',
       {
         description: 'Invalid',
-        content: { 'text/plain': { schema: { type: 'string' } } },
+        content: { 'application/xml': { schema: { type: 'string' } } },
       },
-      '.content.text/plain',
+      '.content.application/xml',
       /unsupported keyword/,
     ],
     [
@@ -410,11 +410,11 @@ void test('unused response definitions undergo full response schema and header v
   }
   const unselected = fixture();
   Object.assign(unselected.components.responses.Internal!, {
-    content: { 'text/plain': { schema: { type: 'string' } } },
+    content: { 'application/xml': { schema: { type: 'string' } } },
   });
   await rejectsAt(
     unselected,
-    'components.responses.Internal.content.text/plain',
+    'components.responses.Internal.content.application/xml',
     /unsupported keyword/,
   );
 });

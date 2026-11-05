@@ -261,7 +261,7 @@ for (const offset of [false, true]) {
         assert.ok(error instanceof ContractError);
         assert.equal(
           error.location,
-          'infiniteQueries.consumer.page.responses.200',
+          'infiniteQueries.consumer.page.responses.200.content.application/json',
         );
         assert.match(error.message, /pagination field.*must be required/);
         return true;

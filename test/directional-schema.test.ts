@@ -183,11 +183,11 @@ void test('source validation still rejects malformed and missing declarations th
         Payload: {
           type: 'object',
           properties: {
-            hidden: { type: 'string', format: 'idn-email', writeOnly: true },
+            hidden: { type: 'string', format: false, writeOnly: true },
           },
         },
       }),
-    /unsupported format/,
+    /format.*expected a string/,
   );
   assert.throws(
     () =>

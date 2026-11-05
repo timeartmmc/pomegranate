@@ -58,9 +58,9 @@ import type {
   Execution,
   ExecutionContext,
   ResponseInspection,
+  ResponseErrorGuard,
   InputArguments,
   Success,
-  TypedQueryResponseError,
 } from './execution-runtime.ts';
 export { QueryResponseError } from './execution-runtime.ts';
 export type { TypedQueryResponseError } from './execution-runtime.ts';
@@ -161,7 +161,7 @@ export interface QueryFactory<
   R extends Responses,
   M extends CacheRepresentation = 'envelope',
 > {
-  readonly isError: (error: unknown) => error is TypedQueryResponseError<R>;
+  readonly isError: ResponseErrorGuard<R>;
   readonly key: (args: Arguments<Input>) => QueryKey<R, M>;
   readonly options: {
     (args: Arguments<Input>): QueryOptions<R, M>;
@@ -307,9 +307,7 @@ function responseBody<R extends Responses, M extends CacheRepresentation>(
   page: QueryValue<R, M>,
   representation: M,
 ): Body<R> {
-  return (
-    representation === 'body' ? page : (page as Success<R>).data
-  ) as Body<R>;
+  return representation === 'body' ? page : (page as Success<R>).data;
 }
 
 type PreparedQuery<R extends Responses> = Readonly<{
@@ -611,7 +609,7 @@ export interface InfiniteQueryFactory<
   P extends Pagination = string,
   M extends CacheRepresentation = 'envelope',
 > {
-  readonly isError: (error: unknown) => error is TypedQueryResponseError<R>;
+  readonly isError: ResponseErrorGuard<R>;
   readonly key: (args: Arguments<Input>) => InfiniteQueryKey<R, P, M>;
   readonly options: {
     (args: Arguments<Input>): InfiniteQueryOptions<R, P, M>;

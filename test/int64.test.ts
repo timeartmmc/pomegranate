@@ -40,7 +40,7 @@ const roots = {
   },
 } as const;
 
-void test('int64 lowers to safe-integer bounds and preserves JSON and YAML bytes', async () => {
+void test('int64 lowers to safe-integer bounds and preserves 3.0/3.1 JSON and YAML bytes', async () => {
   const input = document({ Value: int64 });
   assert.deepEqual(
     await compile(input, roots),
@@ -50,17 +50,19 @@ void test('int64 lowers to safe-integer bounds and preserves JSON and YAML bytes
     ),
   );
   const files = await compile(toleranceFixture(), toleranceSelection);
-  const source = toleranceFixture();
-  const before = structuredClone(source);
-  assert.deepEqual(await compile(source, toleranceSelection), files);
-  assert.deepEqual(source, before);
-  assert.deepEqual(
-    await compile(
-      parseYaml(stringify(source), 'int64.yaml'),
-      toleranceSelection,
-    ),
-    files,
-  );
+  for (const modern of [true, false]) {
+    const source = toleranceFixture(modern);
+    const before = structuredClone(source);
+    assert.deepEqual(await compile(source, toleranceSelection), files);
+    assert.deepEqual(source, before);
+    assert.deepEqual(
+      await compile(
+        parseYaml(stringify(source), 'int64.yaml'),
+        toleranceSelection,
+      ),
+      files,
+    );
+  }
 });
 
 void test('numeric int64 validates safe integers at runtime and preserves generated types', async (t) => {

@@ -244,11 +244,11 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /unsupported security scheme/,
   ],
   [
-    'legacy metadata',
+    'semantic extension',
     (d) => {
-      Object.assign(preparation(d), { 'x-consumer-contract': {} });
+      Object.assign(preparation(d), { 'x-multi-segment': {} });
     },
-    /x-consumer-contract.*unsupported keyword/,
+    /x-multi-segment.*unsupported semantic extension/,
   ],
   [
     'policy version',
@@ -357,11 +357,11 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
       Object.assign(d.components.schemas.Widget.properties, {
         id: {
           type: 'string',
-          format: 'idn-email',
+          format: false,
         },
       });
     },
-    /format.*unsupported format/,
+    /format.*expected a string/,
   ],
   [
     'malformed response default',

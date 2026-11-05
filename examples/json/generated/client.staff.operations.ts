@@ -132,9 +132,14 @@ function define_operation_getStaffReport(): Operation<
   Exclude<ReturnType<typeof operation_getStaffReport_options>, Invalid>,
   {
     readonly 200: {
-      readonly bodyKind: 'json';
+      readonly bodyKind: 'content';
       readonly headers: {};
-      readonly schema: typeof parse_StaffReport_response;
+      readonly content: {
+        readonly 'application/json': {
+          readonly bodyKind: 'json';
+          readonly schema: typeof parse_StaffReport_response;
+        };
+      };
     };
   },
   'none'
@@ -151,9 +156,14 @@ function define_operation_getStaffReport(): Operation<
     headers: {},
     responses: {
       200: {
-        bodyKind: 'json',
+        bodyKind: 'content',
         headers: {},
-        schema: parse_StaffReport_response,
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: parse_StaffReport_response,
+          },
+        },
       },
     },
   });
@@ -165,14 +175,24 @@ function define_operation_getWidget(): Operation<
   Exclude<ReturnType<typeof operation_getWidget_options>, Invalid>,
   {
     readonly 200: {
-      readonly bodyKind: 'json';
+      readonly bodyKind: 'content';
       readonly headers: {};
-      readonly schema: typeof parse_Widget_response;
+      readonly content: {
+        readonly 'application/json': {
+          readonly bodyKind: 'json';
+          readonly schema: typeof parse_Widget_response;
+        };
+      };
     };
     readonly 404: {
-      readonly bodyKind: 'json';
+      readonly bodyKind: 'content';
       readonly headers: {};
-      readonly schema: typeof parse_Problem_response;
+      readonly content: {
+        readonly 'application/json': {
+          readonly bodyKind: 'json';
+          readonly schema: typeof parse_Problem_response;
+        };
+      };
     };
   },
   'none'
@@ -191,8 +211,26 @@ function define_operation_getWidget(): Operation<
     options: operation_getWidget_options,
     headers: {},
     responses: {
-      200: { bodyKind: 'json', headers: {}, schema: parse_Widget_response },
-      404: { bodyKind: 'json', headers: {}, schema: parse_Problem_response },
+      200: {
+        bodyKind: 'content',
+        headers: {},
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: parse_Widget_response,
+          },
+        },
+      },
+      404: {
+        bodyKind: 'content',
+        headers: {},
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: parse_Problem_response,
+          },
+        },
+      },
     },
   });
 }

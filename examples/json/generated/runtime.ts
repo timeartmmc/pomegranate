@@ -1121,16 +1121,45 @@ export type ProtocolFailure = Readonly<{
 }>;
 
 type HeaderSpec = Readonly<{ schema: Parse<string>; required: boolean }>;
+type ResponseContent = Readonly<
+  Record<
+    string,
+    Readonly<{ bodyKind: 'json' | 'text'; schema: Parse<unknown> }>
+  >
+>;
 type ResponseSpec = Readonly<{
   headers: Readonly<Record<string, HeaderSpec>>;
 }> &
   (
     | Readonly<{ bodyKind: 'none' }>
-    | Readonly<{ bodyKind: 'json'; schema: Parse<unknown> }>
+    | Readonly<{
+        bodyKind: 'content';
+        content: ResponseContent;
+      }>
   );
 export type Responses = Readonly<Record<number, ResponseSpec>>;
 
 type Data<R> = R extends { schema: Parse<infer T> } ? T : undefined;
+type CommonResponseData = Readonly<{
+  contentType: string | undefined;
+  data: unknown;
+}>;
+// Generic executors retain the common evidence shape; concrete response tables
+// additionally correlate each media key with its parser's output type.
+type ResponseData<S extends ResponseSpec> = CommonResponseData &
+  (ResponseSpec extends S
+    ? unknown
+    : S extends {
+          bodyKind: 'content';
+          content: infer C extends ResponseContent;
+        }
+      ? {
+          [M in keyof C & string]: Readonly<{
+            contentType: M;
+            data: Data<C[M]>;
+          }>;
+        }[keyof C & string]
+      : Readonly<{ contentType: undefined; data: undefined }>);
 export type DeclaredResponse<R extends Responses> = {
   [S in keyof R]: S extends number
     ? Readonly<{
@@ -1143,15 +1172,15 @@ export type DeclaredResponse<R extends Responses> = {
         status: S;
         headers: HeaderContext;
         validatedHeaders: HeaderContext;
-        data: Data<R[S]>;
-      }>
+      }> &
+        ResponseData<R[S]>
     : never;
 }[keyof R];
 
 export type ProtocolResult<R extends Responses> =
   | DeclaredResponse<R>
   | ProtocolFailure;
-type BodyKind = 'none' | 'json' | 'multipart';
+type BodyKind = 'none' | 'json' | 'text' | 'multipart';
 export type MultipartField = Readonly<{
   name: string;
   kind: 'text' | 'file';
@@ -1185,8 +1214,8 @@ export type PreparedRequest<
   validateHeaders: (headers: HeaderContext) => HeaderContext;
   parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
 }> &
-  (B extends 'json'
-    ? Readonly<{ bodyKind: 'json'; body: Body }>
+  (B extends 'json' | 'text'
+    ? Readonly<{ bodyKind: B; body: Body; contentType: string }>
     : B extends 'multipart'
       ? Readonly<{
           bodyKind: 'multipart';
@@ -1200,12 +1229,12 @@ type RequestBody<O> =
     ? Exclude<Value, undefined>
     : never;
 
-// The parser owns input presence. Optional JSON may prepare either wire state;
+// The parser owns input presence. Optional bodies may prepare either wire state;
 // the public Operation kind still describes the actual prepared request kinds.
-type PreparedBodyKind<O, B extends BodyKind> = B extends 'json'
+type PreparedBodyKind<O, B extends BodyKind> = B extends 'json' | 'text'
   ? O extends { body: unknown }
-    ? 'json'
-    : 'json' | 'none'
+    ? B
+    : B | 'none'
   : B;
 
 export interface Operation<
@@ -1250,6 +1279,7 @@ type Definition<
   security: Security;
   policy: Policy;
   bodyKind: B;
+  contentType?: string;
   multipart?: readonly MultipartField[];
   parameters: readonly Parameter[];
   options: Parse<O>;
@@ -1310,8 +1340,8 @@ const quotedParameter = String.raw`"(?:[^"\\]|\\.)*"`;
 // RFC 9110 sections 5.6.6 and 8.3: match one complete media type, including
 // quoted parameter data. Each segment owns its trailing whitespace so empty
 // parameters do not introduce overlapping whitespace repetitions.
-const jsonContentType = new RegExp(
-  `^application/json[\\t ]*(?:;[\\t ]*(?:${token}=(?:${token}|${quotedParameter})[\\t ]*)?)*$`,
+const contentType = new RegExp(
+  `^(${token}/${token})[\\t ]*(?:;[\\t ]*(?:${token}=(?:${token}|${quotedParameter})[\\t ]*)?)*$`,
   'i',
 );
 
@@ -1351,11 +1381,13 @@ function observedHeaders(input: HeaderContext) {
     }
     // Joining malformed duplicate fields can accidentally repair quotes;
     // reject repeated singleton fields independently of the combined text.
-    if (name === 'content-type' && repeated)
+    if (name === 'content-type' && repeated) {
+      invalidFields.add(name);
       issues.push({
         part: 'content-type',
         message: 'expected a single Content-Type field',
       });
+    }
     if (!validHeaderValue(value)) {
       invalidFields.add(name);
       issues.push({
@@ -1431,39 +1463,54 @@ function responseParser<R extends Responses>(
       issues,
     );
     let data: unknown;
+    let selectedContentType: string | undefined;
     if (spec?.bodyKind === 'none') {
       if (body !== '')
         issues.push({
           part: 'body',
           message: 'expected an empty response body',
         });
-    } else if (spec?.bodyKind === 'json') {
-      const mediaType = headers['content-type'];
-      if (
-        mediaType === undefined ||
-        !validHeaderValue(mediaType) ||
-        !jsonContentType.test(mediaType)
-      )
+    } else if (spec?.bodyKind === 'content') {
+      const field = headers['content-type'];
+      const essence =
+        field === undefined || invalidFields.has('content-type')
+          ? undefined
+          : contentType.exec(field)?.[1]?.toLowerCase();
+      const media =
+        essence !== undefined && Object.hasOwn(spec.content, essence)
+          ? spec.content[essence]
+          : undefined;
+      if (media === undefined)
         issues.push({
           part: 'content-type',
-          message: 'expected a single valid application/json media type',
+          message: 'expected a single valid declared response media type',
         });
-      let decoded: unknown;
-      let decodedSuccessfully = false;
-      try {
-        decoded = JSON.parse(body) as unknown;
-        decodedSuccessfully = true;
-      } catch {
-        issues.push({ part: 'body', message: 'invalid JSON response body' });
-      }
-      if (decodedSuccessfully) {
-        const problems: Issues = [];
-        const parsed = spec.schema(decoded, problems);
-        if (parsed !== invalid && problems.length === 0) data = parsed;
-        else {
-          rejected(problems, 0);
-          for (const detail of validationIssues(problems))
-            issues.push({ part: 'body', ...detail });
+      else {
+        // A media type selects exactly one decoder and validator. Guessing or
+        // trying another declared schema could accept the wrong wire contract.
+        selectedContentType = essence;
+        let decoded: unknown = body;
+        let decodedSuccessfully = true;
+        if (media.bodyKind === 'json') {
+          try {
+            decoded = JSON.parse(body) as unknown;
+          } catch {
+            decodedSuccessfully = false;
+            issues.push({
+              part: 'body',
+              message: 'invalid JSON response body',
+            });
+          }
+        }
+        if (decodedSuccessfully) {
+          const problems: Issues = [];
+          const parsed = media.schema(decoded, problems);
+          if (parsed !== invalid && problems.length === 0) data = parsed;
+          else {
+            rejected(problems, 0);
+            for (const detail of validationIssues(problems))
+              issues.push({ part: 'body', ...detail });
+          }
         }
       }
     }
@@ -1477,16 +1524,17 @@ function responseParser<R extends Responses>(
         issues: Object.freeze(issues),
       });
     }
-    // The only successful path selects an exact declared status and validates its
-    // schema. TypeScript cannot express that runtime lookup as the mapped union.
+    // Successful lookups correlate one exact status and media type with its
+    // parsed data. TypeScript cannot prove that relationship across map lookups.
     return Object.freeze({
       kind: status >= 200 && status < 300 ? 'success' : 'error',
       operationId,
       status,
       headers,
       validatedHeaders,
+      contentType: selectedContentType,
       data,
-    }) as DeclaredResponse<R>;
+    }) as unknown as DeclaredResponse<R>;
   };
 }
 
@@ -1684,6 +1732,9 @@ export function defineOperation<
 >(definition: Definition<O, R, B>): Operation<O, R, PreparedBodyKind<O, B>> {
   const security = Object.freeze({ ...definition.security });
   const policy = Object.freeze({ ...definition.policy });
+  const requestContentType =
+    definition.contentType ??
+    (definition.bodyKind === 'text' ? 'text/plain' : 'application/json');
   const multipart = Object.freeze(
     (definition.multipart ?? []).map((field) => Object.freeze({ ...field })),
   );
@@ -1708,6 +1759,11 @@ export function defineOperation<
     // Optional-field parsing omits polluted Object.prototype fields. Do not
     // recover one by reading an inherited body from the fresh options object.
     const body = Object.hasOwn(options, 'body') ? options.body : undefined;
+    // Raw text transports replace isolated UTF-16 surrogates during encoding.
+    // Reject that transformation after schema validation; JSON preserves them
+    // through escaping and does not need this additional wire check.
+    if (definition.bodyKind === 'text' && typeof body === 'string')
+      requireWellFormed(body, definition.operationId, ['body']);
     if (definition.bodyKind === 'multipart')
       validateMultipart(body, multipart, definition.operationId);
     const serialized = serializeParameters(
@@ -1725,8 +1781,13 @@ export function defineOperation<
       headers: serialized.headers,
       validateHeaders,
       parseResponse,
-      ...(definition.bodyKind === 'json' && body !== undefined
-        ? { bodyKind: 'json' as const, body }
+      ...((definition.bodyKind === 'json' || definition.bodyKind === 'text') &&
+      body !== undefined
+        ? {
+            bodyKind: definition.bodyKind,
+            contentType: requestContentType,
+            body,
+          }
         : definition.bodyKind === 'multipart'
           ? { bodyKind: 'multipart' as const, body, multipart }
           : { bodyKind: 'none' as const }),

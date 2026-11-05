@@ -301,7 +301,8 @@ void test('generated protocol invariants hold across the complete byte and statu
       assert.equal(failure.kind, 'protocol');
       assert.deepEqual(
         new Set(failure.issues.map((issue) => issue.part)),
-        new Set(['headers', 'content-type', 'body']),
+        // An untrusted media type cannot select a decoder or body validator.
+        new Set(['headers', 'content-type']),
       );
       assert.equal(failure.validatedHeaders['x-key'], 'independent');
       assert.equal(

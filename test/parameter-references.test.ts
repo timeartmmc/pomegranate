@@ -340,14 +340,14 @@ const invalid: [string, (document: Fixture) => void, string, RegExp][] = [
     /unsupported keyword/,
   ],
   [
-    'unknown ref extension',
+    'semantic ref extension',
     (d) => {
       Object.assign(d.components.parameters.CursorAlias!, {
-        'x-unknown': true,
+        'x-multi-segment': true,
       });
     },
-    'components.parameters.CursorAlias.x-unknown',
-    /unsupported keyword/,
+    'components.parameters.CursorAlias.x-multi-segment',
+    /unsupported semantic extension/,
   ],
   [
     'invalid unused parameter schema',

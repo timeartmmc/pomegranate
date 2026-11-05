@@ -95,49 +95,69 @@ export function validatePagination(
   for (const response of operation.responses.filter(
     (response) => response.status < 300,
   )) {
-    const path = `${location}.responses.${response.status}`;
-    if (response.body.kind !== 'json')
-      fail(path, 'every infinite-query success must have a JSON object body');
-    const body = resolveSchema(response.body.schema, responseSchemas);
-    if (body.kind !== 'object')
-      fail(path, 'every infinite-query success must have a fixed object body');
-    const fields = offset
-      ? [
-          binding.items,
+    const responsePath = `${location}.responses.${response.status}`;
+    if (response.body.kind === 'none')
+      fail(
+        responsePath,
+        'every infinite-query success must have a JSON object body',
+      );
+    // Any declared representation can arrive. Pagination accessors must be valid
+    // for all of them before a query can cache or traverse a successful page.
+    for (const [contentType, representation] of Object.entries(
+      response.body.content,
+    )) {
+      const path = `${responsePath}.content.${contentType}`;
+      if (representation.kind !== 'json')
+        fail(path, 'every infinite-query success must have a JSON object body');
+      const body = resolveSchema(representation.schema, responseSchemas);
+      if (body.kind !== 'object')
+        fail(
+          path,
+          'every infinite-query success must have a fixed object body',
+        );
+      const fields = offset
+        ? [
+            binding.items,
+            binding.responseOffset,
+            binding.responseLimit,
+            binding.total,
+          ]
+        : [binding.items, binding.nextCursor];
+      for (const name of fields)
+        if (!body.required.includes(name))
+          fail(
+            path,
+            `pagination field ${JSON.stringify(name)} must be required`,
+          );
+      const items = resolveSchema(
+        body.properties[binding.items]!,
+        responseSchemas,
+      );
+      if (items.kind !== 'array')
+        fail(`${path}.${binding.items}`, 'items must name an array field');
+      if (offset) {
+        for (const name of [
           binding.responseOffset,
           binding.responseLimit,
           binding.total,
-        ]
-      : [binding.items, binding.nextCursor];
-    for (const name of fields)
-      if (!body.required.includes(name))
-        fail(path, `pagination field ${JSON.stringify(name)} must be required`);
-    const items = resolveSchema(
-      body.properties[binding.items]!,
-      responseSchemas,
-    );
-    if (items.kind !== 'array')
-      fail(`${path}.${binding.items}`, 'items must name an array field');
-    if (offset) {
-      for (const name of [
-        binding.responseOffset,
-        binding.responseLimit,
-        binding.total,
-      ])
-        if (
-          resolveSchema(body.properties[name]!, responseSchemas).kind !==
-          'integer'
-        )
-          fail(
-            `${path}.${name}`,
-            'offset pagination metadata must name required nonnullable integer fields',
-          );
-      continue;
+        ])
+          if (
+            resolveSchema(body.properties[name]!, responseSchemas).kind !==
+            'integer'
+          )
+            fail(
+              `${path}.${name}`,
+              'offset pagination metadata must name required nonnullable integer fields',
+            );
+        continue;
+      }
+      if (
+        !nullableString(body.properties[binding.nextCursor]!, responseSchemas)
+      )
+        fail(
+          `${path}.${binding.nextCursor}`,
+          'nextCursor must name a nullable string field',
+        );
     }
-    if (!nullableString(body.properties[binding.nextCursor]!, responseSchemas))
-      fail(
-        `${path}.${binding.nextCursor}`,
-        'nextCursor must name a nullable string field',
-      );
   }
 }

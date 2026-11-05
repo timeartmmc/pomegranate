@@ -97,7 +97,7 @@ function renderComponents(
 }
 
 function bodyRequired(body: Operation['body']): boolean {
-  return body.kind === 'multipart' || (body.kind === 'json' && body.required);
+  return body.kind === 'multipart' || (body.kind !== 'none' && body.required);
 }
 
 // Request options are one strict object of strict parameter groups and the
@@ -244,15 +244,34 @@ function responseSpecs(
         ['headers', headers],
       ];
       let schemaType = '';
-      if (response.body.kind === 'json') {
-        const parse = renderer.part(
-          response.body.schema,
-          'response',
-          `${operation.id}.responses.${response.status}.body`,
-          prefix,
-        );
-        entries.push(['schema', parse]);
-        schemaType = `readonly schema: typeof ${parse.source};`;
+      if (response.body.kind !== 'none') {
+        const contentTypes: string[] = [];
+        entries.push([
+          'content',
+          object(
+            Object.entries(response.body.content).map(
+              ([mediaType, representation]) => {
+                const parse = renderer.part(
+                  representation.schema,
+                  'response',
+                  `${operation.id}.responses.${response.status}.content.${mediaType}`,
+                  prefix,
+                );
+                contentTypes.push(
+                  `readonly ${propertyKey(mediaType)}: {readonly bodyKind: '${representation.kind}'; readonly schema: typeof ${parse.source};};`,
+                );
+                return [
+                  mediaType,
+                  object([
+                    ['bodyKind', literal(representation.kind)],
+                    ['schema', parse],
+                  ]),
+                ];
+              },
+            ),
+          ),
+        ]);
+        schemaType = `readonly content: {${contentTypes.join('')}};`;
       }
       types.push(
         `readonly ${response.status}: { readonly bodyKind: '${response.body.kind}'; readonly headers: { ${headerTypes.join('')} }; ${schemaType} };`,
@@ -306,11 +325,14 @@ function operationExpression(
   ];
   if (operation.body.kind === 'multipart')
     entries.push(['multipart', data(operation.body.fields)]);
+  else if (operation.body.kind !== 'none')
+    entries.push(['contentType', literal(operation.body.contentType)]);
   renderer.typeImports.add('Operation');
   renderer.typeImports.add('Invalid');
   const bodyKind =
-    operation.body.kind === 'json' && !bodyRequired(operation.body)
-      ? "'json' | 'none'"
+    (operation.body.kind === 'json' || operation.body.kind === 'text') &&
+    !bodyRequired(operation.body)
+      ? `'${operation.body.kind}' | 'none'`
       : `'${operation.body.kind}'`;
   return {
     expression: call(identifier('defineOperation'), [object(entries)]),

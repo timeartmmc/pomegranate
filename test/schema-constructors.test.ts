@@ -97,9 +97,9 @@ void test('every consumer fails and names an issue when a parser rejects silentl
     headers: { 'x-required': { required: true, schema: silentText } },
     responses: {
       200: {
-        bodyKind: 'json',
+        bodyKind: 'content',
         headers: { 'x-trace': { required: true, schema: silentText } },
-        schema: silent,
+        content: { 'application/json': { bodyKind: 'json', schema: silent } },
       },
     },
   } as const;

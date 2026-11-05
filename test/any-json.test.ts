@@ -27,37 +27,44 @@ import type { Schema } from './schema-helpers.ts';
 void test('empty schemas accept every JSON type through aliases, containers and protocol boundaries', async (t) => {
   const samples = anyJsonSamples;
   const reference = new Ajv2020().compile({});
-  const document = anyJsonFixture();
-  const before = structuredClone(document);
-  const root = await generatedTestWorkspace(
-    t,
-    await compile(document, anyJsonSelection),
-  );
-  assert.deepEqual(document, before);
-  const [input, output, nullable] = await Promise.all([
-    importGenerated<StandaloneModule>(root, 'standalone.input.ts'),
-    importGenerated<StandaloneModule>(root, 'standalone.output.ts'),
-    importGenerated<StandaloneModule>(root, 'standalone.nullable.ts'),
-  ]);
-  const client = await importGenerated<RuntimeClient>(root, 'client.json.ts');
-  verifyAnyJson(client, input, output);
-  for (const sample of samples) {
-    assert.equal(reference(sample), true);
-    assert.deepEqual(nullable.schema.parse(sample), sample);
+  for (const version of ['3.0.4', '3.1.2']) {
+    const document = anyJsonFixture();
+    document.openapi = version;
+    if (version.startsWith('3.0.'))
+      Object.assign(document.components.schemas, {
+        Nullable: { nullable: true },
+      });
+    const before = structuredClone(document);
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(document, anyJsonSelection),
+    );
+    assert.deepEqual(document, before);
+    const [input, output, nullable] = await Promise.all([
+      importGenerated<StandaloneModule>(root, 'standalone.input.ts'),
+      importGenerated<StandaloneModule>(root, 'standalone.output.ts'),
+      importGenerated<StandaloneModule>(root, 'standalone.nullable.ts'),
+    ]);
+    const client = await importGenerated<RuntimeClient>(root, 'client.json.ts');
+    verifyAnyJson(client, input, output);
+    for (const sample of samples) {
+      assert.equal(reference(sample), true);
+      assert.deepEqual(nullable.schema.parse(sample), sample);
+    }
+    const list = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.list.ts',
+    );
+    const bag = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.bag.ts',
+    );
+    assert.deepEqual(list.schema.parse(samples), samples);
+    assert.deepEqual(bag.schema.parse({ values: samples, scalar: true }), {
+      values: samples,
+      scalar: true,
+    });
   }
-  const list = await importGenerated<StandaloneModule>(
-    root,
-    'standalone.list.ts',
-  );
-  const bag = await importGenerated<StandaloneModule>(
-    root,
-    'standalone.bag.ts',
-  );
-  assert.deepEqual(list.schema.parse(samples), samples);
-  assert.deepEqual(bag.schema.parse({ values: samples, scalar: true }), {
-    values: samples,
-    scalar: true,
-  });
 });
 
 void test('arbitrary JSON values are detached, preserve payload keys, and retain directional projection', async (t) => {
@@ -114,10 +121,11 @@ void test('arbitrary JSON values are detached, preserve payload keys, and retain
   assert.equal(shareQueryData(copied, next), copied);
 });
 
-void test('empty schemas reject non-JSON values and missing required values', async (t) => {
+void test('empty schemas reject non-JSON values and missing required values without synthesizing defaults', async (t) => {
   const document = anyJsonFixture({
     title: 'Any JSON',
     description: 'Annotation only',
+    default: { defaulted: true },
   });
   const root = await generatedTestWorkspace(
     t,

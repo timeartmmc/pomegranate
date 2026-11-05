@@ -180,9 +180,9 @@ const invalidSchemas: [string, unknown, RegExp][] = [
     /multipleOf.*positive number/,
   ],
   [
-    'null-only enum with unknown format',
-    { type: ['string', 'null'], enum: [null], format: 'idn-email' },
-    /unsupported format/,
+    'null-only enum with malformed format',
+    { type: ['string', 'null'], enum: [null], format: false },
+    /format.*expected a string/,
   ],
   [
     'null-only enum with malformed pattern',

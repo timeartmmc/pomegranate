@@ -139,6 +139,7 @@ void test('shared execution cannot attest a fabricated request parser as another
       status: 404,
       headers: {},
       validatedHeaders: {},
+      contentType: 'application/json',
       data: { detail: 7 },
     }),
   } as const;

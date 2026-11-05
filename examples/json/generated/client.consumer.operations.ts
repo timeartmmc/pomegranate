@@ -316,14 +316,24 @@ function define_operation_getWidget(): Operation<
   Exclude<ReturnType<typeof operation_getWidget_options>, Invalid>,
   {
     readonly 200: {
-      readonly bodyKind: 'json';
+      readonly bodyKind: 'content';
       readonly headers: {};
-      readonly schema: typeof parse_Widget_response;
+      readonly content: {
+        readonly 'application/json': {
+          readonly bodyKind: 'json';
+          readonly schema: typeof parse_Widget_response;
+        };
+      };
     };
     readonly 404: {
-      readonly bodyKind: 'json';
+      readonly bodyKind: 'content';
       readonly headers: {};
-      readonly schema: typeof parse_Problem_response;
+      readonly content: {
+        readonly 'application/json': {
+          readonly bodyKind: 'json';
+          readonly schema: typeof parse_Problem_response;
+        };
+      };
     };
   },
   'none'
@@ -342,8 +352,26 @@ function define_operation_getWidget(): Operation<
     options: operation_getWidget_options,
     headers: {},
     responses: {
-      200: { bodyKind: 'json', headers: {}, schema: parse_Widget_response },
-      404: { bodyKind: 'json', headers: {}, schema: parse_Problem_response },
+      200: {
+        bodyKind: 'content',
+        headers: {},
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: parse_Widget_response,
+          },
+        },
+      },
+      404: {
+        bodyKind: 'content',
+        headers: {},
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: parse_Problem_response,
+          },
+        },
+      },
     },
   });
 }
@@ -354,32 +382,47 @@ function define_operation_prepareWidget(): Operation<
   Exclude<ReturnType<typeof operation_prepareWidget_options>, Invalid>,
   {
     readonly 200: {
-      readonly bodyKind: 'json';
+      readonly bodyKind: 'content';
       readonly headers: {
         readonly 'x-request-id': {
           readonly required: true;
           readonly schema: typeof operation_prepareWidget_response_200_header_0_part0;
         };
       };
-      readonly schema: typeof parse_Refusal_response;
+      readonly content: {
+        readonly 'application/json': {
+          readonly bodyKind: 'json';
+          readonly schema: typeof parse_Refusal_response;
+        };
+      };
     };
     readonly 202: {
-      readonly bodyKind: 'json';
+      readonly bodyKind: 'content';
       readonly headers: {
         readonly 'x-request-id': {
           readonly required: true;
           readonly schema: typeof operation_prepareWidget_response_202_header_0_part0;
         };
       };
-      readonly schema: typeof parse_Pending_response;
+      readonly content: {
+        readonly 'application/json': {
+          readonly bodyKind: 'json';
+          readonly schema: typeof parse_Pending_response;
+        };
+      };
     };
     readonly 400: {
-      readonly bodyKind: 'json';
+      readonly bodyKind: 'content';
       readonly headers: {};
-      readonly schema: typeof parse_Problem_response;
+      readonly content: {
+        readonly 'application/json': {
+          readonly bodyKind: 'json';
+          readonly schema: typeof parse_Problem_response;
+        };
+      };
     };
     readonly 409: {
-      readonly bodyKind: 'json';
+      readonly bodyKind: 'content';
       readonly headers: {
         readonly 'retry-after': {
           readonly required: false;
@@ -390,7 +433,12 @@ function define_operation_prepareWidget(): Operation<
           readonly schema: typeof operation_prepareWidget_response_409_header_1_part0;
         };
       };
-      readonly schema: typeof parse_Conflict_response;
+      readonly content: {
+        readonly 'application/json': {
+          readonly bodyKind: 'json';
+          readonly schema: typeof parse_Conflict_response;
+        };
+      };
     };
   },
   'json'
@@ -416,28 +464,47 @@ function define_operation_prepareWidget(): Operation<
     },
     responses: {
       200: {
-        bodyKind: 'json',
+        bodyKind: 'content',
         headers: {
           'x-request-id': {
             required: true,
             schema: operation_prepareWidget_response_200_header_0_part0,
           },
         },
-        schema: parse_Refusal_response,
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: parse_Refusal_response,
+          },
+        },
       },
       202: {
-        bodyKind: 'json',
+        bodyKind: 'content',
         headers: {
           'x-request-id': {
             required: true,
             schema: operation_prepareWidget_response_202_header_0_part0,
           },
         },
-        schema: parse_Pending_response,
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: parse_Pending_response,
+          },
+        },
       },
-      400: { bodyKind: 'json', headers: {}, schema: parse_Problem_response },
+      400: {
+        bodyKind: 'content',
+        headers: {},
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: parse_Problem_response,
+          },
+        },
+      },
       409: {
-        bodyKind: 'json',
+        bodyKind: 'content',
         headers: {
           'retry-after': {
             required: false,
@@ -448,9 +515,15 @@ function define_operation_prepareWidget(): Operation<
             schema: operation_prepareWidget_response_409_header_1_part0,
           },
         },
-        schema: parse_Conflict_response,
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: parse_Conflict_response,
+          },
+        },
       },
     },
+    contentType: 'application/json',
   });
 }
 export const operation_prepareWidget: ReturnType<

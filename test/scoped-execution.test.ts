@@ -31,14 +31,19 @@ function operation(onValidate: () => void = () => {}) {
     headers: {},
     responses: {
       200: {
-        bodyKind: 'json',
+        bodyKind: 'content',
         headers: {},
-        schema: labelled(onValidate),
+        content: {
+          'application/json': {
+            bodyKind: 'json',
+            schema: labelled(onValidate),
+          },
+        },
       },
       401: {
-        bodyKind: 'json',
+        bodyKind: 'content',
         headers: {},
-        schema: detail,
+        content: { 'application/json': { bodyKind: 'json', schema: detail } },
       },
     },
   });
@@ -204,7 +209,15 @@ void test('private mutable bodies preserve special map keys, -0, and deeply nest
     parameters: [],
     options: noOptions,
     headers: {},
-    responses: { 200: { bodyKind: 'json', headers: {}, schema: jsonValue } },
+    responses: {
+      200: {
+        bodyKind: 'content',
+        headers: {},
+        content: {
+          'application/json': { bodyKind: 'json', schema: jsonValue },
+        },
+      },
+    },
   });
   const depth = 12_000;
   const body =
@@ -289,7 +302,15 @@ void test('inspection copies preserve own data when Object.prototype contains a 
       parameters: [],
       options: noOptions,
       headers: {},
-      responses: { 200: { bodyKind: 'json', headers: {}, schema: jsonValue } },
+      responses: {
+        200: {
+          bodyKind: 'content',
+          headers: {},
+          content: {
+            'application/json': { bodyKind: 'json', schema: jsonValue },
+          },
+        },
+      },
     });
     const bound = defineCall({
       operation: raw,

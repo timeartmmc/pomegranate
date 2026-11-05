@@ -195,6 +195,9 @@ function walkDocument(
         frame.shape.keywords &&
         descriptor.enumerable &&
         key.startsWith('x-') &&
+        // A concrete media type can itself start with x-. The slash makes it
+        // a content declaration rather than an extension keyword.
+        (frame.context !== 'content' || !key.includes('/')) &&
         key !== 'x-pom' &&
         key !== 'x-pom-policy'
       ) {
