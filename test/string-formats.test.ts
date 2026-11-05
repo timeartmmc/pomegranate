@@ -9,7 +9,7 @@ import { parseYaml } from '../dist/yaml.js';
 import { generatedWorkspace } from './generated-workspace.ts';
 import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 
-const samples: Record<'email' | 'uri', [string, boolean][]> = {
+const samples: Record<'email' | 'uri' | 'byte', [string, boolean][]> = {
   email: [
     ['a+tag@example.invalid', true],
     ['~a@example.invalid', true],
@@ -54,6 +54,40 @@ const samples: Record<'email' | 'uri', [string, boolean][]> = {
     ['"a\tb"@example.invalid', false],
     ['"\u007f"@example.invalid', false],
     ['a'.repeat(65) + '@example.invalid', true],
+  ],
+  byte: [
+    ['', true],
+    ['Zg==', true],
+    ['Zm8=', true],
+    ['Zm9v', true],
+    ['Zm9vYg==', true],
+    ['Zm9vYmE=', true],
+    ['Zm9vYmFy', true],
+    ['AAEC/v8=', true],
+    // RFC 4648 §3.5 permits decoders to accept nonzero unused padding bits.
+    ['Zh==', true],
+    ['Zm9=', true],
+    ['A', false],
+    ['Zg', false],
+    ['Zg=', false],
+    ['Zm8', false],
+    ['Zg===', false],
+    ['Z===', false],
+    ['====', false],
+    ['=Zg=', false],
+    ['Z=g=', false],
+    ['Zg==AAAA', false],
+    ['Zg== ', false],
+    [' Zg==', false],
+    ['Zg==\n', false],
+    ['Zg==\r\n', false],
+    ['Zm9v\nYmFy', false],
+    ['Zg==\t', false],
+    ['Zg==\u00a0', false],
+    ['Zg__', false],
+    ['Zg--', false],
+    ['Ｚg==', false],
+    ['Zg==\0', false],
   ],
   uri: [
     ['https://EXAMPLE.invalid:443/a/../b?x=%2f#Mixed', true],
@@ -106,7 +140,7 @@ const samples: Record<'email' | 'uri', [string, boolean][]> = {
   ],
 };
 
-for (const format of ['email', 'uri'] as const) {
+for (const format of ['email', 'uri', 'byte'] as const) {
   void test(`${format} validates the same syntax in request/response parsers and compiler literals`, async (t) => {
     const document = {
       openapi: '3.1.0',
@@ -286,4 +320,58 @@ void test('format references intersect constraints and defaults remain annotatio
     compile(sibling, options),
     /format.*unsupported keyword/,
   );
+});
+
+void test('password is a string presentation hint and preserves nullable constraints without generated checks', async () => {
+  for (const modern of [true, false]) {
+    const value = {
+      type: 'string',
+      format: 'password',
+      minLength: 2,
+      maxLength: 8,
+      pattern: '^ok',
+      enum: ['ok', 'okay'],
+    };
+    const document = {
+      openapi: modern ? '3.1.2' : '3.0.4',
+      info: { title: 'Synthetic password hints', version: '1' },
+      paths: {},
+      components: {
+        schemas: {
+          Value: value,
+          Alias: { $ref: '#/components/schemas/Value' },
+          Nullable: modern
+            ? { type: ['string', 'null'], format: 'password' }
+            : { type: 'string', nullable: true, format: 'password' },
+        },
+      },
+    };
+    const options = {
+      clients: [],
+      standalone: {
+        alias: { schema: '#/components/schemas/Alias', usage: 'request' },
+        nullable: {
+          schema: '#/components/schemas/Nullable',
+          usage: 'response',
+        },
+      },
+    } as const;
+    const expected = structuredClone(document);
+    Reflect.deleteProperty(expected.components.schemas.Value, 'format');
+    Reflect.deleteProperty(expected.components.schemas.Nullable, 'format');
+    assert.deepEqual(
+      await compile(document, options),
+      await compile(expected, options),
+    );
+    for (const format of ['password', 'byte'])
+      for (const type of ['number', 'integer', 'boolean', 'object', 'array']) {
+        const invalid = structuredClone(document);
+        Object.assign(invalid.components.schemas, { Value: { type, format } });
+        await assert.rejects(compile(invalid, options), (error) => {
+          assert.ok(error instanceof ContractError);
+          assert.equal(error.location, 'components.schemas.Value.format');
+          return true;
+        });
+      }
+  }
 });

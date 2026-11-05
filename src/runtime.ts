@@ -533,6 +533,14 @@ export const int64StringFormat: StringFormatRule = {
   check: int64String,
   message: 'expected a signed 64-bit decimal integer string',
 };
+const bytePattern = /^[A-Za-z0-9+/]*={0,2}$/u;
+export const byteFormat: StringFormatRule = {
+  // RFC 4648 §§3.2–3.3 requires standard padding and rejects nonalphabet data.
+  // Checking spelling preserves the encoded string; no byte conversion is needed.
+  check: (value: string): boolean =>
+    value.length % 4 === 0 && bytePattern.test(value),
+  message: 'expected a base64 string',
+};
 export const emailFormat: StringFormatRule = {
   check: email,
   message: 'expected an email address',
@@ -580,6 +588,7 @@ export const uuidFormat: StringFormatRule = {
 // The compiler uses the same predicates for declared literal values.
 export const formats = {
   int64: (value: string): boolean => int64StringFormat.check(value),
+  byte: (value: string): boolean => byteFormat.check(value),
   date: (value: string): boolean => dateFormat.check(value),
   'date-time': (value: string): boolean => dateTimeFormat.check(value),
   uuid: (value: string): boolean => uuidFormat.check(value),

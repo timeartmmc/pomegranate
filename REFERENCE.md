@@ -277,7 +277,7 @@ validation, including operations excluded from output.
 | Bodies      | Required or optional JSON/text bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON, text, or bodyless responses; string response headers; local component references and aliases                                                                                                            |
 | Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; acyclic local component references; restricted unions and maps described below                                                            |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                  |
-| Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, and `ipv6`; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                                                             |
+| Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, `ipv6`, and `byte`; string `password` hint; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                             |
 
 Schema syntax follows the declared OpenAPI version. OpenAPI 3.0 schemas use
 `nullable: true` alongside a single explicit `type`, and boolean
@@ -549,6 +549,18 @@ Reference constraints may narrow an existing enum; empty literal intersections
 and contradictory bounds also fail across reference chains. These checks
 diagnose supported contradictions without attempting general schema
 satisfiability analysis.
+
+`type: "string", format: "password"` is a presentation hint, as defined in
+[OpenAPI's format registry](https://spec.openapis.org/registry/format/password).
+POM retains ordinary string constraints and performs no masking, transformation,
+or additional password validation.
+
+`type: "string", format: "byte"` validates standard
+[RFC 4648 base64](https://www.rfc-editor.org/rfc/rfc4648.html#section-4).
+Empty strings are valid. Padding is required when needed; whitespace, misplaced
+or excess padding, and the base64url alphabet are rejected. Validation preserves
+the encoded string without decoding bytes, and does not require unused padding
+bits to be zero. String lengths and patterns still constrain the encoded text.
 
 `date-time` requires a calendar date, seconds, and a `Z` or `±HH:MM` timezone.
 Fractional seconds and lowercase `t`/`z` are accepted without changing the input

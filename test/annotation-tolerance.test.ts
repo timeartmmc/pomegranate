@@ -43,7 +43,7 @@ void test('undeclared formats diagnose across schema kinds, nullable types, dial
   for (const version of ['3.0.4', '3.1.2'])
     for (const schema of schemas) {
       await compile(document(schema, version), selection);
-      for (const format of ['password', 'vendor-specific', '']) {
+      for (const format of ['unregistered', 'vendor-specific', '']) {
         const input = document({ ...schema, format }, version);
         const before = structuredClone(input);
         await assert.rejects(

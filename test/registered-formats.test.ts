@@ -205,6 +205,8 @@ void test('registry definitions validate fully even when unused and cannot overr
       'float',
       'double',
       'binary',
+      'password',
+      'byte',
     ].map((name) => ({ [name]: { type: 'string', pattern: 'x' } })),
     {
       slug: {

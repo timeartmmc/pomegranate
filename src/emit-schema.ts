@@ -68,6 +68,7 @@ export type ObjectField = Readonly<{
 const stringRules = ['minLength', 'maxLength', 'pattern'] as const;
 const formatHelpers = {
   int64: 'int64StringFormat',
+  byte: 'byteFormat',
   date: 'dateFormat',
   'date-time': 'dateTimeFormat',
   uuid: 'uuidFormat',

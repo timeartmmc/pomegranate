@@ -21,8 +21,10 @@ export function toleranceFixture(modern = true) {
       properties: {
         value: { $ref: '#/components/schemas/Value' },
         nullable,
+        encoded: { type: 'string', format: 'byte' },
         password: {
           type: 'string',
+          format: 'password',
           minLength: 2,
           default: 'Server documentation',
           'x-vendor': true,
@@ -92,11 +94,16 @@ export function verifyTolerance(
     Number.MAX_SAFE_INTEGER,
   ]) {
     assert.equal(standalone.schema.parse(value), value);
-    const input = { value, nullable: null, password: 'ok' };
+    const input = { value, nullable: null, password: 'ok', encoded: 'Zg==' };
     const request = post.build({ body: input });
     assert.deepEqual(request.body, input);
     input.value = 7;
-    assert.deepEqual(request.body, { value, nullable: null, password: 'ok' });
+    assert.deepEqual(request.body, {
+      value,
+      nullable: null,
+      password: 'ok',
+      encoded: 'Zg==',
+    });
     const response = get.parseResponse({
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -157,6 +164,18 @@ export function verifyTolerance(
     () => post.build({ body: { value: 1, password: 'x' } }),
     client.RequestValidationError,
   );
+  assert.throws(
+    () => post.build({ body: { value: 1, encoded: 'not base64' } }),
+    client.RequestValidationError,
+  );
+  assert.equal(
+    post.parseResponse({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: 1, encoded: 'not base64' }),
+    }).kind,
+    'protocol',
+  );
   const response = post.parseResponse({
     status: 200,
     headers: { 'Content-Type': 'application/json' },
@@ -187,7 +206,7 @@ export function verifyTolerance(
 export const toleranceConsumer = `
 import { operations } from './client.consumer.ts';
 import { schema } from './standalone.int64.ts';
-operations['POST /values'].build({body:{value:9007199254740991,nullable:null,password:'ok'}});
+operations['POST /values'].build({body:{value:9007199254740991,nullable:null,password:'ok',encoded:'Zg=='}});
 operations['GET /value'].build({query:{amount:-9007199254740991}});
 // @ts-expect-error Numeric int64 retains number inputs.
 operations['POST /values'].build({body:{value:'1'}});
@@ -197,6 +216,8 @@ operations['POST /values'].build({body:{value:1n}});
 operations['POST /values'].build({body:{value:1,nullable:'1'}});
 // @ts-expect-error String constraints retain the base string type.
 operations['POST /values'].build({body:{value:1,password:1}});
+// @ts-expect-error Base64 values remain strings.
+operations['POST /values'].build({body:{value:1,encoded:1}});
 // @ts-expect-error Defaults do not make required properties optional.
 operations['POST /values'].build({body:{}});
 const parsed:number=schema.parse(1); void parsed;

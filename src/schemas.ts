@@ -30,13 +30,13 @@ import { schemaAccess } from './directional.js';
 import { formats } from './runtime.js';
 import type { StringFormat } from './runtime.js';
 
-const formatNames = Object.keys(formats);
+const formatNames = [...Object.keys(formats), 'password'];
 const expectedFormats = `${formatNames.slice(0, -1).join(', ')} or ${formatNames.at(-1)}`;
 type FormatRegistry = Readonly<Record<string, RegisteredStringFormat>>;
 function builtInFormat(name: string): boolean {
   return (
     Object.hasOwn(formats, name) ||
-    ['int32', 'int64', 'float', 'double', 'binary'].includes(name)
+    ['int32', 'int64', 'float', 'double', 'binary', 'password'].includes(name)
   );
 }
 
@@ -499,7 +499,12 @@ function normalizeScalar(
   const allowed = literals(value, kind, location, nullable);
   let limits = constraints(value, location);
   let format: SchemaFormat | undefined;
-  if (Object.hasOwn(value, 'format')) {
+  // The password format is a presentation hint, not a validation assertion.
+  // Preserve ordinary string rules without emitting an always-true predicate.
+  if (
+    Object.hasOwn(value, 'format') &&
+    !(kind === 'string' && value.format === 'password')
+  ) {
     if (
       typeof value.format === 'string' &&
       Object.hasOwn(registered, value.format)
