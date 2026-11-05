@@ -70,7 +70,6 @@ async function executeRaw(
     headers: request.validateHeaders({
       ...request.headers,
       ...authHeaders,
-      Accept: 'application/json',
       ...(request.bodyKind === 'json'
         ? { 'Content-Type': 'application/json' }
         : {}),
