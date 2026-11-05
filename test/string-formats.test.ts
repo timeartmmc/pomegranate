@@ -269,18 +269,12 @@ void test('format references intersect constraints and defaults remain annotatio
   )) as StandaloneModule;
   assert.deepEqual(defaults.parse({}), {});
   assert.equal(defaults.safeParse({ email: 'annotation only' }).success, false);
-  await assert.rejects(
-    compile(document, {
-      clients: [],
-      standalone: {
-        defaults: {
-          schema: '#/components/schemas/Defaults',
-          usage: 'response',
-        },
-      },
-    }),
-    /response schemas must not declare defaults/,
-  );
+  await compile(document, {
+    clients: [],
+    standalone: {
+      defaults: { schema: '#/components/schemas/Defaults', usage: 'response' },
+    },
+  });
   for (const format of ['idn-email', 'iri', 'uri-reference', 'url']) {
     const input = structuredClone(document);
     Object.assign(input.components.schemas.Email, { format });

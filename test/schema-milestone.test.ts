@@ -105,13 +105,12 @@ void test('standalone-only generation retains transitive schemas without HTTP cl
   await assert.rejects(compile(document, { clients: [] }), /nonempty/);
 });
 
-void test('standalone roots validate names, references, direction and response defaults', async () => {
+void test('standalone roots validate names, references and direction', async () => {
   for (const standalone of [
     {
       '../escape': { schema: '#/components/schemas/Shape', usage: 'response' },
     },
     { message: { schema: '#/components/schemas/Missing', usage: 'response' } },
-    { message: { schema: '#/components/schemas/Defaults', usage: 'response' } },
     { message: { schema: '#/components/schemas/Shape', usage: 'either' } },
   ])
     await assert.rejects(
@@ -405,13 +404,13 @@ for (const [name, mutate, pattern] of [
     /Unused.pattern/,
   ],
   [
-    'response defaults through maps and unions',
+    'malformed defaults through maps and unions',
     (d) => {
       Object.assign(d.components.schemas.Circle.properties.radius, {
-        default: 1,
+        default: undefined,
       });
     },
-    /default.*response schemas/,
+    /default.*expected an object/,
   ],
   [
     'reference sibling type mismatch',

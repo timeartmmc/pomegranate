@@ -345,17 +345,17 @@ void test('unused response definitions undergo full response schema and header v
       /unresolved reference/,
     ],
     [
-      'visible response default',
+      'malformed response default',
       {
         description: 'Invalid',
         content: {
           'application/json': {
-            schema: { type: 'string', default: 'annotation' },
+            schema: { type: 'string', default: undefined },
           },
         },
       },
       '.content.application/json.schema.default',
-      /response schemas must not declare defaults/,
+      /expected an object/,
     ],
     [
       'write-only root',
@@ -387,15 +387,15 @@ void test('unused response definitions undergo full response schema and header v
       /transport-owned response header/,
     ],
     [
-      'header default',
+      'malformed header default',
       {
         description: 'Invalid',
         headers: {
-          Count: { schema: { type: 'string', default: 'annotation' } },
+          Count: { schema: { type: 'string', default: undefined } },
         },
       },
       '.headers.Count.schema.default',
-      /response schemas must not declare defaults/,
+      /expected an object/,
     ],
   ];
   for (const [name, definition, suffix, message] of cases) {

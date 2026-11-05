@@ -221,7 +221,7 @@ For a non-HTTP payload, add an explicit root to configuration:
 
 This emits `standalone.message.ts` with `schema`, `Input`, and `Output` exports
 and all transitive schema dependencies. Request roots reject unknown fields;
-response roots strip them and forbid defaults. `clients` may be empty when at
+response roots strip them. `clients` may be empty when at
 least one standalone root is selected. The complete input still receives
 validation, including operations excluded from output.
 
@@ -313,7 +313,7 @@ Supported schema composition is deliberately limited:
   are required. Scalar `enum` and `const` still restrict accepted values,
   including whether `null` is accepted. Existing parameter and multipart
   restrictions still apply.
-- `oneOf` uses component references without sibling constraints or defaults and
+- `oneOf` uses component references without sibling constraints and
   requires an explicit discriminator mapping. Each branch requires the
   discriminator field with a distinct string literal; the mapping must cover
   every branch exactly once.
@@ -329,10 +329,11 @@ leading digits. References, discriminator mappings, and generated schema maps
 preserve the exact names. `__proto__`, `prototype`, and `constructor` remain
 reserved names.
 
-Request `default` values are annotations: they do not fill omitted fields,
+Request and response `default` values are annotations: they do not fill omitted fields,
 change requiredness, or replace explicit `undefined`. Their values must be JSON;
-they are not checked against the schema's type, bounds or enum. Defaults in response
-schemas are rejected, including through references, maps, and union branches.
+they are not checked against the schema's type, bounds, formats, enum, or required
+properties. This holds through references, maps, arrays, and union branches.
+Defaults never supply a missing response field or rescue an invalid response value.
 
 Schemas support at most 128 structural levels, including structure behind
 references. Pure aliases add no levels. Each inline schema is limited to 32
@@ -353,7 +354,7 @@ scientific notation, without an epsilon tolerance.
 that range and cannot widen it. Types remain `number`, with runtime integer
 and range checks and no coercion. Nullable integer schemas support the same
 format. `int32` on other types, format siblings on references, and `int64`
-remain unsupported. Request defaults keep the annotation behavior above.
+remain unsupported. Defaults keep the annotation behavior above.
 
 Patterns use ECMAScript 2024 syntax in Unicode (`u`) mode with Unicode 16.0
 property names, matching the supported Node minimums. Newer syntax, including
@@ -459,7 +460,7 @@ POM: components.schemas.WidgetId.format: unsupported format; expected date, date
 ```
 
 External or recursive references, general unions and other type arrays, objects
-mixing fixed properties with dynamic entries, other formats, response defaults,
+mixing fixed properties with dynamic entries, other formats,
 optional multipart request bodies, status ranges/default
 responses, non-bearer security schemes and external security-scheme references
 remain unsupported.
@@ -529,8 +530,9 @@ alias remains true even when a sibling says false. POM rejects both flags being
 true at the same schema, including through aliases. Entire source declarations,
 including excluded fields, still receive syntax, reference and constraint checks.
 Usage checks then inspect visible fields: an excluded write-only field may have
-a request default or binary schema without affecting response validation.
-Visible response defaults and binary values retain their existing restrictions.
+a binary schema without affecting response validation. Visible binary values
+retain their multipart-only restriction. Defaults remain documentation in both
+directions.
 
 Projection operates at fixed object property boundaries. If an active flag would
 exclude an entire body, parameter/header, standalone root, array item or map

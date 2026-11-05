@@ -281,10 +281,10 @@ void test('nullable syntax preserves parameter, multipart and reference restrict
           reference: {
             type: ['string', 'null'],
             const: null,
-            default: null,
+            default: undefined,
           },
         }),
-      /response schemas must not declare defaults/,
+      /default.*expected an object/,
     ],
   ] satisfies [(d: Fixture) => void, RegExp][]) {
     const document = fixture();

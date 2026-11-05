@@ -262,9 +262,9 @@ export function normalizeSchema(
   };
   // Defaults describe server behavior. Never make an omitted request field
   // present, or let a default rescue a missing required value.
-  if (!Object.hasOwn(value, 'default')) return schema;
-  jsonAnnotation(value.default, `${location}.default`);
-  return { ...schema, hasDefault: true };
+  if (Object.hasOwn(value, 'default'))
+    jsonAnnotation(value.default, `${location}.default`);
+  return schema;
 }
 
 export function componentName(name: string, location: string): string {
@@ -713,14 +713,10 @@ function validateUnion(
   }
   const { propertyName, mapping } = schema.discriminator;
   const names = schema.branches.map((branch) => {
-    if (
-      branch.kind !== 'ref' ||
-      Object.keys(branch.constraints).length > 0 ||
-      branch.hasDefault
-    )
+    if (branch.kind !== 'ref' || Object.keys(branch.constraints).length > 0)
       fail(
         location,
-        'discriminated oneOf branches must be component references without constraints or defaults',
+        'discriminated oneOf branches must be component references without constraints',
       );
     return branch.name;
   });
@@ -837,8 +833,6 @@ function validateUsage(
         `${usage === 'response' ? 'writeOnly' : 'readOnly'} schemas may only be omitted as object properties in ${usage === 'response' ? 'responses' : 'requests'}`,
       );
   }
-  if (usage === 'response' && schema.hasDefault)
-    fail(`${location}.default`, 'response schemas must not declare defaults');
   if (
     schema.kind === 'binary' &&
     usage !== 'component' &&
@@ -861,17 +855,12 @@ function validateUsage(
               ? objectConstraints
               : [];
     // Alias depth is independent of data depth. Walk long chains iteratively,
-    // checking intermediate defaults and constraints in this usage context.
+    // checking intermediate constraints in this usage context.
     let target: Schema = schema;
     let targetLocation = location;
     while (target.kind === 'ref') {
       if (target !== schema && checked.has(target)) break;
       checked.add(target);
-      if (usage === 'response' && target.hasDefault)
-        fail(
-          `${targetLocation}.default`,
-          'response schemas must not declare defaults',
-        );
       for (const name of Object.keys(target.constraints))
         if (!allowed.includes(name))
           fail(
@@ -965,7 +954,7 @@ export function orderSchemas(
 
 // A normalized schema table belongs to one descriptor and is never mutated.
 // Cache only terminal resolution: usage checks must still visit intermediate
-// defaults and sibling constraints. Weak keys release the cache with its table,
+// sibling constraints. Weak keys release the cache with its table,
 // and compiling the same mutable input again creates a separate normalized table.
 const terminalSchemas = new WeakMap<
   Readonly<Record<string, Schema>>,

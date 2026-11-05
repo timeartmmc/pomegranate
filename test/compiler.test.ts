@@ -364,13 +364,13 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /format.*unsupported format/,
   ],
   [
-    'response default',
+    'malformed response default',
     (d) => {
       Object.assign(d.components.schemas.Pending.properties.reference, {
-        default: 'fabricated',
+        default: undefined,
       });
     },
-    /default.*response schemas must not declare defaults/,
+    /default.*expected an object/,
   ],
   [
     'dynamic map',

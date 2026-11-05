@@ -109,7 +109,6 @@ void test('projection preserves alias identity and annotations while separating 
   assert.ok(alias.kind === 'ref');
   assert.equal(alias.name, 'Id');
   assert.equal(alias.location, 'components.schemas.IdAlias.$ref');
-  assert.equal(projection.schemas.request.Secret?.hasDefault, true);
   assert.equal(projection.schemas.response.Secret?.writeOnly, true);
 });
 
@@ -286,15 +285,13 @@ void test('excluded defaults and binaries do not enter response usage, while ret
   const retained = projectSchemas(
     source({ Value: { type: 'string', default: 'annotation' } }),
   );
-  assert.throws(
-    () =>
-      validateSchema(
-        present(retained.schemas.response.Value),
-        retained.schemas.response,
-        'reply',
-        'response',
-      ),
-    /must not declare defaults/,
+  assert.doesNotThrow(() =>
+    validateSchema(
+      present(retained.schemas.response.Value),
+      retained.schemas.response,
+      'reply',
+      'response',
+    ),
   );
 });
 

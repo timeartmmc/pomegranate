@@ -18,7 +18,6 @@ export type Constraints = {
 };
 
 export type Schema = {
-  readonly hasDefault?: true;
   readonly readOnly?: true;
   readonly writeOnly?: true;
 } & (

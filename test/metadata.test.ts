@@ -409,8 +409,8 @@ void test('metadata never masks unsupported schema, policy or configuration sema
       /allOf.*unsupported keyword/,
     ],
     [
-      (d) => Object.assign(d.components.schemas.Widget, { default: {} }),
-      /response schemas must not declare defaults/,
+      (d) => Object.assign(d.components.schemas.Widget, { default: undefined }),
+      /default.*expected an object/,
     ],
     [
       (d) => Object.assign(preparation(d)['x-pom'], { deprecated: true }),

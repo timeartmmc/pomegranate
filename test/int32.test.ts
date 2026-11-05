@@ -277,7 +277,7 @@ void test('int32 defaults stay annotations without filling or changing requiredn
   assert.equal(schema.safeParse({}).success, false);
   assert.equal(schema.safeParse({ required: undefined }).success, false);
   assert.equal(schema.safeParse({ required: maximum + 1 }).success, false);
-  await assert.rejects(compile(input, roots), /default.*response schemas/);
+  await compile(input, roots);
 });
 
 void test('int32 operation builders, response parsers and declaration consumers agree', async (t) => {

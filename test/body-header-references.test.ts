@@ -416,9 +416,9 @@ void test('unused header definitions eagerly retain response schema constraints 
       /response headers require string/,
     ],
     [
-      { schema: { type: 'string', default: 'x' } },
+      { schema: { type: 'string', default: undefined } },
       '.schema.default',
-      /response schemas must not declare defaults/,
+      /expected an object/,
     ],
     [
       { schema: { type: 'string', format: 'binary' } },

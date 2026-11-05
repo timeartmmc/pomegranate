@@ -132,24 +132,20 @@ void test('forward reference graphs compile independently of alias depth and exe
   }
 });
 
-void test('long alias chains retain contextual restrictions on intermediate references', async () => {
+void test('long alias chains ignore defaults on intermediate references', async () => {
   const schemas = forwardAliases();
   schemas.Alias05000 = {
     ...entry(schemas, 'Alias05000'),
     default: 'annotation',
   };
-  await assert.rejects(
-    compile(documentWith(schemas), {
-      clients: [],
-      standalone: {
-        response: { schema: ref('Alias00000').$ref, usage: 'response' },
-      },
-    }),
-    (error) =>
-      error instanceof ContractError &&
-      error.location.endsWith('components.schemas.Alias05000.default') &&
-      /response schemas must not declare defaults/.test(error.message),
-  );
+  const selection = {
+    clients: [],
+    standalone: {
+      response: { schema: ref('Alias00000').$ref, usage: 'response' },
+    },
+  } as const;
+  const expected = await compile(documentWith(forwardAliases()), selection);
+  assert.deepEqual(await compile(documentWith(schemas), selection), expected);
 });
 
 void test('deep reference graphs retain exact cycle and missing-reference locations', async () => {
@@ -187,21 +183,21 @@ void test('schema ordering keeps dependencies before their users across shared b
   assert.deepEqual(descriptor.schemaOrder, ['Leaf', 'Left', 'Right', 'Root']);
 });
 
-for (const [name, media, field, message] of [
+for (const [name, media, field, expectedError] of [
   [
-    'request defaults',
+    'shared schemas with default annotations remain valid in requests and responses',
     'application/json',
     { type: 'string', default: 'annotation' },
-    /response schemas must not declare defaults/,
+    undefined,
   ],
   [
-    'multipart files',
+    'shared schemas allow binary fields only in multipart requests',
     'multipart/form-data',
     { type: 'string', format: 'binary' },
     /binary values are only supported in multipart/,
   ],
-] satisfies [string, string, Schema, RegExp][]) {
-  void test(`shared operation schemas retain response restrictions after validating ${name}`, async () => {
+] satisfies [string, string, Schema, RegExp | undefined][]) {
+  void test(name, async () => {
     const document = documentWith({
       Shared: {
         type: 'object',
@@ -237,12 +233,14 @@ for (const [name, media, field, message] of [
     Object.assign(operation.responses[200].content['application/json'], {
       schema: ref('Shared'),
     });
-    await assert.rejects(
-      compile(document, selection),
-      (error) =>
-        error instanceof ContractError &&
-        error.location.includes('responses.200') &&
-        message.test(error.message),
-    );
+    if (expectedError === undefined) await compile(document, selection);
+    else
+      await assert.rejects(
+        compile(document, selection),
+        (error) =>
+          error instanceof ContractError &&
+          error.location.includes('responses.200') &&
+          expectedError.test(error.message),
+      );
   });
 }
