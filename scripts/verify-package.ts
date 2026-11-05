@@ -1080,7 +1080,7 @@ try {
     assert.deepEqual(extensionDocument,extensionBefore);
     await assert.rejects(pom.compile(extensionDocument,{...extensionSelection,ignoreExtensions:['x-pom']}),/cannot be ignored/);
     const unsupportedVersion=structuredClone(extensionDocument);
-    unsupportedVersion.openapi='3.0.3';
+    unsupportedVersion.openapi='3.2.0';
     await assert.rejects(pom.compile(unsupportedVersion,extensionSelection),error=>error instanceof pom.ContractError&&error.location==='openapi');
     const semanticExtension=structuredClone(extensionBaseline);
     semanticExtension.components.parameters.Id['x-multi-segment']=true;

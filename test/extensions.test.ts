@@ -418,9 +418,9 @@ void test('configuration shares the allowlist boundary and failed generation/che
       ignoreExtensions = ['x-note', 'x-multi-segment'];
       message = /components.parameters.Id.x-multi-segment.*cannot be ignored/;
     } else {
-      invalid.openapi = '3.0.3';
+      invalid.openapi = '3.2.0';
       Object.assign(invalid.info, { 'x-multi-segment': true });
-      message = /^openapi: expected an OpenAPI 3\.1\.x version/;
+      message = /^openapi: expected an OpenAPI 3\.0\.x or 3\.1\.x version/;
     }
     await writeFile(
       configFile,

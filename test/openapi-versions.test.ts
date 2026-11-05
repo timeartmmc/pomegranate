@@ -37,7 +37,12 @@ void test('unsupported and malformed OpenAPI versions fail at the version field'
     '3.1.0 ',
     '3.1.0\n',
     '3.1.0\r\n',
-    '3.0.3',
+    '3.0',
+    '3.0.01',
+    '3.0.-1',
+    '3.0.0-rc.1',
+    '3.0.0+build',
+    '3.0.0\n',
     '3.2.0',
     '4.0.0',
   ]) {
@@ -54,7 +59,7 @@ void test('unsupported and malformed OpenAPI versions fail at the version field'
       const versionError = (error: unknown) =>
         error instanceof ContractError &&
         error.location === 'openapi' &&
-        /expected an OpenAPI 3\.1\.x version/.test(error.message);
+        /expected an OpenAPI 3\.0\.x or 3\.1\.x version/.test(error.message);
       const label = `${JSON.stringify(version)} with ${extension} extension`;
       await assert.rejects(compile(document, selection), versionError, label);
       assert.throws(() => buildDescriptor(document), versionError, label);

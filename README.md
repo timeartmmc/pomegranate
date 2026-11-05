@@ -1,6 +1,6 @@
 # Pomegranate
 
-Pomegranate (POM) compiles a supported subset of OpenAPI 3.1 JSON or YAML into
+Pomegranate (POM) compiles a supported subset of OpenAPI 3.0 and 3.1 JSON or YAML into
 TypeScript request builders, native validators, and response parsers keyed by
 HTTP status. Optional executable clients and TanStack Query factories use an
 application-supplied executor. Applications own transport, authentication,

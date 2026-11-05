@@ -44,6 +44,7 @@ import {
 } from './policy.js';
 import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
 import { projectSchemas } from './directional.js';
+import { normalizeOpenApi30 } from './openapi30.js';
 import {
   deprecatedAnnotation,
   exampleAnnotations,
@@ -78,6 +79,7 @@ type SchemaContext = Readonly<{
 }>;
 
 type OperationContext = Readonly<{
+  openApi30: boolean;
   vocabulary: PolicyVocabulary;
   schemas: SchemaContext;
   examples: ReadonlySet<string>;
@@ -800,6 +802,18 @@ function normalizeOperation(
     path,
     location,
   );
+  // Method restrictions belong to each binding. A YAML alias may reuse the same
+  // Operation Object across methods; memoized dialect lowering sees it
+  // only once and cannot enforce a rule that depends on its current method.
+  if (
+    context.openApi30 &&
+    (method === 'delete' || method === 'options') &&
+    Object.hasOwn(value, 'requestBody')
+  )
+    fail(
+      `${location}.requestBody`,
+      `${method.toUpperCase()} request bodies are unsupported in OpenAPI 3.0`,
+    );
   const body = requestBody(
     value,
     method,
@@ -832,13 +846,13 @@ function normalizeOperation(
 
 export function openApiDocument(input: unknown): Record<string, unknown> {
   const value = record(input, 'OpenAPI');
-  // OAS 3.1 patch releases clarify the same feature set. Match the whole value
+  // OAS patch releases clarify the same feature set. Match the whole value
   // so malformed versions, prereleases and trailing line breaks cannot pass.
   if (
     typeof value.openapi !== 'string' ||
-    /^3\.1\.(?:0|[1-9][0-9]*)$/.exec(value.openapi)?.[0] !== value.openapi
+    /^3\.[01]\.(?:0|[1-9][0-9]*)$/.exec(value.openapi)?.[0] !== value.openapi
   )
-    fail('openapi', 'expected an OpenAPI 3.1.x version');
+    fail('openapi', 'expected an OpenAPI 3.0.x or 3.1.x version');
   return value;
 }
 
@@ -846,7 +860,12 @@ export function buildDescriptor(
   input: unknown,
   membership: { surfaces?: unknown; formats?: unknown } = {},
 ): Descriptor {
-  const value = openApiDocument(input);
+  const source = openApiDocument(input);
+  const openApi30 =
+    typeof source.openapi === 'string' && source.openapi.startsWith('3.0.');
+  const value = openApi30
+    ? record(normalizeOpenApi30(source), 'OpenAPI')
+    : source;
   const registeredFormats = normalizeFormats(membership.formats);
   keys(
     value,
@@ -1009,6 +1028,7 @@ export function buildDescriptor(
       normalizeResponse(value, context, examples, headerComponents, location),
   );
   const operationContext: OperationContext = {
+    openApi30,
     vocabulary,
     schemas: context,
     examples,

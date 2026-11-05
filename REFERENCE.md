@@ -192,8 +192,9 @@ semantics, directly or through local aliases. Scheme comparison ignores case;
 declared scheme with an empty role array, such as `security: [{ WidgetSession: [] }]`.
 
 Security-scheme aliases use `$ref: "#/components/securitySchemes/<name>"`.
-Component names match `[A-Za-z0-9._-]+`. References may add string `summary`
-and `description` annotations; these do not change credential requirements.
+Component names match `[A-Za-z0-9._-]+`. In 3.1, references may add string
+`summary` and `description` annotations; these do not change credential
+requirements.
 Every chain must end at a supported bearer declaration. Missing targets,
 cycles, malformed references and semantic siblings fail at their declaration,
 including unused schemes. External references and encoded or escaped component
@@ -270,20 +271,52 @@ validation, including operations excluded from output.
 
 | Surface     | Current support                                                                                                                                                                                                                                                                                                                        |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input       | Local OpenAPI 3.1 JSON or YAML 1.2 with any OpenAPI patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                             |
+| Input       | Local OpenAPI 3.0.x or 3.1.x JSON or YAML 1.2 with any patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                          |
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; whole-segment path placeholders                                                                                                                                                                                                              |
 | Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; string and optional nullable string request headers; simple path/header and form query serialization |
 | Bodies      | Required or optional JSON bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON or bodyless responses; string response headers; local component references and aliases                                                                                                                        |
-| Schemas     | {} and annotation-only schemas; explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                   |
+| Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; acyclic local component references; restricted unions and maps described below                                                            |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                  |
 | Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, and `ipv6`; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                                                             |
+
+Schema syntax follows the declared OpenAPI version. OpenAPI 3.0 schemas use
+`nullable: true` alongside a single explicit `type`, and boolean
+`exclusiveMinimum` / `exclusiveMaximum` alongside `minimum` / `maximum`.
+A nullable enum accepts null only when its enum lists null. Without a same-object
+`type`, `nullable` has no effect. Use a single-value `enum` for 3.0 literals.
+POM accepts and ignores `false` exclusive flags, including without a bound.
+As a stricter POM policy, `true` requires a same-object `type: number` or
+`type: integer` and its matching finite `minimum` or `maximum`. Incomplete or
+inapplicable active flags receive a diagnostic instead of silently doing nothing.
+
+For fixed objects in 3.0, omit `required` when no properties are required;
+an explicit empty array is rejected. In 3.1, `required: []` is also accepted.
+
+OpenAPI 3.1 uses null types/type arrays and numeric exclusive bounds. Schema
+`const`, `$comment`, `examples`, and `contentMediaType`, plus `info.summary` and
+`info.license.identifier`, are accepted only in 3.1. `nullable` is accepted only
+in 3.0. Parameter/media-type named `examples` and schema `example` work in both.
+
+OpenAPI 3.0 references accept only `$ref`. Siblings receive a diagnostic because
+3.0 specifies that they are ignored; POM must not silently lose an intended
+constraint or apply 3.1 reference semantics. In 3.1, supported schema constraint
+siblings and non-schema reference `summary` / `description` annotations remain
+accepted. DELETE and OPTIONS request body declarations are rejected in 3.0:
+OpenAPI 3.0 tells consumers to ignore bodies whose semantics HTTP does not
+define, and POM reports an error rather than silently discarding a declaration.
+Bodyless DELETE/OPTIONS operations remain supported, and 3.1 permits their bodies.
+Both dialects lower into the same generated API and validators;
+equivalent contracts produce identical output. See the
+[3.0 schema specification](https://spec.openapis.org/oas/v3.0.4.html#schema-object)
+and [3.1 migration guide](https://learn.openapis.org/upgrading/v3.0-to-v3.1.html).
+OpenAPI 2.0 and 3.2 are unsupported.
 
 JSON inputs and configuration accept one leading UTF-8 byte-order mark and
 reject duplicate decoded object keys. YAML files use a single YAML 1.2 core
 document with JSON-compatible values. Mapping keys are strings, including
 unquoted numeric response statuses. Scalar values keep their YAML types:
-quote string values such as `version: "1"` and the type name in
-`type: [string, "null"]`.
+quote string values such as `version: "1"`. In 3.1 type arrays, quote the null
+type name as in `type: [string, "null"]`.
 
 When `operationId` is absent, POM generates the exact uppercase method, one
 space, and the declared path: `GET /widgets/{id}`. Use that name in configured
@@ -325,20 +358,20 @@ generated format as JSON input.
 Descriptive metadata is checked for location and structure and does not change
 generated files:
 
-| Location                                                 | Accepted metadata                                                                                       |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `info.license`                                           | Required string `name`; optional string `identifier` or `url`, mutually exclusive                       |
-| `info.contact`, `info.termsOfService`                    | Contact has optional string `name`, `url` and `email`; terms of service is a string                     |
-| Document, tags, operations, schemas (including `$ref`)   | `externalDocs` with required string `url` and optional string `description`                             |
-| Schemas, including `$ref` siblings                       | `$comment` as a string; `example` as a JSON value and `examples` as an array of JSON values may coexist |
-| Parameters, response headers, JSON/multipart media types | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive               |
-| Operations, parameters, response headers, schemas        | Boolean `deprecated`; deprecated declarations remain generated                                          |
+| Location                                                               | Accepted metadata                                                                           |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `info.license`                                                         | Required string `name`; optional string `url`, or 3.1-only `identifier`, mutually exclusive |
+| `info.contact`, `info.termsOfService`                                  | Contact has optional string `name`, `url` and `email`; terms of service is a string         |
+| Document, tags, operations, schemas (3.1 also permits `$ref` siblings) | `externalDocs` with required string `url` and optional string `description`                 |
+| Schemas (3.1 also permits `$ref` siblings)                             | `example` as a JSON value; 3.1 also accepts string `$comment` and an `examples` array       |
+| Parameters, response headers, JSON/multipart media types               | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive   |
+| Operations, parameters, response headers, schemas                      | Boolean `deprecated`; deprecated declarations remain generated                              |
 
 Example Objects accept string `summary` and `description`, and a JSON `value` or
 string `externalValue`, mutually exclusive. Named examples may reference
 `#/components/examples/<name>`; component examples and aliases are validated,
 including unused entries, with missing targets and cycles rejected. Component
-example names match `[A-Za-z0-9._-]+`. Example references may add string `summary`
+example names match `[A-Za-z0-9._-]+`. In 3.1, example references may add string `summary`
 and `description` annotations.
 
 Example values are documentation data, not schema rules, and are not checked
@@ -357,7 +390,9 @@ still accepts objects only. Other implicit types remain unsupported.
 Supported schema composition is deliberately limited:
 
 - `anyOf` has two branches: a schema and `null`, or `string` and `integer`.
-- Nullable schemas accept `"type": ["string", "null"]` with any supported
+  A `type: "null"` branch requires 3.1; 3.0 nullable schemas use `nullable: true`
+  as described above.
+- In 3.1, nullable schemas accept `"type": ["string", "null"]` with any supported
   non-null type and `"null"` in either order. Exactly two distinct type names
   are required. Scalar `enum` and `const` still restrict accepted values,
   including whether `null` is accepted. Existing parameter and multipart
@@ -369,9 +404,23 @@ Supported schema composition is deliberately limited:
 - Objects with fixed properties use `additionalProperties: false` or omission.
   Pure maps set `additionalProperties` to a schema or `true` for arbitrary JSON
   values. Mixing fixed properties with dynamic entries is unsupported.
-- Local `$ref` schemas may add string, numeric, or array constraints, or
+- In 3.1, local `$ref` schemas may add string, numeric, or array constraints, or
   `minProperties` and `maxProperties`, appropriate to the referenced type.
   Other semantic siblings are rejected.
+
+In 3.0, make a component reference nullable with an `anyOf` null-only branch:
+
+```json
+{
+  "anyOf": [
+    { "$ref": "#/components/schemas/Widget" },
+    { "type": "string", "nullable": true, "enum": [null] }
+  ]
+}
+```
+
+The second branch accepts only null. The referenced schema still validates
+every non-null value.
 
 Component schema names match `[A-Za-z0-9._-]+`, including hyphens, dots, and
 leading digits. References, discriminator mappings, and generated schema maps
@@ -380,9 +429,11 @@ reserved names.
 
 Request and response `default` values are annotations: they do not fill omitted fields,
 change requiredness, or replace explicit `undefined`. Their values must be JSON;
-they are not checked against the schema's type, bounds, formats, enum, or required
-properties. This holds through references, maps, arrays, and union branches.
-Defaults never supply a missing response field or rescue an invalid response value.
+in 3.0, a default must also match the explicit `type` at the same schema location
+(including null when `nullable: true`). Defaults are not checked against bounds,
+formats, enum, or required properties. In 3.1, they are not checked against type
+either. This holds through references, maps, arrays, and union branches. Defaults
+never supply a missing response field or rescue an invalid response value.
 
 Schemas support at most 128 structural levels, including structure behind
 references. Pure aliases add no levels. Each inline schema is limited to 32
@@ -557,11 +608,11 @@ The following declarations accept inline objects or local component references:
 map. Component entries may alias another entry of the same kind.
 
 Component names match `[A-Za-z0-9._-]+`; `__proto__`, `prototype`, and `constructor`
-are reserved. References may add string `summary` and `description` annotations;
-semantic siblings such as `required`, `schema`, `content`, and `headers` are
-rejected. Every declaration in these component maps is validated, including
-unused entries. Missing targets, cycles, and external references fail with
-diagnostics.
+are reserved. In 3.1, references may add string `summary` and `description`
+annotations. Semantic siblings such as `required`, `schema`, `content`, and
+`headers` are rejected. Every declaration in these component maps is validated,
+including unused entries. Missing targets, cycles, and external references fail
+with diagnostics.
 
 Request body components keep the declared `required` flag, media type, and
 schema. [Optional JSON bodies](#build-and-validate-a-request) and
@@ -603,9 +654,10 @@ properties excluded stays a fixed empty object. Returned response data remains
 mutable; these flags describe wire direction rather than TypeScript `readonly`.
 
 Both flags must be booleans. A true flag inherited through a local reference or
-alias remains true even when a sibling says false. POM rejects both flags being
-true at the same schema, including through aliases. Entire source declarations,
-including excluded fields, still receive syntax, reference and constraint checks.
+alias remains true, including when a 3.1 reference sibling says false. POM rejects
+both flags being true at the same schema, including through aliases. Entire source
+declarations, including excluded fields, still receive syntax, reference and
+constraint checks.
 Usage checks then inspect visible fields: an excluded write-only field may have
 a binary schema without affecting response validation. Visible binary values
 retain their multipart-only restriction. Defaults remain documentation in both
@@ -720,10 +772,11 @@ items are unsupported. Optional nullable string headers also omit `null` and
 Multipart clients require an explicit target, for example
 `"targets": { "web": "browser", "mobile": "native" }` for those selected clients.
 A required `multipart/form-data` body is a fixed object of strings, files, and
-file arrays. Files use `type: "string"` with `format: "binary"` or
-`contentMediaType: "application/octet-stream"`. Browser inputs require `File`;
-native inputs use `{ uri: string, name?: string, mediaType?: string }`, with
-nonempty strings. Browser files must be instances of the environment's current
+file arrays. Files use `type: "string"` with `format: "binary"` in both dialects.
+In 3.1, `contentMediaType: "application/octet-stream"` is also supported.
+Browser inputs require `File`; native inputs use
+`{ uri: string, name?: string, mediaType?: string }`, with nonempty strings.
+Browser files must be instances of the environment's current
 `File` constructor, with valid File metadata and Blob backing. Their identity is
 preserved. Native browser, jsdom, and Happy DOM Files are supported when the same
 environment's `File` and `Blob` constructors are installed together; checks follow

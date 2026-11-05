@@ -409,7 +409,7 @@ void test('invalid YAML diagnoses before generation or drift checking can write'
 void test('YAML uses the existing semantic diagnostics, including unselected declarations', async (t) => {
   for (const change of [
     (d) => {
-      d.openapi = '3.0.3';
+      d.openapi = '3.2.0';
     },
     (d) => {
       Object.assign(d.components.schemas, {

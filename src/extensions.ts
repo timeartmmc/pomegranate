@@ -111,7 +111,31 @@ export function ignoreExtensions(
   document: unknown,
   names: ReadonlySet<string>,
 ): unknown {
-  const copying = names.size > 0;
+  return walkDocument(document, undefined, names);
+}
+
+// Share the object grammar with dialect lowering. Map keys and opaque annotation
+// payloads must never be mistaken for OpenAPI keywords in either pass.
+export function mapOpenApi(
+  document: unknown,
+  transform: (
+    value: Record<string, unknown>,
+    context: string,
+    location: string,
+  ) => Record<string, unknown>,
+): unknown {
+  return walkDocument(document, transform);
+}
+
+function walkDocument(
+  document: unknown,
+  transform?: (
+    value: Record<string, unknown>,
+    context: string,
+    location: string,
+  ) => Record<string, unknown>,
+  names?: ReadonlySet<string>,
+): unknown {
   const seen = new WeakMap<object, Map<Context, object>>();
   const pending: {
     source: object;
@@ -138,11 +162,9 @@ export function ignoreExtensions(
       contexts = new Map();
       seen.set(input, contexts);
     }
-    const target: object = copying
-      ? grammar.list
-        ? (Object.setPrototypeOf([], prototype) as object)
-        : (Object.create(prototype) as object)
-      : input;
+    const target: object = grammar.list
+      ? (Object.setPrototypeOf([], prototype) as object)
+      : (Object.create(prototype) as object);
     contexts.set(context, target);
     pending.push({ source: input, target, context, shape: grammar, location });
     return target;
@@ -153,7 +175,15 @@ export function ignoreExtensions(
   // malformed containers and unsupported schema structure.
   while (pending.length > 0) {
     const frame = pending.pop()!;
-    const descriptors = Object.getOwnPropertyDescriptors(frame.source);
+    const source =
+      transform && frame.shape.fields
+        ? transform(
+            frame.source as Record<string, unknown>,
+            frame.context,
+            frame.location,
+          )
+        : frame.source;
+    const descriptors = Object.getOwnPropertyDescriptors(source);
     const reference = Object.hasOwn(frame.source, '$ref');
     for (const key of Object.keys(descriptors)) {
       const descriptor = descriptors[key]!;
@@ -161,6 +191,7 @@ export function ignoreExtensions(
         ? `${frame.location}[${key}]`
         : `${frame.location}.${key}`;
       if (
+        names !== undefined &&
         frame.shape.keywords &&
         descriptor.enumerable &&
         key.startsWith('x-') &&
@@ -200,23 +231,20 @@ export function ignoreExtensions(
       if (reference && frame.context === 'schema' && key !== 'externalDocs')
         continue;
       const value: unknown =
-        'value' in descriptor
-          ? descriptor.value
-          : Reflect.get(frame.source, key);
+        'value' in descriptor ? descriptor.value : Reflect.get(source, key);
       const child = visit(
         value,
         context,
         frame.context === 'document' && key !== 'externalDocs' ? key : location,
       );
-      if (copying)
-        descriptors[key] = {
-          value: child,
-          enumerable: descriptor.enumerable ?? false,
-          configurable: descriptor.configurable ?? false,
-          writable: 'writable' in descriptor ? descriptor.writable : true,
-        };
+      descriptors[key] = {
+        value: child,
+        enumerable: descriptor.enumerable ?? false,
+        configurable: descriptor.configurable ?? false,
+        writable: 'writable' in descriptor ? descriptor.writable : true,
+      };
     }
-    if (copying) Object.defineProperties(frame.target, descriptors);
+    Object.defineProperties(frame.target, descriptors);
   }
   return result;
 }

@@ -32,7 +32,9 @@ one explicit owner, inline or configuration, and must classify every operation.
 ## One contract interpretation
 
 The compiler reads JSON or YAML, validates the complete document, and builds one
-normalized descriptor before selecting output. Types, validators, builders,
+normalized descriptor before selecting output. OpenAPI 3.0 input syntax is
+lowered at the document boundary into the same schema vocabulary as 3.1;
+dialect differences do not enter the descriptor, emitters, or generated runtime. Types, validators, builders,
 response parsers, and optional helpers derive from that descriptor. Every
 operation and response must be represented or rejected with a useful diagnostic,
 including declarations excluded from the selected clients.
