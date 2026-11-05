@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { QueryClient } from '@tanstack/query-core';
 import { stringify } from 'yaml';
-import { compile, ContractError, runProject } from '../dist/index.js';
+import { compile, ContractError } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
 import type { OperationCall } from '../src/call-runtime.ts';
 import type { ClientConfig } from '../src/execution-runtime.ts';
@@ -19,7 +19,6 @@ import {
   generatedTestWorkspace,
   importGenerated,
 } from './generated-workspace.ts';
-import { fileSnapshot, temporary } from './helpers.ts';
 import {
   queryCsvConsumer,
   queryCsvFixture as fixture,
@@ -339,34 +338,4 @@ void test('CSV array types survive source generation and declaration-only public
     }),
   );
   await exec(process.execPath, [tsc, '-p', join(root, 'published.json')]);
-});
-
-void test('invalid CSV declarations preserve generated files during generation and read-only checks', async (t) => {
-  const root = await temporary(t);
-  const input = join(root, 'openapi.json');
-  const config = join(root, 'pom.json');
-  const output = join(root, 'generated');
-  await writeFile(input, JSON.stringify(fixture()));
-  await writeFile(
-    config,
-    JSON.stringify({
-      version: 2,
-      openapi: './openapi.json',
-      output: './generated',
-      ...selection,
-    }),
-  );
-  await runProject(config);
-  const snapshot = await fileSnapshot(output);
-  assert.equal((await runProject(config, { check: true })).clean, true);
-  const document = fixture();
-  Object.assign(present(document.components.parameters.Tags), {
-    allowReserved: true,
-  });
-  const source = JSON.stringify(document);
-  await writeFile(input, source);
-  for (const check of [false, true])
-    await assert.rejects(runProject(config, { check }), ContractError);
-  assert.deepEqual(await fileSnapshot(output), snapshot);
-  assert.equal(await readFile(input, 'utf8'), source);
 });

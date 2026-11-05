@@ -37,9 +37,17 @@ void test('equal shapes retain component-local type names across directions and 
   const name = 'client.consumer.schemas.ts';
   const source = present(original[name]);
   for (const direction of ['request', 'response']) {
-    assert.match(source, new RegExp(`type type_Beta_${direction} = \\{`));
+    assert.match(
+      source,
+      new RegExp(`type type_Beta_${direction} =\\s+import\\(`),
+    );
   }
-  assert.match(source, /beta: type_Beta_response;/);
+  const types = Object.entries(original)
+    .filter(([name]) => name.startsWith('schema-types.'))
+    .map(([, source]) => source)
+    .join('\n');
+  assert.match(types, /export type type_Beta_request = \{/);
+  assert.match(types, /beta: type_Beta_request;/);
   Object.assign(document.components.schemas, { Alpha: value });
   Object.assign(document.paths, {
     '/alpha': {

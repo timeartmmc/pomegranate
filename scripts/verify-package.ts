@@ -24,6 +24,11 @@ import {
   record,
 } from '../test/assertions.ts';
 import { deepFixture, deepTypeConsumer } from '../test/deep-fixture.ts';
+import {
+  typeIdentityConsumer,
+  typeIdentityFixture,
+  typeIdentitySelection,
+} from '../test/type-identity-fixture.ts';
 import { annotateDocument } from '../test/metadata-fixture.ts';
 import {
   multipartFixture,
@@ -258,6 +263,7 @@ try {
     'operation-ids-fixture.ts',
     'operation-ids-checks.ts',
     'deep-fixture.ts',
+    'calendar-fixture.ts',
     'query-checks.ts',
     'query-hydration.ts',
     'query-error-checks.ts',
@@ -383,6 +389,8 @@ try {
     'staff-only/*.ts',
     'multipart-generated/*.ts',
     'deep-generated/*.ts',
+    'type-identity-generated/*.ts',
+    'type-identity-types.ts',
     'symbol-generated/*.ts',
     'operation-ids-generated/*.ts',
     'query-generated/*.ts',
@@ -502,6 +510,23 @@ try {
     }),
   );
   await writeFile(join(consumer, 'deep-types.ts'), deepTypeConsumer());
+  await writeFile(
+    join(consumer, 'type-identity-types.ts'),
+    typeIdentityConsumer,
+  );
+  await writeFile(
+    join(consumer, 'type-identity-openapi.json'),
+    JSON.stringify(typeIdentityFixture()),
+  );
+  await writeFile(
+    join(consumer, 'type-identity-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './type-identity-openapi.json',
+      output: './type-identity-generated',
+      ...typeIdentitySelection,
+    }),
+  );
   await writeFile(
     join(consumer, 'deep-openapi.json'),
     JSON.stringify(deepFixture()),
@@ -935,6 +960,16 @@ try {
   await run(binary, [
     'generate',
     '--config',
+    join(consumer, 'type-identity-pom.json'),
+  ]);
+  await run(binary, [
+    'check',
+    '--config',
+    join(consumer, 'type-identity-pom.json'),
+  ]);
+  await run(binary, [
+    'generate',
+    '--config',
     join(consumer, 'multipart-pom.json'),
   ]);
   await run(binary, [
@@ -1286,7 +1321,7 @@ try {
       document.openapi=version;
       assert.deepEqual(await pom.compile(document,{clients:['staff']}),files);
     }
-    assert.deepEqual(Object.keys(files).sort(), ['client.staff.operations.ts', 'client.staff.schemas.ts', 'client.staff.ts', 'policy-types.ts', 'runtime.ts']);
+    assert.deepEqual(Object.keys(files).filter(name=>!name.startsWith('schema-types.')).sort(), ['client.staff.operations.ts', 'client.staff.schemas.ts', 'client.staff.ts', 'policy-types.ts', 'runtime.ts']);
     assert.doesNotMatch(Object.values(files).join(' '),/PreparationInput|client.consumer/);
     const unsafeHeader = structuredClone(document);
     unsafeHeader.paths['/api/staff/reports'].get.parameters = [{name:'__PROTO__',in:'header',required:true,schema:{type:'string',const:'must-match'}}];
@@ -1352,14 +1387,19 @@ try {
   );
   await run(binary, ['generate', '--config', join(consumer, 'pom.staff.json')]);
   await run(binary, ['check', '--config', join(consumer, 'pom.staff.json')]);
-  assert.deepEqual((await readdir(join(consumer, 'staff-only'))).sort(), [
-    '.pom-manifest.json',
-    'client.staff.operations.ts',
-    'client.staff.schemas.ts',
-    'client.staff.ts',
-    'policy-types.ts',
-    'runtime.ts',
-  ]);
+  assert.deepEqual(
+    (await readdir(join(consumer, 'staff-only')))
+      .filter((name) => !name.startsWith('schema-types.'))
+      .sort(),
+    [
+      '.pom-manifest.json',
+      'client.staff.operations.ts',
+      'client.staff.schemas.ts',
+      'client.staff.ts',
+      'policy-types.ts',
+      'runtime.ts',
+    ],
+  );
   await run(process.execPath, [
     join(consumer, 'node_modules/typescript/bin/tsc'),
     '-p',

@@ -245,13 +245,10 @@ void test('changing selected clients checks stale output read-only and cleans on
   const inventory = record(
     json(await readFile(join(output, '.pom-manifest.json'), 'utf8')),
   );
-  assert.deepEqual(Object.keys(record(inventory.files)).sort(), [
-    'client.consumer.operations.ts',
-    'client.consumer.schemas.ts',
-    'client.consumer.ts',
-    'policy-types.ts',
-    'runtime.ts',
-  ]);
+  assert.deepEqual(
+    Object.keys(record(inventory.files)).sort(),
+    Object.keys(await compile(fixture(), { clients: ['consumer'] })).sort(),
+  );
 });
 
 void test('an edited deselected client blocks the complete output change before writes', async (t) => {
@@ -297,23 +294,32 @@ void test('first-milestone output inventory migrates safely without accepting an
   assert.equal((await runProject(config, { check: true })).clean, true);
 });
 
-void test('unknown selections and invalid unselected operations leave existing outputs unchanged', async (t) => {
+void test('contract and selection failures preserve outputs and inputs during generate and check', async (t) => {
   const { root, config } = await project(t);
   await runProject(config);
   const output = join(root, 'generated');
   const before = await fileSnapshot(output);
   const selection = record(json(await readFile(config, 'utf8')));
-  selection.clients = ['unknown'];
-  await writeFile(config, JSON.stringify(selection));
-  await assert.rejects(runProject(config), /undeclared surface/);
-  assert.deepEqual(await fileSnapshot(output), before);
-  selection.clients = ['consumer'];
-  await writeFile(config, JSON.stringify(selection));
   const document = fixture();
   Object.assign(document.paths['/api/staff/reports'].get, {
     security: [{ WidgetSession: ['editor'] }],
   });
-  await writeFile(join(root, 'openapi.json'), JSON.stringify(document));
-  await assert.rejects(runProject(config), /role requirements are unsupported/);
-  assert.deepEqual(await fileSnapshot(output), before);
+  // Descriptor validation and output selection both precede synchronization.
+  // Feature suites retain their own diagnostics; this boundary owns preservation.
+  for (const [input, clients, expected] of [
+    [fixture(), ['unknown'], /undeclared surface/],
+    [document, ['consumer'], /role requirements are unsupported/],
+  ] as const) {
+    const source = JSON.stringify(input);
+    const configuration = JSON.stringify({ ...selection, clients });
+    const inputPath = join(root, 'openapi.json');
+    await writeFile(inputPath, source);
+    await writeFile(config, configuration);
+    for (const check of [false, true]) {
+      await assert.rejects(runProject(config, { check }), expected);
+      assert.deepEqual(await fileSnapshot(output), before);
+      assert.equal(await readFile(inputPath, 'utf8'), source);
+      assert.equal(await readFile(config, 'utf8'), configuration);
+    }
+  }
 });

@@ -102,11 +102,12 @@ void test('forward reference graphs compile independently of alias depth and exe
     clients: [],
     standalone: { leaf: { schema: ref('Leaf').$ref, usage: 'request' } },
   });
-  assert.deepEqual(Object.keys(leaf).sort(), [
-    'policy-types.ts',
-    'runtime.ts',
-    'standalone.leaf.ts',
-  ]);
+  assert.deepEqual(
+    Object.keys(leaf)
+      .filter((name) => !name.startsWith('schema-types.'))
+      .sort(),
+    ['policy-types.ts', 'runtime.ts', 'standalone.leaf.ts'],
+  );
   const outputs = await compile(document, {
     clients: [],
     standalone: {

@@ -13,6 +13,7 @@ import {
 import type { Expression } from './code.js';
 import { fail } from './diagnostics.js';
 import { parserIdentities, schemaRenderer } from './emit-schema.js';
+import { renderTypes } from './emit-types.js';
 import type { ObjectField, SchemaRenderer } from './emit-schema.js';
 import type {
   Client,
@@ -65,13 +66,14 @@ function runtimeTypeImports(imports: ReadonlySet<string>): string {
 function renderComponents(
   descriptor: Descriptor,
   selections: readonly { direction: Direction; names: readonly string[] }[],
+  componentType: ReturnType<typeof renderTypes>,
   target?: Client['target'],
   exportValidators = false,
 ) {
   const renderer = schemaRenderer(
     descriptor.schemas,
     (name, direction) => identifier(parseSymbol(name, direction)),
-    typeSymbol,
+    (name, direction) => componentType(name, direction, target),
     target,
   );
   const declarations = selections.flatMap(({ direction, names }) =>
@@ -80,7 +82,15 @@ function renderComponents(
       const parse = parseSymbol(name, direction);
       const type = typeSymbol(name, direction);
       const location = `components.schemas.${name}`;
-      renderer.push(renderer.declareType(type, schema, direction), location);
+      if (
+        exportValidators ||
+        schema.kind !== 'ref' ||
+        Object.keys(schema.constraints).length > 0
+      )
+        renderer.push(
+          `type ${type} = ${componentType(name, direction, target)};`,
+          location,
+        );
       renderer.define(
         schema,
         direction,
@@ -346,6 +356,7 @@ function renderClient(
   descriptor: Descriptor,
   client: Client,
   addOutput: (name: string, source: string) => void,
+  componentType: ReturnType<typeof renderTypes>,
 ): void {
   const selections = [
     { direction: 'request', names: client.requestSchemas },
@@ -354,6 +365,7 @@ function renderClient(
   const { renderer: components, declarations } = renderComponents(
     descriptor,
     selections,
+    componentType,
     client.target,
     true,
   );
@@ -676,10 +688,13 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
 function renderStandalone(
   descriptor: Descriptor,
   selection: Standalone,
+  componentType: ReturnType<typeof renderTypes>,
 ): string {
-  const { renderer, declarations } = renderComponents(descriptor, [
-    { direction: selection.direction, names: selection.schemaOrder },
-  ]);
+  const { renderer, declarations } = renderComponents(
+    descriptor,
+    [{ direction: selection.direction, names: selection.schemaOrder }],
+    componentType,
+  );
   const location = `standalone.${selection.name}`;
   const root = renderer.part(
     selection.schema,
@@ -774,11 +789,18 @@ export async function render(
       'runtime.browser.ts',
       `${banner}${await readFile(new URL('./runtime.browser.ts', import.meta.url), 'utf8')}`,
     );
-  for (const client of clients) renderClient(descriptor, client, addOutput);
+  const componentType = renderTypes(
+    descriptor,
+    clients,
+    standalone,
+    (name, source) => addOutput(name, `${banner}${source}`),
+  );
+  for (const client of clients)
+    renderClient(descriptor, client, addOutput, componentType);
   for (const selection of standalone)
     addOutput(
       `standalone.${moduleName(selection.name)}.ts`,
-      renderStandalone(descriptor, selection),
+      renderStandalone(descriptor, selection, componentType),
     );
   const entries = Object.entries(outputs);
   const rendered: [string, string][] = [];

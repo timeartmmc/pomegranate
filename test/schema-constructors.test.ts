@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { calendarCases } from './calendar-fixture.ts';
 import {
   defineOperation,
   invalid,
@@ -132,6 +133,14 @@ void test('browser File rejection is a type failure', () => {
   assert.deepEqual(issues, [
     { path: [], message: 'expected a browser File', fatal: true },
   ]);
+});
+
+void test('date and date-time enforce calendar boundaries and whole-string syntax', () => {
+  for (const [date, valid] of calendarCases) {
+    assert.equal(formats.date(date), valid, date);
+    const instant = `${date}T12:34:56Z`;
+    assert.equal(formats['date-time'](instant), valid, instant);
+  }
 });
 
 void test('date-time accepts ASCII case variants and rejects invalid calendar, time and zone neighbors', () => {

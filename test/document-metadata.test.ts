@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import test from 'node:test';
 import { stringify } from 'yaml';
-import { compile, ContractError, runProject } from '../dist/index.js';
+import { compile, ContractError } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
-import { fixture, preparation, temporary, fileSnapshot } from './helpers.ts';
+import { fixture, preparation } from './helpers.ts';
 import type { Fixture } from './helpers.ts';
 import { annotateDocument } from './metadata-fixture.ts';
 import { record } from './assertions.ts';
@@ -202,36 +200,5 @@ void test('metadata cannot hide unsupported server overrides, extensions or unus
     const document = annotateDocument(fixture());
     Object.assign(target(document), { [key]: value });
     await assert.rejects(compile(document, selection), expected);
-  }
-});
-
-void test('malformed document metadata leaves existing output untouched in generate and check', async (t) => {
-  const root = await temporary(t);
-  const input = join(root, 'openapi.json');
-  const config = join(root, 'pom.json');
-  const output = join(root, 'generated');
-  const document = annotateDocument(fixture());
-  await writeFile(input, JSON.stringify(document));
-  await writeFile(
-    config,
-    JSON.stringify({
-      version: 2,
-      openapi: './openapi.json',
-      output: './generated',
-      ...selection,
-    }),
-  );
-  await runProject(config);
-  const before = await fileSnapshot(output);
-  Object.assign(document, {
-    servers: [{ url: '/', variables: { v: { enum: ['v1'] } } }],
-  });
-  await writeFile(input, JSON.stringify(document));
-  for (const check of [false, true]) {
-    await assert.rejects(
-      runProject(config, { check }),
-      /servers\[0\].variables.v.default/,
-    );
-    assert.deepEqual(await fileSnapshot(output), before);
   }
 });

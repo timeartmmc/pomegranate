@@ -78,16 +78,21 @@ void test('invalid placeholder identifiers explain the name restriction', async 
 
 void test('compiles every supported method and keeps per-status responses distinct', async (t) => {
   const outputs = await compile(fixture());
-  assert.deepEqual(Object.keys(outputs).sort(), [
-    'client.consumer.operations.ts',
-    'client.consumer.schemas.ts',
-    'client.consumer.ts',
-    'client.staff.operations.ts',
-    'client.staff.schemas.ts',
-    'client.staff.ts',
-    'policy-types.ts',
-    'runtime.ts',
-  ]);
+  assert.deepEqual(
+    Object.keys(outputs)
+      .filter((name) => !name.startsWith('schema-types.'))
+      .sort(),
+    [
+      'client.consumer.operations.ts',
+      'client.consumer.schemas.ts',
+      'client.consumer.ts',
+      'client.staff.operations.ts',
+      'client.staff.schemas.ts',
+      'client.staff.ts',
+      'policy-types.ts',
+      'runtime.ts',
+    ],
+  );
   for (const id of [
     'prepareWidget',
     'getWidget',

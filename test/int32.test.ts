@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { stringify } from 'yaml';
-import { compile, ContractError, runProject } from '../dist/index.js';
+import { compile, ContractError } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
-import { fileSnapshot, fixture, temporary } from './helpers.ts';
+import { fixture, temporary } from './helpers.ts';
 import { present } from './assertions.ts';
 import type { Schema } from './schema-helpers.ts';
 import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
@@ -150,6 +150,7 @@ void test('generated request and response int32 validators enforce endpoints and
 
 const invalid: [string, Schema, RegExp][] = [
   ['lower const overflow', { ...int32, const: minimum - 1 }, /literal.*bounds/],
+  ['upper const overflow', { ...int32, const: maximum + 1 }, /literal.*bounds/],
   [
     'upper enum overflow',
     { ...int32, enum: [0, maximum + 1] },
@@ -364,33 +365,4 @@ void test('int32 operation builders, response parsers and declaration consumers 
     }),
   );
   await exec(process.execPath, [tsc, '-p', join(root, 'published.json')]);
-});
-
-void test('invalid int32 generation and drift checks preserve prior output', async (t) => {
-  const root = await temporary(t);
-  const input = document({ Value: int32 });
-  const openapi = join(root, 'openapi.json');
-  const config = join(root, 'pom.json');
-  const output = join(root, 'generated');
-  await writeFile(openapi, JSON.stringify(input));
-  await writeFile(
-    config,
-    JSON.stringify({
-      version: 2,
-      openapi: './openapi.json',
-      output: './generated',
-      ...roots,
-    }),
-  );
-  await runProject(config);
-  const snapshot = await fileSnapshot(output);
-  Object.assign(present(input.components.schemas.Value), {
-    const: maximum + 1,
-  });
-  const source = JSON.stringify(input);
-  await writeFile(openapi, source);
-  await assert.rejects(runProject(config), /literal.*bounds/);
-  await assert.rejects(runProject(config, { check: true }), /literal.*bounds/);
-  assert.deepEqual(await fileSnapshot(output), snapshot);
-  assert.equal(await readFile(openapi, 'utf8'), source);
 });

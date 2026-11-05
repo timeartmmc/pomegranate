@@ -328,7 +328,7 @@ void test('portable prefixed names cannot collide with helpers or module suffixe
   document['x-pom-policy'].surfaces.push(...names);
   document.paths['/api/health'].head['x-pom'].surfaces.push(...names);
   const files = await selected(document, ['consumer', ...names]);
-  assert.equal(Object.keys(files).length, 2 + 3 * (1 + names.length));
+  assert.equal(Object.keys(files).length, 3 + 3 * (1 + names.length));
   assert.equal(
     new Set(Object.keys(files).map((name) => name.toLowerCase())).size,
     Object.keys(files).length,
@@ -341,13 +341,18 @@ void test('portable prefixed names cannot collide with helpers or module suffixe
 
 void test('selecting one client emits no aggregate or other-client module', async () => {
   const files = await selected(fixture(), ['staff']);
-  assert.deepEqual(Object.keys(files).sort(), [
-    'client.staff.operations.ts',
-    'client.staff.schemas.ts',
-    'client.staff.ts',
-    'policy-types.ts',
-    'runtime.ts',
-  ]);
+  assert.deepEqual(
+    Object.keys(files)
+      .filter((name) => !name.startsWith('schema-types.'))
+      .sort(),
+    [
+      'client.staff.operations.ts',
+      'client.staff.schemas.ts',
+      'client.staff.ts',
+      'policy-types.ts',
+      'runtime.ts',
+    ],
+  );
   assert.doesNotMatch(
     Object.values(files).join('\n'),
     /client\.consumer|PreparationInput|UnusedMessage/,

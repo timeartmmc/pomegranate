@@ -18,7 +18,8 @@ import {
   validator,
 } from './runtime.ts';
 
-type type_WidgetId_request = string;
+type type_WidgetId_request =
+  import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
 const rules_parse_WidgetId_request: StringRules = { minLength: 1 };
 export function parse_WidgetId_request(
   input: unknown,
@@ -26,7 +27,8 @@ export function parse_WidgetId_request(
 ): type_WidgetId_request | Invalid {
   return text(input, issues, rules_parse_WidgetId_request);
 }
-type type_Problem_response = { code: string; detail: string };
+type type_Problem_response =
+  import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_Problem_response;
 export function parse_Problem_response(
   input: unknown,
   issues: Issues,
@@ -38,7 +40,8 @@ export function parse_Problem_response(
   if (v0 === invalid || v1 === invalid) return invalid;
   return { code: v0, detail: v1 };
 }
-type type_StaffPeriod_response = 'daily' | 'weekly';
+type type_StaffPeriod_response =
+  import('./schema-types.968562348ada68d9bda28cc0911433006e773f45022cc61f24f4d586f348c1fb.ts').type_StaffPeriod_response;
 export function parse_StaffPeriod_response(
   input: unknown,
   issues: Issues,
@@ -51,10 +54,8 @@ export function parse_StaffPeriod_response(
       return report(issues, 'expected one of "daily", "weekly"', true);
   }
 }
-type type_StaffSummary_response = {
-  period: type_StaffPeriod_response;
-  total: number;
-};
+type type_StaffSummary_response =
+  import('./schema-types.968562348ada68d9bda28cc0911433006e773f45022cc61f24f4d586f348c1fb.ts').type_StaffSummary_response;
 const rules_parse_StaffSummary_response_part0: NumberRules = {
   integer: true,
   minimum: 0,
@@ -76,7 +77,8 @@ export function parse_StaffSummary_response(
   if (v0 === invalid || v1 === invalid) return invalid;
   return { period: v0, total: v1 };
 }
-type type_StaffReport_response = { summary: type_StaffSummary_response };
+type type_StaffReport_response =
+  import('./schema-types.968562348ada68d9bda28cc0911433006e773f45022cc61f24f4d586f348c1fb.ts').type_StaffReport_response;
 export function parse_StaffReport_response(
   input: unknown,
   issues: Issues,
@@ -87,7 +89,8 @@ export function parse_StaffReport_response(
   if (v0 === invalid) return invalid;
   return { summary: v0 };
 }
-type type_WidgetId_response = string;
+type type_WidgetId_response =
+  import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
 const rules_parse_WidgetId_response: StringRules = { minLength: 1 };
 export function parse_WidgetId_response(
   input: unknown,
@@ -95,7 +98,8 @@ export function parse_WidgetId_response(
 ): type_WidgetId_response | Invalid {
   return text(input, issues, rules_parse_WidgetId_response);
 }
-type type_Widget_response = { id: type_WidgetId_response; label: string };
+type type_Widget_response =
+  import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_Widget_response;
 export function parse_Widget_response(
   input: unknown,
   issues: Issues,

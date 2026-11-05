@@ -22,11 +22,8 @@ import {
   validator,
 } from './runtime.ts';
 
-type type_PreparationInput_request = {
-  acknowledged: true;
-  label: string;
-  tags?: Array<string> | undefined;
-};
+type type_PreparationInput_request =
+  import('./schema-types.48c732c9edc62000a3572f099a982b8699d7d29c5d06155bcaed7f048fd393ad.ts').type_PreparationInput_request;
 function parse_PreparationInput_request_part0(
   input: unknown,
   issues: Issues,
@@ -103,7 +100,8 @@ export function parse_PreparationInput_request(
     ...(v2 === absent ? {} : { tags: v2 }),
   };
 }
-type type_WidgetId_request = string;
+type type_WidgetId_request =
+  import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
 const rules_parse_WidgetId_request: StringRules = { minLength: 1 };
 export function parse_WidgetId_request(
   input: unknown,
@@ -111,7 +109,8 @@ export function parse_WidgetId_request(
 ): type_WidgetId_request | Invalid {
   return text(input, issues, rules_parse_WidgetId_request);
 }
-type type_Conflict_response = { code: 'conflict'; retryable: boolean };
+type type_Conflict_response =
+  import('./schema-types.48c732c9edc62000a3572f099a982b8699d7d29c5d06155bcaed7f048fd393ad.ts').type_Conflict_response;
 function parse_Conflict_response_part0(
   input: unknown,
   issues: Issues,
@@ -134,7 +133,8 @@ export function parse_Conflict_response(
   if (v0 === invalid || v1 === invalid) return invalid;
   return { code: v0, retryable: v1 };
 }
-type type_Pending_response = { reference: string; state: 'pending' };
+type type_Pending_response =
+  import('./schema-types.48c732c9edc62000a3572f099a982b8699d7d29c5d06155bcaed7f048fd393ad.ts').type_Pending_response;
 const rules_parse_Pending_response_part0: StringRules = { minLength: 1 };
 function parse_Pending_response_part0(
   input: unknown,
@@ -164,7 +164,8 @@ export function parse_Pending_response(
   if (v0 === invalid || v1 === invalid) return invalid;
   return { reference: v0, state: v1 };
 }
-type type_Problem_response = { code: string; detail: string };
+type type_Problem_response =
+  import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_Problem_response;
 export function parse_Problem_response(
   input: unknown,
   issues: Issues,
@@ -176,7 +177,8 @@ export function parse_Problem_response(
   if (v0 === invalid || v1 === invalid) return invalid;
   return { code: v0, detail: v1 };
 }
-type type_Refusal_response = { reason: string; state: 'refused' };
+type type_Refusal_response =
+  import('./schema-types.48c732c9edc62000a3572f099a982b8699d7d29c5d06155bcaed7f048fd393ad.ts').type_Refusal_response;
 const rules_parse_Refusal_response_part0: StringRules = { minLength: 1 };
 function parse_Refusal_response_part0(
   input: unknown,
@@ -206,7 +208,8 @@ export function parse_Refusal_response(
   if (v0 === invalid || v1 === invalid) return invalid;
   return { reason: v0, state: v1 };
 }
-type type_WidgetId_response = string;
+type type_WidgetId_response =
+  import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
 const rules_parse_WidgetId_response: StringRules = { minLength: 1 };
 export function parse_WidgetId_response(
   input: unknown,
@@ -214,7 +217,8 @@ export function parse_WidgetId_response(
 ): type_WidgetId_response | Invalid {
   return text(input, issues, rules_parse_WidgetId_response);
 }
-type type_Widget_response = { id: type_WidgetId_response; label: string };
+type type_Widget_response =
+  import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_Widget_response;
 export function parse_Widget_response(
   input: unknown,
   issues: Issues,

@@ -927,6 +927,12 @@ need Query Core. Deployed applications do not need the compiler.
 Generated modules support `isolatedDeclarations`. Application exports inferred
 from them still need the annotations required by that TypeScript option.
 
+Generated `schema-types.<digest>.ts` modules share component type identities across
+standalone validators and clients, including identical request and response
+shapes. Modules contain only types reachable by every output that uses them;
+browser and native upload types remain distinct. Keep these type-only modules
+with the complete generated output set, including when publishing declarations.
+
 ## Programmatic compiler API
 
 For programmatic use in development tooling, pass a parsed OpenAPI `document`:

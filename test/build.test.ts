@@ -63,6 +63,7 @@ void test('preparing test signatures replaces a symlink while preserving its tar
     'assertions.ts',
     'schema-helpers.ts',
     'schema-fixture.ts',
+    'calendar-fixture.ts',
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
     'deep-fixture.ts',

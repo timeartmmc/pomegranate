@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
-import { compile, ContractError, runProject } from '../dist/index.js';
+import { compile, ContractError } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
 import { present, record } from './assertions.ts';
 import {
@@ -23,12 +23,10 @@ import {
   generatedTestWorkspace,
   importGenerated,
 } from './generated-workspace.ts';
-import { fileSnapshot, temporary } from './helpers.ts';
 import { multipartFixture, multipartSelection } from './multipart-fixture.ts';
 import type { RuntimeClient } from './runtime-types.ts';
 
 const exec = promisify(execFile);
-type Fixture = ReturnType<typeof fixture>;
 let baseline: Readonly<Record<string, string>>;
 before(async () => {
   baseline = Object.freeze(await compile(inlineBodyHeaderFixture(), selection));
@@ -658,50 +656,4 @@ void test('referenced body/header types survive source and separate declaration-
     }),
   );
   await exec(process.execPath, [tsc, '-p', join(root, 'published.json')]);
-});
-
-void test('invalid body/header references preserve generated files and source during generate/check', async (t) => {
-  const root = await temporary(t);
-  const input = join(root, 'openapi.json');
-  const config = join(root, 'pom.json');
-  const output = join(root, 'generated');
-  await writeFile(input, JSON.stringify(fixture()));
-  await writeFile(
-    config,
-    JSON.stringify({
-      version: 2,
-      openapi: './openapi.json',
-      output: './generated',
-      ...selection,
-    }),
-  );
-  await runProject(config);
-  const snapshot = await fileSnapshot(output);
-  assert.equal((await runProject(config, { check: true })).clean, true);
-  for (const mutate of [
-    (d: Fixture) => {
-      d.components.requestBodies.UnusedAlias = bodyRef('Missing');
-    },
-    (d: Fixture) => {
-      d.components.headers.UnusedAlias = headerRef('UnusedAlias');
-    },
-    (d: Fixture) => {
-      Object.assign(present(d.components.headers.Unused), { required: null });
-    },
-    (d: Fixture) => {
-      d.paths['/inspect'].get.requestBody = bodyRef('Json');
-    },
-    (d: Fixture) => {
-      d.components.responses.Done.headers['Set-Cookie'] = headerRef('Trace');
-    },
-  ]) {
-    const document = fixture();
-    mutate(document);
-    const source = JSON.stringify(document);
-    await writeFile(input, source);
-    for (const check of [false, true])
-      await assert.rejects(runProject(config, { check }), ContractError);
-    assert.deepEqual(await fileSnapshot(output), snapshot);
-    assert.equal(await readFile(input, 'utf8'), source);
-  }
 });

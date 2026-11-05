@@ -92,12 +92,17 @@ void test('standalone-only generation retains transitive schemas without HTTP cl
     clients: [],
     standalone: standaloneSelection,
   });
-  assert.deepEqual(Object.keys(outputs).sort(), [
-    'policy-types.ts',
-    'runtime.ts',
-    'standalone.input.ts',
-    'standalone.message.ts',
-  ]);
+  assert.deepEqual(
+    Object.keys(outputs)
+      .filter((name) => !name.startsWith('schema-types.'))
+      .sort(),
+    [
+      'policy-types.ts',
+      'runtime.ts',
+      'standalone.input.ts',
+      'standalone.message.ts',
+    ],
+  );
   assert.doesNotMatch(
     present(outputs['standalone.message.ts']),
     /client\.|requestSchemas|checkScalars/,

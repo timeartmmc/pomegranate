@@ -16,6 +16,7 @@ import {
 } from './nullable-type-fixture.ts';
 import { ref, object, nullable } from './schema-helpers.ts';
 import type { Schema } from './schema-helpers.ts';
+import { calendarCases } from './calendar-fixture.ts';
 
 type Operations =
   typeof import('./.generated/schema/client.samples.ts').operations;
@@ -640,6 +641,10 @@ export function verifySchemas(
     uri: 'https://EXAMPLE.invalid:443/a/../b?x=%2f#Mixed',
   };
   check('Scalars', scalars, true);
+  for (const [date, valid] of calendarCases) {
+    check('Scalars', { ...scalars, date }, valid);
+    check('Scalars', { ...scalars, instant: `${date}T12:34:56Z` }, valid);
+  }
   check('Scalars', { ...scalars, uri: null }, true);
   check('Scalars', { ...scalars, email: 'user..name@example.invalid' }, false);
   check('Scalars', { ...scalars, uri: 'https://example.invalid/%' }, false);

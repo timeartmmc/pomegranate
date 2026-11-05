@@ -138,14 +138,6 @@ export function schemaRenderer(
   const component = (name: string, direction: Direction): Expression => {
     return reference(identities[direction](name), direction);
   };
-  function declareType(
-    name: string,
-    value: Schema,
-    direction: Direction,
-  ): string {
-    return `type ${name} = ${schemaType(value, direction, target, typeReference)};`;
-  }
-
   function functionDeclaration(
     name: string,
     type: string,
@@ -604,7 +596,6 @@ export function schemaRenderer(
     typeOf: (value: Schema, direction: Direction): string =>
       schemaType(value, direction, target, typeReference),
     objectParser,
-    declareType,
     helpers,
     typeImports,
     use,
