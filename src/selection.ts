@@ -11,6 +11,9 @@ import { surfaceNames } from './policy.js';
 
 export type CompileOptions = Readonly<{
   clients: readonly string[];
+  formats?: Readonly<
+    Record<string, Readonly<{ type: 'string'; pattern: string }>>
+  >;
   ignoreExtensions?: readonly string[];
   surfaces?: Readonly<Record<string, readonly string[]>>;
   executionClients?: readonly string[];
@@ -26,6 +29,7 @@ export type CompileOptions = Readonly<{
 }>;
 export const selectionKeys = [
   'clients',
+  'formats',
   'ignoreExtensions',
   'surfaces',
   'executionClients',

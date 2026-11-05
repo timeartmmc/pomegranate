@@ -26,10 +26,12 @@ import type {
   PolicyVocabulary,
   ResponseHeader,
   Schema,
+  RegisteredStringFormat,
 } from './model.js';
 import {
   componentName,
   normalizeSchema,
+  normalizeFormats,
   orderSchemas,
   resolveSchema,
   validateSchema,
@@ -68,6 +70,7 @@ type HeaderDefinition = Omit<ResponseHeader, 'name'>;
 type RequestBodyDefinition = Exclude<Operation['body'], { kind: 'none' }>;
 
 type SchemaContext = Readonly<{
+  formats: Readonly<Record<string, RegisteredStringFormat>>;
   source: SchemaTable;
   projection: ReturnType<typeof projectSchemas>;
   sourceValidation: Validation;
@@ -94,7 +97,7 @@ function normalizeFor(
   direction: Direction,
   usage: Direction | 'multipart' = direction,
 ): Schema {
-  const source = normalizeSchema(input, location);
+  const source = normalizeSchema(input, location, 1, context.formats);
   // Source validation stays complete before projection: an excluded property
   // cannot hide malformed declarations or unresolved references.
   validateSchema(
@@ -838,9 +841,10 @@ export function openApiDocument(input: unknown): Record<string, unknown> {
 
 export function buildDescriptor(
   input: unknown,
-  membership: { surfaces?: unknown } = {},
+  membership: { surfaces?: unknown; formats?: unknown } = {},
 ): Descriptor {
   const value = openApiDocument(input);
+  const registeredFormats = normalizeFormats(membership.formats);
   keys(
     value,
     [
@@ -949,7 +953,12 @@ export function buildDescriptor(
       .sort()
       .map((name) => [
         componentName(name, `components.schemas.${name}`),
-        normalizeSchema(rawSchemas[name], `components.schemas.${name}`),
+        normalizeSchema(
+          rawSchemas[name],
+          `components.schemas.${name}`,
+          1,
+          registeredFormats,
+        ),
       ]),
   );
   const schemaOrder = orderSchemas(schemas);
@@ -965,6 +974,7 @@ export function buildDescriptor(
       validation,
     );
   const context: SchemaContext = {
+    formats: registeredFormats,
     source: schemas,
     projection: projectSchemas(schemas),
     sourceValidation: validation,

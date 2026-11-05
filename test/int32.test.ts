@@ -188,11 +188,6 @@ const invalid: [string, Schema, RegExp][] = [
     /format.*unsupported keyword/,
   ],
   [
-    'int64 remains unsupported',
-    { type: 'integer', format: 'int64' },
-    /unsupported integer format/,
-  ],
-  [
     'reference format sibling',
     { ...valueRef, format: 'int32' },
     /format.*unsupported keyword/,
@@ -212,24 +207,10 @@ for (const [name, schema, message] of invalid)
     assert.deepEqual(input, before);
   });
 
-void test('number format diagnostics identify the supported scalar profiles', async () => {
-  for (const schema of [
-    { type: 'number', format: 'double' },
-    { type: 'number', format: 'float' },
-    { type: ['number', 'null'], format: 'double', const: null },
-  ]) {
-    await assert.rejects(
-      compile(document({ Value: schema }), roots),
-      (error) => {
-        assert.ok(error instanceof ContractError);
-        assert.equal(error.location, 'components.schemas.Value.format');
-        assert.equal(
-          error.message,
-          'components.schemas.Value.format: unsupported numeric format; number schemas do not support formats (supported formats: integer int32; string date, date-time, uuid, email, uri, ipv4 or ipv6)',
-        );
-        return true;
-      },
-    );
+void test('undeclared numeric formats diagnose', async () => {
+  for (const format of ['custom', 'unknown']) {
+    const input = document({ Value: { type: 'number', format } });
+    await assert.rejects(compile(input, roots), /format.*unsupported format/);
   }
 });
 

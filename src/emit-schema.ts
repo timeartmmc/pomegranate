@@ -7,6 +7,7 @@ import type {
   Direction,
   DirectionalSchemas,
   Schema,
+  SchemaFormat,
 } from './model.js';
 import { hasUnicodeProperty, intersectConstraints } from './scalar-rules.js';
 import { schemaType } from './schema-types.js';
@@ -66,6 +67,7 @@ export type ObjectField = Readonly<{
 
 const stringRules = ['minLength', 'maxLength', 'pattern'] as const;
 const formatHelpers = {
+  int64: 'int64StringFormat',
   date: 'dateFormat',
   'date-time': 'dateTimeFormat',
   uuid: 'uuidFormat',
@@ -75,6 +77,7 @@ const formatHelpers = {
   ipv6: 'ipv6Format',
 } satisfies Record<StringFormat, keyof typeof import('./runtime.js')>;
 const numberRules = [
+  'float',
   'minimum',
   'maximum',
   'exclusiveMinimum',
@@ -331,6 +334,15 @@ export function schemaRenderer(
     return identifier(name);
   }
 
+  function stringFormat(format: SchemaFormat): Expression {
+    return typeof format === 'string'
+      ? use(formatHelpers[format])
+      : object([
+          ['pattern', literal(format.pattern)],
+          ['message', literal(`expected ${format.name} format`)],
+        ]);
+  }
+
   function scalarRules(
     value: Extract<Schema, { kind: 'string' | 'number' | 'integer' }>,
   ): Expression | undefined {
@@ -340,7 +352,7 @@ export function schemaRenderer(
         stringRules,
         value.format === undefined
           ? []
-          : [['format', use(formatHelpers[value.format])]],
+          : [['format', stringFormat(value.format)]],
       );
     if (!rules(value, numberRules)) return undefined;
     return rules(
@@ -545,13 +557,22 @@ export function schemaRenderer(
     const message = JSON.stringify(
       `expected ${expected.length === 1 ? expected[0] : `one of ${expected.join(', ')}`}`,
     );
+    const deferredRules: (readonly [string, Expression])[] = [];
+    if (value.kind === 'string') {
+      if (value.pattern !== undefined && hasUnicodeProperty(value.pattern))
+        deferredRules.push(['pattern', literal(value.pattern)]);
+      if (
+        value.format !== undefined &&
+        typeof value.format !== 'string' &&
+        hasUnicodeProperty(value.format.pattern)
+      )
+        deferredRules.push(['format', stringFormat(value.format)]);
+    }
     const patternCheck =
-      value.kind === 'string' &&
-      value.pattern !== undefined &&
-      hasUnicodeProperty(value.pattern)
+      deferredRules.length > 0
         ? `if (${use('text').source}(input, issues, ${constant(
             `rules_${name}`,
-            object([['pattern', literal(value.pattern)]]).source,
+            object(deferredRules).source,
             'StringRules',
           )}) === ${use('invalid').source}) return invalid;`
         : undefined;

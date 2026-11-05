@@ -278,6 +278,13 @@ export function patternTest(pattern: string): (value: string) => boolean {
   return (value) => expression.test(value);
 }
 
+export function formatPattern(pattern: string): (value: string) => boolean {
+  // Formats match the complete value. Grouping preserves alternatives and
+  // backreferences; without multiline mode, $ requires the end of input.
+  const expression = new RegExp(`^(?:${pattern})$`, 'u');
+  return (value) => expression.test(value);
+}
+
 function decimal(value: number): readonly [bigint, number] {
   const [mantissa = '', exponent] = value.toString().split('e');
   const fraction = mantissa.split('.')[1]?.length ?? 0;
@@ -500,8 +507,33 @@ export type StringFormatRule = Readonly<{
   message: string;
 }>;
 
+function int64String(value: string): boolean {
+  const negative = value.startsWith('-');
+  const start = negative ? 1 : 0;
+  if (start === value.length) return false;
+  let significant = start;
+  for (let index = start; index < value.length; index++) {
+    const digit = value.charCodeAt(index);
+    if (digit < 48 || digit > 57) return false;
+    if (index === significant && digit === 48) significant++;
+  }
+  // Compare only the significant decimal digits. Number conversion would lose
+  // boundary precision; leading zeroes and the original spelling stay intact.
+  const length = value.length - significant;
+  return (
+    length < 19 ||
+    (length === 19 &&
+      value.slice(significant) <=
+        (negative ? '9223372036854775808' : '9223372036854775807'))
+  );
+}
+
 // Generated rules reference one descriptor directly. Looking it up through the
 // complete registry here would retain every format in every string bundle.
+export const int64StringFormat: StringFormatRule = {
+  check: int64String,
+  message: 'expected a signed 64-bit decimal integer string',
+};
 export const emailFormat: StringFormatRule = {
   check: email,
   message: 'expected an email address',
@@ -548,6 +580,7 @@ export const uuidFormat: StringFormatRule = {
 
 // The compiler uses the same predicates for declared literal values.
 export const formats = {
+  int64: (value: string): boolean => int64StringFormat.check(value),
   date: (value: string): boolean => dateFormat.check(value),
   'date-time': (value: string): boolean => dateTimeFormat.check(value),
   uuid: (value: string): boolean => uuidFormat.check(value),
@@ -559,7 +592,7 @@ export const formats = {
 export type StringFormat = keyof typeof formats;
 
 export type StringRules = Readonly<{
-  format?: StringFormatRule;
+  format?: StringFormatRule | Readonly<{ pattern: string; message: string }>;
   minLength?: number;
   maxLength?: number;
   pattern?: string;
@@ -567,14 +600,29 @@ export type StringRules = Readonly<{
 type Check<T> = (value: T, issues: Issues) => void;
 
 const stringCache = new WeakMap<StringRules, Check<string>>();
+function isPatternFormat(
+  format: NonNullable<StringRules['format']>,
+): format is Readonly<{ pattern: string; message: string }> {
+  // An inherited pattern must not replace a built-in format's own predicate.
+  return Object.hasOwn(format, 'pattern');
+}
+
 function stringChecks(rules: StringRules): Check<string> {
   const known = stringCache.get(rules);
   if (known) return known;
   const { format, minLength, maxLength, pattern } = rules;
   const matches = pattern === undefined ? undefined : patternTest(pattern);
+  // Registered formats remain static data in generated modules. Compile their
+  // expressions on first use, independently of the schema's own pattern.
+  const formatCheck =
+    format === undefined
+      ? undefined
+      : isPatternFormat(format)
+        ? formatPattern(format.pattern)
+        : (value: string) => format.check(value);
   // Lengths count Unicode code points, as JSON Schema specifies.
   const check: Check<string> = (value, issues) => {
-    if (format !== undefined && !format.check(value))
+    if (format !== undefined && formatCheck && !formatCheck(value))
       report(issues, format.message, false);
     if (minLength !== undefined || maxLength !== undefined) {
       const length = codePoints(value);
@@ -605,6 +653,7 @@ export function text(
 
 export type NumberRules = Readonly<{
   integer?: true;
+  float?: true;
   minimum?: number;
   maximum?: number;
   exclusiveMinimum?: number;
@@ -616,14 +665,22 @@ const numberCache = new WeakMap<NumberRules, Check<number>>();
 function numberChecks(rules: NumberRules): Check<number> {
   const known = numberCache.get(rules);
   if (known) return known;
-  const { integer, minimum, maximum, exclusiveMinimum, exclusiveMaximum } =
-    rules;
+  const {
+    integer,
+    float,
+    minimum,
+    maximum,
+    exclusiveMinimum,
+    exclusiveMaximum,
+  } = rules;
   const multiple =
     rules.multipleOf === undefined ? undefined : multipleOf(rules.multipleOf);
   // Integer checks add no implicit safe-integer range.
   const check: Check<number> = (value, issues) => {
     if (integer && !Number.isInteger(value))
       report(issues, 'expected an integer', false);
+    if (float && !Number.isFinite(Math.fround(value)))
+      report(issues, 'expected a finite float32 value', false);
     if (minimum !== undefined && !(value >= minimum))
       report(issues, `expected value >= ${minimum}`, false);
     if (maximum !== undefined && !(value <= maximum))

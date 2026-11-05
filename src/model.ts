@@ -2,6 +2,11 @@ import type { StringFormat } from './runtime.js';
 
 export type Scalar = string | number | boolean | null;
 export type Direction = 'request' | 'response';
+export type RegisteredStringFormat = Readonly<{
+  name: string;
+  pattern: string;
+}>;
+export type SchemaFormat = StringFormat | RegisteredStringFormat;
 export type Constraints = {
   readonly minLength?: number;
   readonly maxLength?: number;
@@ -11,6 +16,7 @@ export type Constraints = {
   readonly exclusiveMinimum?: number;
   readonly exclusiveMaximum?: number;
   readonly multipleOf?: number;
+  readonly float?: true;
   readonly minItems?: number;
   readonly maxItems?: number;
   readonly minProperties?: number;
@@ -64,7 +70,7 @@ export type Schema = {
       readonly minLength?: number;
       readonly maxLength?: number;
       readonly pattern?: string;
-      readonly format?: StringFormat;
+      readonly format?: SchemaFormat;
       readonly literals?: readonly Scalar[];
     }
   | {
@@ -74,6 +80,7 @@ export type Schema = {
       readonly exclusiveMinimum?: number;
       readonly exclusiveMaximum?: number;
       readonly multipleOf?: number;
+      readonly float?: true;
       readonly literals?: readonly Scalar[];
     }
   | {

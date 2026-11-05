@@ -14,7 +14,13 @@ import {
   schemaAnnotations,
   schemaAnnotationKeys,
 } from './annotations.js';
-import type { Constraints, Scalar, Schema } from './model.js';
+import type {
+  Constraints,
+  Scalar,
+  Schema,
+  SchemaFormat,
+  RegisteredStringFormat,
+} from './model.js';
 import {
   assertScalarRules,
   intersectConstraints,
@@ -26,6 +32,37 @@ import type { StringFormat } from './runtime.js';
 
 const formatNames = Object.keys(formats);
 const expectedFormats = `${formatNames.slice(0, -1).join(', ')} or ${formatNames.at(-1)}`;
+type FormatRegistry = Readonly<Record<string, RegisteredStringFormat>>;
+function builtInFormat(name: string): boolean {
+  return (
+    Object.hasOwn(formats, name) ||
+    ['int32', 'int64', 'float', 'double', 'binary'].includes(name)
+  );
+}
+
+export function normalizeFormats(input: unknown = {}): FormatRegistry {
+  const definitions = record(input, 'formats');
+  return Object.fromEntries(
+    Object.keys(definitions)
+      .sort()
+      .map((name) => {
+        const location = `formats.${name}`;
+        safeKey(text(name, 'formats'), location);
+        if (builtInFormat(name))
+          fail(location, 'built-in formats cannot be overridden');
+        const definition = record(definitions[name], location);
+        keys(definition, ['type', 'pattern'], location);
+        if (definition.type !== 'string')
+          fail(`${location}.type`, 'registered formats require type string');
+        if (typeof definition.pattern !== 'string')
+          fail(`${location}.pattern`, 'expected a pattern string');
+        // Reuse the schema pattern syntax and nesting budget, including for unused
+        // definitions. The caller's definitions never enter the generated graph.
+        const pattern = constraints(definition, location).pattern!;
+        return [name, { name, pattern }];
+      }),
+  );
+}
 
 const stringConstraints = ['minLength', 'maxLength', 'pattern'];
 const numberConstraints = [
@@ -244,11 +281,24 @@ export function normalizeSchema(
   input: unknown,
   location: string,
   nesting = 1,
+  registered: FormatRegistry = {},
 ): Schema {
   // Bound schema recursion before entering either JS or the native formatter.
   // Annotation values have their own iterative validation and do not add depth.
   assertInlineSchemaNesting(nesting, location);
   const value = record(input, location);
+  if (Object.hasOwn(value, 'format')) {
+    if (typeof value.format !== 'string')
+      fail(`${location}.format`, 'expected a string');
+    if (
+      !builtInFormat(value.format) &&
+      !Object.hasOwn(registered, value.format)
+    )
+      fail(
+        `${location}.format`,
+        'unsupported format; use a built-in format or register a custom string format in formats',
+      );
+  }
   schemaAnnotations(value, location);
   for (const name of ['readOnly', 'writeOnly'])
     if (Object.hasOwn(value, name) && typeof value[name] !== 'boolean')
@@ -256,7 +306,7 @@ export function normalizeSchema(
   if (value.readOnly === true && value.writeOnly === true)
     fail(location, 'readOnly and writeOnly cannot both be true');
   const schema = {
-    ...normalizeShape(value, location, nesting),
+    ...normalizeShape(value, location, nesting, registered),
     ...(value.readOnly === true ? { readOnly: true as const } : {}),
     ...(value.writeOnly === true ? { writeOnly: true as const } : {}),
   };
@@ -290,6 +340,7 @@ function normalizeUnion(
   value: Record<string, unknown>,
   location: string,
   nesting: number,
+  registered: FormatRegistry,
 ): Schema {
   const keyword = Object.hasOwn(value, 'anyOf') ? 'anyOf' : 'oneOf';
   keys(
@@ -305,7 +356,12 @@ function normalizeUnion(
   if (!Array.isArray(raw) || raw.length < 2)
     fail(`${location}.${keyword}`, 'expected at least two union branches');
   const branches = Array.from(raw, (branch: unknown, index) =>
-    normalizeSchema(branch, `${location}.${keyword}[${index}]`, nesting + 1),
+    normalizeSchema(
+      branch,
+      `${location}.${keyword}[${index}]`,
+      nesting + 1,
+      registered,
+    ),
   );
   if (keyword === 'anyOf') return { kind: 'union', branches };
   const discriminator = record(
@@ -336,6 +392,7 @@ function normalizeObject(
   value: Record<string, unknown>,
   location: string,
   nesting: number,
+  registered: FormatRegistry,
 ): Schema {
   keys(
     value,
@@ -369,6 +426,7 @@ function normalizeObject(
           properties[name],
           `${location}.properties.${name}`,
           nesting + 1,
+          registered,
         ),
       ]),
   );
@@ -399,6 +457,7 @@ function normalizeObject(
               value.additionalProperties,
               `${location}.additionalProperties`,
               nesting + 1,
+              registered,
             ),
     };
   }
@@ -423,6 +482,7 @@ function normalizeScalar(
   value: Record<string, unknown>,
   location: string,
   kind: 'string' | 'number' | 'integer' | 'boolean' | 'null',
+  registered: FormatRegistry,
   nullable = false,
 ): Schema {
   const allowedConstraints =
@@ -438,34 +498,58 @@ function normalizeScalar(
   );
   const allowed = literals(value, kind, location, nullable);
   let limits = constraints(value, location);
-  let format: StringFormat | undefined;
+  let format: SchemaFormat | undefined;
   if (Object.hasOwn(value, 'format')) {
-    if (kind === 'number')
-      fail(
-        `${location}.format`,
-        `unsupported numeric format; number schemas do not support formats (supported formats: integer int32; string ${expectedFormats})`,
-      );
-    if (kind === 'integer') {
-      if (value.format !== 'int32')
+    if (
+      typeof value.format === 'string' &&
+      Object.hasOwn(registered, value.format)
+    ) {
+      if (kind !== 'string')
         fail(
           `${location}.format`,
-          'unsupported integer format; expected int32',
+          'registered formats require a string schema',
         );
-      // Lower the wire format to ordinary bounds so literals, references and
-      // generated numeric parsers keep one interpretation of the integer range.
-      limits = intersectConstraints(limits, {
-        minimum: -2_147_483_648,
-        maximum: 2_147_483_647,
-      });
-    } else if (
-      typeof value.format !== 'string' ||
-      !Object.hasOwn(formats, value.format)
-    )
-      fail(
-        `${location}.format`,
-        `unsupported format; expected ${expectedFormats}`,
-      );
-    else format = value.format as StringFormat;
+      format = registered[value.format]!;
+    } else {
+      if (kind === 'number') {
+        if (value.format === 'float') limits = { ...limits, float: true };
+        else if (value.format !== 'double')
+          fail(
+            `${location}.format`,
+            'unsupported numeric format; number schemas support float or double',
+          );
+      } else if (kind === 'integer') {
+        if (value.format !== 'int32' && value.format !== 'int64')
+          fail(
+            `${location}.format`,
+            'unsupported integer format; expected int32 or int64',
+          );
+        // Lower the wire format to ordinary bounds so literals, references and
+        // generated numeric parsers keep one interpretation of the integer range.
+        limits = intersectConstraints(
+          limits,
+          value.format === 'int32'
+            ? {
+                minimum: -2_147_483_648,
+                maximum: 2_147_483_647,
+              }
+            : {
+                // POM's numeric API uses JS numbers. Restrict numeric int64 to the
+                // exactly representable safe-integer range; never coerce strings/bigints.
+                minimum: Number.MIN_SAFE_INTEGER,
+                maximum: Number.MAX_SAFE_INTEGER,
+              },
+        );
+      } else if (
+        typeof value.format !== 'string' ||
+        !Object.hasOwn(formats, value.format)
+      )
+        fail(
+          `${location}.format`,
+          `unsupported format; expected ${expectedFormats}`,
+        );
+      else format = value.format as StringFormat;
+    }
   }
   const nonNull = nullable ? allowed?.filter((item) => item !== null) : allowed;
   // A null-only literal assertion removes the non-null branch. Sibling syntax
@@ -491,6 +575,7 @@ function normalizeNullableType(
   value: Record<string, unknown>,
   location: string,
   nesting: number,
+  registered: FormatRegistry,
 ): Schema {
   const types = value.type;
   if (Array.isArray(types) && types.includes(null))
@@ -528,7 +613,7 @@ function normalizeNullableType(
       value.format !== 'binary' &&
       !Object.hasOwn(value, 'contentMediaType'))
   ) {
-    schema = normalizeScalar(value, location, kind, true);
+    schema = normalizeScalar(value, location, kind, registered, true);
   } else {
     // The virtual branch counts just like an explicit anyOf branch. Keep the
     // original location for diagnostics and all semantic siblings for validation.
@@ -537,6 +622,7 @@ function normalizeNullableType(
       { ...value, type: kind },
       location,
       nesting + 1,
+      registered,
     );
     schema = { kind: 'union', branches: [branch, { kind: 'null' }] };
   }
@@ -548,6 +634,7 @@ function normalizeShape(
   value: Record<string, unknown>,
   location: string,
   nesting: number,
+  registered: FormatRegistry,
 ): Schema {
   if (Object.hasOwn(value, '$ref')) {
     keys(value, ['$ref', ...annotationKeys, ...constraintKeys], location);
@@ -559,12 +646,12 @@ function normalizeShape(
     };
   }
   if (Object.hasOwn(value, 'anyOf') || Object.hasOwn(value, 'oneOf'))
-    return normalizeUnion(value, location, nesting);
+    return normalizeUnion(value, location, nesting, registered);
   if (Object.keys(value).every((key) => annotationKeys.includes(key)))
     return { kind: 'json' };
   const kind = value.type;
   if (Array.isArray(kind))
-    return normalizeNullableType(value, location, nesting);
+    return normalizeNullableType(value, location, nesting, registered);
   if (
     kind === 'string' &&
     (value.format === 'binary' || Object.hasOwn(value, 'contentMediaType'))
@@ -582,7 +669,8 @@ function normalizeShape(
       );
     return { kind: 'binary' };
   }
-  if (kind === 'object') return normalizeObject(value, location, nesting);
+  if (kind === 'object')
+    return normalizeObject(value, location, nesting, registered);
   if (kind === 'array') {
     keys(
       value,
@@ -591,7 +679,12 @@ function normalizeShape(
     );
     const schema: Schema = {
       kind,
-      items: normalizeSchema(value.items, `${location}.items`, nesting + 1),
+      items: normalizeSchema(
+        value.items,
+        `${location}.items`,
+        nesting + 1,
+        registered,
+      ),
       ...bounds(value, 'minItems', 'maxItems', location, true),
     };
     assertScalarRules(kind, schema, undefined, location);
@@ -604,7 +697,7 @@ function normalizeShape(
     kind === 'boolean' ||
     kind === 'null'
   )
-    return normalizeScalar(value, location, kind);
+    return normalizeScalar(value, location, kind, registered);
   fail(
     `${location}.type`,
     'supported types are object, array, string, number, integer, boolean and null; type arrays require one supported non-null type and null; implicit types are unsupported',

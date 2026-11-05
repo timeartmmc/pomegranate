@@ -85,9 +85,14 @@ function describeInput(
       openApiDocument(document),
       parseIgnoredExtensions(selection.ignoreExtensions),
     ),
-    Object.hasOwn(selection, 'surfaces')
-      ? { surfaces: selection.surfaces }
-      : {},
+    {
+      ...(Object.hasOwn(selection, 'surfaces')
+        ? { surfaces: selection.surfaces }
+        : {}),
+      ...(Object.hasOwn(selection, 'formats')
+        ? { formats: selection.formats }
+        : {}),
+    },
   );
 }
 

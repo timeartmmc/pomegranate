@@ -33,6 +33,7 @@ These selection keys are shared with programmatic compilation:
 | Key                | Purpose                                                                                                                                         |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `surfaces`         | Optional complete map of surface names to operation IDs for contracts without inline membership; see [surfaces](#client-surfaces-and-security). |
+| `formats`          | Optional named string-pattern validators; see [registered formats](#registered-formats).                                                        |
 | `clients`          | Required array of declared surfaces; may be empty when `standalone` selects at least one root.                                                  |
 | `ignoreExtensions` | Exact unrelated `x-…` annotation keywords to ignore; POM metadata remains validated.                                                            |
 | `standalone`       | Named component roots with `schema` and `usage: "request"` or `"response"`; see [standalone validators](#standalone-validators).                |
@@ -59,6 +60,46 @@ same-named schema properties, components, headers, named examples, and server
 variables, plus example/default payloads, discriminator mappings, security
 requirements, and POM policy metadata. Standard keywords and all remaining
 contract semantics still receive normal validation.
+
+### Registered formats
+
+Define reusable string validators in `pom.json`, or the same `formats` option
+when using `compile`:
+
+```json
+{
+  "formats": {
+    "booking-code": {
+      "type": "string",
+      "pattern": "^RES-[0-9]{6}$"
+    }
+  }
+}
+```
+
+Use `"type": "string", "format": "booking-code"` in the OpenAPI schema. POM
+checks the named pattern on requests, responses, and standalone validators.
+Format names match exactly, including case. Undefined names fail compilation,
+and built-in names cannot be overridden. Every definition is checked, including
+unused ones, before outputs change. Only definitions reachable from a selected
+schema enter generated code. Adding a built-in name in a compiler upgrade can
+collide with an existing custom name; that produces an explicit error before
+writing, rather than silently changing the custom rule. A project-specific
+prefix helps avoid collisions for new format names you control.
+
+Definitions accept exactly `type: "string"` and a string `pattern`, using the
+same Unicode regular-expression syntax and limits as schema patterns. Registered
+patterns must match the whole value: `[A-Z]{3}` accepts `USD` and rejects `xxUSDxx` or a trailing newline. This differs from a schema
+`pattern`, which keeps its standard search behavior. No custom
+flags, JavaScript callbacks, imports, or executable configuration are accepted.
+A format does not infer a type or coerce values. Nullable string schemas apply
+the rule to non-null values. An enum or a schema's own `pattern` adds independent
+constraints; both patterns must match. References inherit their target's format,
+with existing restrictions on semantic reference siblings.
+
+Generated code performs the checks without the compiler or consumer source
+modules. For a rule that cannot be expressed by a pattern, use a reviewed built-in
+format or validate that additional rule in the application.
 
 ## Operation policy
 
@@ -235,7 +276,7 @@ validation, including operations excluded from output.
 | Bodies      | Required or optional JSON bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON or bodyless responses; string response headers; local component references and aliases                                                                                                                        |
 | Schemas     | {} and annotation-only schemas; explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                   |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                  |
-| Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, and `ipv6`; integer `int32`; no coercion                                                                                                                                                                                                                                   |
+| Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, and `ipv6`; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                                                             |
 
 JSON inputs and configuration accept one leading UTF-8 byte-order mark and
 reject duplicate decoded object keys. YAML files use a single YAML 1.2 core
@@ -344,17 +385,45 @@ nesting receives a location-specific diagnostic before formatting or writing.
 Default annotations do not add schema or expression levels; YAML document
 limits still apply to their values.
 
-Numbers use finite JavaScript numeric values. Integer validation checks
+Numbers use finite JavaScript numeric values. Plain integer validation checks
 integrality without adding an implicit safe-integer range; declare required
-bounds in the schema. `multipleOf` uses their decimal spelling, including
+bounds or select the `int64` profile described below. `multipleOf` uses their decimal spelling, including
 scientific notation, without an epsilon tolerance.
 
 `type: "integer", format: "int32"` restricts values to −2,147,483,648 through
 2,147,483,647 inclusive. Explicit bounds and reference constraints intersect
 that range and cannot widen it. Types remain `number`, with runtime integer
 and range checks and no coercion. Nullable integer schemas support the same
-format. `int32` on other types, format siblings on references, and `int64`
-remain unsupported. Defaults keep the annotation behavior above.
+format. Known formats require a supported matching type; format siblings on
+references remain unsupported. Defaults keep the annotation behavior above.
+
+`type: "integer", format: "int64"` uses JavaScript's safe-integer range,
+−9,007,199,254,740,991 through 9,007,199,254,740,991 inclusive. It retains the
+`number` type and intersects explicit or referenced bounds just like `int32`.
+Unsafe integers, fractions, strings, and bigints fail validation without coercion.
+This deliberately supports the safe numeric subset of signed 64-bit integers;
+applications needing the full range can use `type: "string", format: "int64"`.
+Validation observes JavaScript numbers, so it cannot recover or detect every
+rounding that occurred while parsing a JSON token or computing a value.
+
+`type: "string", format: "int64"` validates the complete signed 64-bit range,
+−9,223,372,036,854,775,808 through 9,223,372,036,854,775,807. It accepts ASCII
+decimal digits with an optional minus sign, including leading zeroes, and preserves
+the exact string. Whitespace, plus signs, exponents, fractions and hexadecimal
+spellings are rejected. Validation never converts the string to a JS number.
+
+`type: "number", format: "double"` uses the existing finite JavaScript number
+validation. `format: "float"` additionally rejects values whose conversion to
+32-bit floating point would overflow. This admits shortest serialized decimal
+spellings such as `3.4028235e38`, which round to the finite float32 maximum even
+though they exceed its exact mathematical value. Neither profile changes the
+input number or guarantees that it is exactly representable without rounding;
+float32 underflow/rounding is not coercion performed by POM. Explicit numeric
+bounds and `multipleOf` still apply to the original value.
+
+Formats must be built in or explicitly registered. Unknown or misspelled names
+receive a diagnostic; a non-string `format` value also fails. Recognized numeric
+and binary formats keep their existing type/usage restrictions.
 
 Patterns use ECMAScript 2024 syntax in Unicode (`u`) mode with Unicode 16.0
 property names, matching the supported Node minimums. Newer syntax, including

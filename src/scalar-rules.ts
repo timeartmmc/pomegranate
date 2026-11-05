@@ -1,7 +1,6 @@
 import { fail } from './diagnostics.js';
-import type { Constraints, Scalar, Schema } from './model.js';
-import { formats, multipleOf, patternTest } from './runtime.js';
-import type { StringFormat } from './runtime.js';
+import type { Constraints, Scalar, Schema, SchemaFormat } from './model.js';
+import { formatPattern, formats, multipleOf, patternTest } from './runtime.js';
 
 function adjacentNumber(value: number, direction: 1 | -1): number {
   if (value === 0) return direction * Number.MIN_VALUE;
@@ -49,7 +48,7 @@ export function assertScalarRules(
   limits: Constraints,
   literals: readonly Scalar[] | undefined,
   location: string,
-  format?: StringFormat,
+  format?: SchemaFormat,
 ): void {
   for (const [minimum, maximum] of [
     ['minLength', 'maxLength'],
@@ -79,6 +78,15 @@ export function assertScalarRules(
         location,
         `${kind} bounds admit no finite ${kind === 'integer' ? 'integer' : 'number'}`,
       );
+    // A shortest float32 decimal can exceed the exact binary32 maximum while
+    // still rounding back to it. Check overflow using the runtime conversion,
+    // rather than intersecting with the smaller exact-value interval.
+    if (
+      limits.float &&
+      ((lower > 0 && !Number.isFinite(Math.fround(lower))) ||
+        (upper < 0 && !Number.isFinite(Math.fround(upper))))
+    )
+      fail(location, 'number bounds admit no finite float32 value');
   }
   // Inline enum/const assertions must agree with their own sibling rules.
   // Reference siblings may legitimately narrow an existing multi-value enum.
@@ -91,7 +99,7 @@ export function assertScalarRules(
 
 export function literalViolation(
   limits: Constraints,
-  format?: StringFormat,
+  format?: SchemaFormat,
 ): (item: Scalar) => string | undefined {
   // Bounds, formats and stable patterns use the emitted predicates. Property
   // escapes depend on the engine's Unicode data: defer their matching instead
@@ -100,6 +108,15 @@ export function literalViolation(
     limits.pattern === undefined || hasUnicodeProperty(limits.pattern)
       ? undefined
       : patternTest(limits.pattern);
+  const formatCheck =
+    format === undefined
+      ? undefined
+      : typeof format === 'string'
+        ? formats[format]
+        : hasUnicodeProperty(format.pattern)
+          ? undefined
+          : formatPattern(format.pattern);
+  const formatName = typeof format === 'string' ? format : format?.name;
   const multiple =
     limits.multipleOf === undefined ? undefined : multipleOf(limits.multipleOf);
   return (item) => {
@@ -119,10 +136,14 @@ export function literalViolation(
       return 'literal violates declared bounds';
     if (typeof item === 'string') {
       if (pattern && !pattern(item)) return 'literal violates declared pattern';
-      if (format && !formats[format](item))
-        return `literal violates declared ${format} format`;
-    } else if (typeof item === 'number' && multiple && !multiple(item))
-      return 'literal violates declared multipleOf';
+      if (formatCheck && !formatCheck(item))
+        return `literal violates declared ${formatName} format`;
+    } else if (typeof item === 'number') {
+      if (limits.float && !Number.isFinite(Math.fround(item)))
+        return 'literal violates declared float format';
+      if (multiple && !multiple(item))
+        return 'literal violates declared multipleOf';
+    }
     return undefined;
   };
 }
