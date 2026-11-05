@@ -38,7 +38,8 @@ for (const [baseUrl, basePath] of [
         headers: { 'Content-Type': 'application/json' },
       });
     };
-    const tokenFor = async (label: string) => {
+    const tokenFor = async (scheme: string, label: string) => {
+      assert.equal(scheme, 'WidgetSession');
       assert.equal(label, 'session');
       return 'synthetic-token';
     };

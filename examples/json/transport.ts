@@ -10,7 +10,7 @@ import type {
 export async function execute<R extends Responses>(
   request: PreparedRequest<R, 'none' | 'json'>,
   send: typeof fetch,
-  tokenFor: (authLabel: string) => Promise<string>,
+  tokenFor: (scheme: string, authLabel: string) => Promise<string>,
   baseUrl: string | URL,
 ): Promise<ProtocolResult<R>> {
   return request.parseResponse(
@@ -26,7 +26,7 @@ export async function execute<R extends Responses>(
 
 export function createExecutor(
   send: typeof fetch,
-  tokenFor: (authLabel: string) => Promise<string>,
+  tokenFor: (scheme: string, authLabel: string) => Promise<string>,
   baseUrl: string | URL,
 ): Executor {
   return (request, execution) =>
@@ -39,7 +39,7 @@ async function executeRaw(
   request: PreparedRequest,
   execution: Pick<Parameters<Executor>[1], 'signal' | 'context'>,
   send: typeof fetch,
-  tokenFor: (authLabel: string) => Promise<string>,
+  tokenFor: (scheme: string, authLabel: string) => Promise<string>,
   baseUrl: string | URL,
 ): Promise<ObservedResponse> {
   if (request.bodyKind !== 'none' && request.bodyKind !== 'json')
@@ -54,7 +54,7 @@ async function executeRaw(
   }
   const authHeaders: Record<string, string> = {};
   if (request.security.transport === 'bearer') {
-    const token = await tokenFor(request.policy.auth);
+    const token = await tokenFor(request.security.scheme, request.policy.auth);
     if (!token)
       throw new Error('The example transport requires a bearer token');
     authHeaders['Authorization'] = `Bearer ${token}`;

@@ -251,7 +251,10 @@ void test('optional auth binding preserves explicit readiness labels and transpo
     });
     const operation = present(buildDescriptor(input).operations[0]);
     assert.equal(operation.policy.auth, label);
-    assert.deepEqual(operation.security, { transport: 'bearer' });
+    assert.deepEqual(operation.security, {
+      transport: 'bearer',
+      scheme: 'Token',
+    });
     Object.assign(input.paths['/read'].get, { security: [] });
     await assert.rejects(
       compile(input, selected),

@@ -22,7 +22,8 @@ applications select and expand endpoints and append the generated contract paths
 
 Use one versioned policy format and generated API across applications. Keep
 application-specific behavior in adapters. OpenAPI security determines credential
-transport, and optional auth labels must agree with it. Policy fields declare
+transport and preserves the required scheme's name; optional auth labels must
+agree with its transport. Policy fields declare
 types, enums, and requiredness; applications implement authorization, retries,
 and timeouts. Builders and executors share one generated policy declaration.
 Every operation must declare surface membership through either inline metadata

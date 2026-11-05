@@ -29,6 +29,11 @@ import {
   typeIdentityFixture,
   typeIdentitySelection,
 } from '../test/type-identity-fixture.ts';
+import {
+  directionalTypeIdentityConsumer,
+  directionalTypeIdentityFixture,
+  directionalTypeIdentitySelection,
+} from '../test/directional-type-identity-fixture.ts';
 import { annotateDocument } from '../test/metadata-fixture.ts';
 import {
   multipartFixture,
@@ -391,6 +396,8 @@ try {
     'deep-generated/*.ts',
     'type-identity-generated/*.ts',
     'type-identity-types.ts',
+    'directional-type-identity-generated/*.ts',
+    'directional-type-identity-types.ts',
     'symbol-generated/*.ts',
     'operation-ids-generated/*.ts',
     'query-generated/*.ts',
@@ -507,6 +514,26 @@ try {
       openapi: './symbol-openapi.json',
       output: './symbol-generated',
       clients: ['symbols'],
+    }),
+  );
+  await writeFile(
+    join(consumer, 'directional-type-identity-types.ts'),
+    directionalTypeIdentityConsumer().replaceAll(
+      './generated/',
+      './directional-type-identity-generated/',
+    ),
+  );
+  await writeFile(
+    join(consumer, 'directional-type-identity-openapi.json'),
+    JSON.stringify(directionalTypeIdentityFixture()),
+  );
+  await writeFile(
+    join(consumer, 'directional-type-identity-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './directional-type-identity-openapi.json',
+      output: './directional-type-identity-generated',
+      ...directionalTypeIdentitySelection,
     }),
   );
   await writeFile(join(consumer, 'deep-types.ts'), deepTypeConsumer());
@@ -961,6 +988,16 @@ try {
     'generate',
     '--config',
     join(consumer, 'type-identity-pom.json'),
+  ]);
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'directional-type-identity-pom.json'),
+  ]);
+  await run(binary, [
+    'check',
+    '--config',
+    join(consumer, 'directional-type-identity-pom.json'),
   ]);
   await run(binary, [
     'check',
@@ -1824,7 +1861,7 @@ try {
     assert.equal(Object.hasOwn(requestSchemas,'StaffReport'),false);
     assert.equal(Object.hasOwn(responseSchemas,'StaffPeriod'),true);
     assert.equal(staff.getStaffReport.build().policy.auth, 'partnerStaff');
-  assert.deepEqual(staff.getStaffReport.build().security, { transport: 'bearer' });
+  assert.deepEqual(staff.getStaffReport.build().security, { transport: 'bearer', scheme: 'WidgetSession' });
     assert.equal(operations.checkHealth.build().policy.auth, 'public');
   assert.deepEqual(operations.checkHealth.build().security, { transport: 'none' });
     assert.throws(() => operations.prepareWidget.build({}), RequestValidationError);

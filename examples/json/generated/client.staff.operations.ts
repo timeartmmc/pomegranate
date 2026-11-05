@@ -148,7 +148,7 @@ function define_operation_getStaffReport(): Operation<
     operationId: 'getStaffReport',
     method: 'GET',
     path: '/api/staff/reports',
-    security: { transport: 'bearer' },
+    security: { transport: 'bearer', scheme: 'WidgetSession' },
     policy: { auth: 'partnerStaff', retry: 'never', timeout: 'interactive' },
     bodyKind: 'none',
     parameters: [],
@@ -201,7 +201,7 @@ function define_operation_getWidget(): Operation<
     operationId: 'getWidget',
     method: 'GET',
     path: '/api/widgets/{widgetId}',
-    security: { transport: 'bearer' },
+    security: { transport: 'bearer', scheme: 'WidgetSession' },
     policy: { auth: 'session', retry: 'never', timeout: 'interactive' },
     bodyKind: 'none',
     parameters: [

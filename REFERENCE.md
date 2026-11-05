@@ -105,8 +105,9 @@ format or validate that additional rule in the application.
 
 Policy metadata is optional. OpenAPI security always determines the credential
 transport, exposed separately as `request.security.transport` (`"none"` or
-`"bearer"`). Applications supply credentials and decide readiness, retry and
-deadline behavior.
+`"bearer"`). Bearer requests also expose `request.security.scheme`, the exact
+component name in the effective security requirement. Applications use that
+identity to select credentials and decide readiness, retry and deadline behavior.
 
 To require application metadata, declare its fields and requiredness:
 
@@ -144,9 +145,10 @@ Operations select flat field values alongside inline membership:
 ```
 
 `auth` bindings are optional. When declared, they define the allowed auth labels
-and each supplied label must agree with effective OpenAPI security. Several
-labels may share bearer transport while describing different application
-readiness requirements. Labels never authorize a request.
+and each supplied label's transport must agree with effective OpenAPI security.
+Several labels may share bearer transport while describing different application
+readiness requirements. Labels never authorize a request; credential identity
+comes from `request.security.scheme`.
 
 `fields` declares application-owned values using only `type` and optional `enum`.
 Types are `string`, `number`, `integer`, `boolean`, and `null`; numbers must be
@@ -190,6 +192,10 @@ POM recognizes `type: "http"`, `scheme: "bearer"` security schemes by their
 semantics, directly or through local aliases. Scheme comparison ignores case;
 `bearerFormat` is only an annotation. A supported bearer requirement names one
 declared scheme with an empty role array, such as `security: [{ WidgetSession: [] }]`.
+Generated bearer metadata preserves that declared name as
+`{ transport: "bearer", scheme: "WidgetSession" }`, including when it names an
+alias. Changing the required scheme changes generated output and is detected by
+`pom check`. Public requests expose only `{ transport: "none" }`.
 
 Security-scheme aliases use `$ref: "#/components/securitySchemes/<name>"`.
 Component names match `[A-Za-z0-9._-]+`. In 3.1, references may add string
@@ -930,7 +936,9 @@ from them still need the annotations required by that TypeScript option.
 Generated `schema-types.<digest>.ts` modules share component type identities across
 standalone validators and clients, including identical request and response
 shapes. Modules contain only types reachable by every output that uses them;
-browser and native upload types remain distinct. Keep these type-only modules
+browser and native upload types remain distinct. Compatible directional shapes
+use shared covariant type families so optional directional fields retain
+request/response assignability through the supported schema depth. Keep these type-only modules
 with the complete generated output set, including when publishing declarations.
 
 ## Programmatic compiler API

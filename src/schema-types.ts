@@ -21,6 +21,7 @@ export function schemaType(
   direction: Direction,
   target?: Client['target'],
   reference: (name: string, direction: Direction) => string = typeSymbol,
+  propertyType?: (name: string) => string | undefined,
 ): string {
   const child = (value: Schema): string =>
     schemaType(value, direction, target, reference);
@@ -37,7 +38,7 @@ export function schemaType(
       return `{${Object.entries(schema.properties)
         .map(([name, value]) => {
           const required = schema.required.includes(name);
-          return `${propertyKey(name)}${required ? '' : '?'}: ${child(value)}${required ? '' : ' | undefined'};`;
+          return `${propertyKey(name)}${required ? '' : '?'}: ${propertyType?.(name) ?? child(value)}${required ? '' : ' | undefined'};`;
         })
         .join('\n')}}`;
     case 'array':

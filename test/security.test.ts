@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import test from 'node:test';
-import { compile, ContractError } from '../dist/index.js';
+import { compile, ContractError, runProject } from '../dist/index.js';
 import { buildDescriptor } from '../dist/descriptor.js';
 import { present, record } from './assertions.ts';
-import { fixture, preparation } from './helpers.ts';
+import { fixture, preparation, temporary } from './helpers.ts';
 import type { Fixture } from './helpers.ts';
+import {
+  generatedTestWorkspace,
+  importGenerated,
+} from './generated-workspace.ts';
+import type { RuntimeClient } from './runtime-types.ts';
 
 const selected = (document: unknown, clients = ['consumer']) =>
   compile(document, { clients });
@@ -12,6 +19,76 @@ const operation = (
   descriptor: ReturnType<typeof buildDescriptor>,
   id: string,
 ) => present(descriptor.operations.find((value) => value.id === id));
+
+void test('bearer requirements retain distinct declared identities through inheritance and operation overrides', async (t) => {
+  const document = fixture();
+  Object.assign(document.components.securitySchemes, {
+    ServiceToken: { type: 'http', scheme: 'bearer' },
+  });
+  Object.assign(document.paths['/api/staff/reports'].get, {
+    security: [{ ServiceToken: [] }],
+  });
+  const descriptor = buildDescriptor(document);
+  assert.deepEqual(operation(descriptor, 'prepareWidget').security, {
+    transport: 'bearer',
+    scheme: 'WidgetSession',
+  });
+  assert.deepEqual(operation(descriptor, 'getStaffReport').security, {
+    transport: 'bearer',
+    scheme: 'ServiceToken',
+  });
+  const before = await selected(document, ['consumer', 'staff']);
+  const root = await generatedTestWorkspace(t, before);
+  const consumer = await importGenerated<RuntimeClient>(
+    root,
+    'client.consumer.ts',
+  );
+  const staff = await importGenerated<RuntimeClient>(root, 'client.staff.ts');
+  const inherited = present(consumer.operations.getWidget).build({
+    path: { widgetId: 'synthetic' },
+  });
+  const overridden = present(staff.operations.getStaffReport).build();
+  assert.deepEqual(inherited.security, {
+    transport: 'bearer',
+    scheme: 'WidgetSession',
+  });
+  assert.deepEqual(overridden.security, {
+    transport: 'bearer',
+    scheme: 'ServiceToken',
+  });
+  assert.ok(Object.isFrozen(inherited.security));
+  assert.ok(Object.isFrozen(overridden.security));
+  Object.assign(document, { security: [{ ServiceToken: [] }] });
+  Object.assign(document.paths['/api/staff/reports'].get, {
+    security: [{ WidgetSession: [] }],
+  });
+  assert.notDeepEqual(await selected(document, ['consumer', 'staff']), before);
+});
+
+void test('drift checking detects changing only the required bearer scheme', async (t) => {
+  const document = fixture();
+  Object.assign(document.components.securitySchemes, {
+    OtherToken: { ...document.components.securitySchemes.WidgetSession },
+  });
+  const root = await temporary(t);
+  const input = join(root, 'openapi.json');
+  const config = join(root, 'pom.json');
+  await writeFile(input, JSON.stringify(document));
+  await writeFile(
+    config,
+    JSON.stringify({
+      version: 2,
+      openapi: './openapi.json',
+      output: './generated',
+      clients: ['consumer'],
+    }),
+  );
+  await runProject(config);
+  assert.equal((await runProject(config, { check: true })).clean, true);
+  Object.assign(preparation(document), { security: [{ OtherToken: [] }] });
+  await writeFile(input, JSON.stringify(document));
+  assert.equal((await runProject(config, { check: true })).clean, false);
+});
 
 void test('bearer schemes are interpreted by semantics, not their component names', () => {
   const document = fixture();
@@ -30,6 +107,7 @@ void test('bearer schemes are interpreted by semantics, not their component name
   assert.equal(operation(descriptor, 'prepareWidget').policy.auth, 'session');
   assert.deepEqual(operation(descriptor, 'prepareWidget').security, {
     transport: 'bearer',
+    scheme: 'Completely.Different-Auth_1',
   });
   assert.equal(
     operation(descriptor, 'getStaffReport').policy.auth,
@@ -37,6 +115,7 @@ void test('bearer schemes are interpreted by semantics, not their component name
   );
   assert.deepEqual(operation(descriptor, 'getStaffReport').security, {
     transport: 'bearer',
+    scheme: 'Completely.Different-Auth_1',
   });
   assert.equal(operation(descriptor, 'checkHealth').policy.auth, 'public');
   assert.deepEqual(operation(descriptor, 'checkHealth').security, {

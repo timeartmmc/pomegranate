@@ -1,4 +1,4 @@
-import type { StringFormat } from './runtime.js';
+import type { Security, StringFormat } from './runtime.js';
 
 export type Scalar = string | number | boolean | null;
 export type Direction = 'request' | 'response';
@@ -92,7 +92,7 @@ export type Schema = {
 export type SchemaTable = Readonly<Record<string, Schema>>;
 export type DirectionalSchemas = Readonly<Record<Direction, SchemaTable>>;
 
-export type AuthTransport = 'none' | 'bearer';
+export type AuthTransport = Security['transport'];
 export type Policy = Readonly<Record<string, Scalar>>;
 export type PolicyVocabulary = {
   readonly version: 3;
@@ -142,7 +142,7 @@ export type Operation = {
     | 'HEAD'
     | 'OPTIONS';
   readonly path: string;
-  readonly security: Readonly<{ transport: AuthTransport }>;
+  readonly security: Security;
   readonly policy: Policy;
   readonly surfaces: readonly string[];
   readonly parameters: readonly Parameter[];

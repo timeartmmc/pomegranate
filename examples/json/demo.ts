@@ -32,8 +32,9 @@ const execute = createExecutor(
       },
     );
   },
-  async (label) => {
-    if (label !== 'session') throw new Error('Unknown example auth label');
+  async (scheme, label) => {
+    if (scheme !== 'WidgetSession' || label !== 'session')
+      throw new Error('Unknown example bearer scheme or auth label');
     return 'synthetic-token';
   },
   'https://example.invalid',

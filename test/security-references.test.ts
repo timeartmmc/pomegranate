@@ -71,7 +71,10 @@ void test('aliases preserve inherited bearer security, public overrides and appl
   const authenticated = present(operations.getWidget).build({
     path: { widgetId: 'synthetic' },
   });
-  assert.deepEqual(authenticated.security, { transport: 'bearer' });
+  assert.deepEqual(authenticated.security, {
+    transport: 'bearer',
+    scheme: 'WidgetSession',
+  });
   assert.equal(authenticated.policy.auth, 'session');
   for (const id of ['checkHealth', 'widgetOptions']) {
     const request = present(operations[id]).build();
@@ -82,7 +85,13 @@ void test('aliases preserve inherited bearer security, public overrides and appl
   assert.ok(Object.isFrozen(authenticated.security));
   const before = await compile(document, selection);
   Object.assign(document, { security: [{ OtherAlias: [] }] });
-  assert.deepEqual(await compile(document, selection), before);
+  assert.notDeepEqual(await compile(document, selection), before);
+  assert.deepEqual(
+    present(
+      buildDescriptor(document).operations.find(({ id }) => id === 'getWidget'),
+    ).security,
+    { transport: 'bearer', scheme: 'OtherAlias' },
+  );
   const absent = aliasFixture();
   Reflect.deleteProperty(absent, 'security');
   for (const item of Object.values(absent.paths))
@@ -91,10 +100,10 @@ void test('aliases preserve inherited bearer security, public overrides and appl
   Object.assign(preparation(absent), { security: [{ SessionAlias: [] }] });
   preparation(absent)['x-pom'].auth = 'session';
   const descriptor = buildDescriptor(absent);
-  assert.equal(
+  assert.deepEqual(
     present(descriptor.operations.find(({ id }) => id === 'prepareWidget'))
-      .security.transport,
-    'bearer',
+      .security,
+    { transport: 'bearer', scheme: 'SessionAlias' },
   );
   assert.equal(
     present(descriptor.operations.find(({ id }) => id === 'getWidget')).security
@@ -281,7 +290,7 @@ void test('aliases keep unsupported security combinations and policy contradicti
   );
 });
 
-void test('long forward alias chains resolve without recursive stack growth or retained alias metadata', async () => {
+void test('long forward alias chains resolve without recursive stack growth while preserving the named requirement', async () => {
   const document = fixture();
   const schemes = Object.fromEntries(
     Array.from({ length: 10000 }, (_, index) => [
@@ -293,8 +302,13 @@ void test('long forward alias chains resolve without recursive stack growth or r
   );
   Object.assign(document.components.securitySchemes, schemes);
   Object.assign(document, { security: [{ Alias0: [] }] });
+  const expanded = fixture();
+  Object.assign(expanded.components.securitySchemes, {
+    Alias0: expanded.components.securitySchemes.WidgetSession,
+  });
+  Object.assign(expanded, { security: [{ Alias0: [] }] });
   assert.deepEqual(
     await compile(document, selection),
-    await compile(fixture(), selection),
+    await compile(expanded, selection),
   );
 });

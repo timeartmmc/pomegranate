@@ -267,7 +267,10 @@ void test('generated protocol invariants hold across the complete byte and statu
       );
       const next = operation.build(options());
       assert.equal(next.policy.auth, 'session');
-      assert.deepEqual(next.security, { transport: 'bearer' });
+      assert.deepEqual(next.security, {
+        transport: 'bearer',
+        scheme: 'WidgetSession',
+      });
       assert.equal(next.headers['Idempotency-Key'], 'attempt');
     },
   );

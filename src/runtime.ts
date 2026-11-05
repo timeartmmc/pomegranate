@@ -1123,7 +1123,9 @@ export function nativeFile(
   };
 }
 
-export type Security = Readonly<{ transport: 'none' | 'bearer' }>;
+export type Security = Readonly<
+  { transport: 'none' } | { transport: 'bearer'; scheme: string }
+>;
 export type HeaderContext = Readonly<Record<string, string>>;
 export type ObservedResponse = Readonly<{
   status: number;

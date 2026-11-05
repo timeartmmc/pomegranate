@@ -16,7 +16,6 @@ import {
 } from './diagnostics.js';
 import type {
   ContractResponse,
-  AuthTransport,
   Descriptor,
   Direction,
   SchemaTable,
@@ -88,7 +87,7 @@ type OperationContext = Readonly<{
   requestBodyComponents: ReadonlyMap<string, RequestBodyDefinition>;
   headerComponents: ReadonlyMap<string, HeaderDefinition>;
   bearerSchemes: ReadonlySet<string>;
-  inheritedSecurity: AuthTransport;
+  inheritedSecurity: Operation['security'];
   memberships: ReadonlyMap<string, readonly string[]> | undefined;
 }>;
 
@@ -859,7 +858,7 @@ function normalizeOperation(
   deprecatedAnnotation(value, location);
   // Presence matters: [] and [{}] deliberately clear a document bearer
   // requirement; absence inherits it. Do not merge these alternatives.
-  const transport = Object.hasOwn(value, 'security')
+  const security = Object.hasOwn(value, 'security')
     ? normalizeSecurity(value.security, bearerSchemes, `${location}.security`)
     : inheritedSecurity;
   const id = safeKey(
@@ -875,7 +874,7 @@ function normalizeOperation(
   const metadata = normalizeOperationPolicy(
     Object.hasOwn(value, 'x-pom') ? value['x-pom'] : {},
     vocabulary,
-    transport,
+    security.transport,
     `${location}.x-pom`,
     memberships === undefined ? undefined : (memberships.get(id) ?? []),
   );
@@ -929,7 +928,7 @@ function normalizeOperation(
     id,
     method: method.toUpperCase() as Operation['method'],
     path,
-    security: { transport },
+    security,
     policy: metadata.policy,
     surfaces: metadata.surfaces,
     parameters,
@@ -1060,7 +1059,7 @@ export function buildDescriptor(
   );
   const inheritedSecurity = Object.hasOwn(value, 'security')
     ? normalizeSecurity(value.security, bearerSchemes, 'security')
-    : 'none';
+    : ({ transport: 'none' } as const);
   const rawSchemas = Object.hasOwn(components, 'schemas')
     ? record(components.schemas, 'components.schemas')
     : {};

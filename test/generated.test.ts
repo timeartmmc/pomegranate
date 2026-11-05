@@ -179,6 +179,7 @@ void test('clients account for exactly their selected operations and directional
   );
   assert.deepEqual(staffOperations.getStaffReport.build().security, {
     transport: 'bearer',
+    scheme: 'WidgetSession',
   });
   assert.equal(operations.checkHealth.build().policy.auth, 'public');
   assert.deepEqual(operations.checkHealth.build().security, {
@@ -186,7 +187,7 @@ void test('clients account for exactly their selected operations and directional
   });
 });
 
-void test('application transport resolves bearer labels and sends public overrides without credentials', async () => {
+void test('application transport resolves bearer schemes and sends public overrides without credentials', async () => {
   const request = operations.prepareWidget.build(options());
   const result = await execute(
     request,
@@ -207,7 +208,7 @@ void test('application transport resolves bearer labels and sends public overrid
       );
     },
     async (label) => {
-      assert.equal(label, 'session');
+      assert.equal(label, 'WidgetSession');
       return 'app-owned-token';
     },
     'https://example.invalid',
@@ -361,7 +362,10 @@ void test('builders validate before transport and do not retain mutable input ob
   input.body.label = 'Mutated';
   assert.equal(request.body.label, 'Example');
   assert.equal(request.policy.auth, 'session');
-  assert.deepEqual(request.security, { transport: 'bearer' });
+  assert.deepEqual(request.security, {
+    transport: 'bearer',
+    scheme: 'WidgetSession',
+  });
   assert.equal(request.bodyKind, 'json');
   assert.equal(request.headers['Idempotency-Key'], 'attempt');
   for (const input of [

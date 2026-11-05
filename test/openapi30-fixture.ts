@@ -205,7 +205,10 @@ export function verifyOpenapi30(
   });
   assert.equal(request.url, '/round-trip');
   assert.deepEqual(Object.keys(request.headers), []);
-  assert.deepEqual(request.security, { transport: 'bearer' });
+  assert.deepEqual(request.security, {
+    transport: 'bearer',
+    scheme: 'SessionAlias',
+  });
   assert.deepEqual(request.body, input);
   assert.notEqual(request.body, input);
   assert.deepEqual(standaloneRequest.schema.parse(input), input);

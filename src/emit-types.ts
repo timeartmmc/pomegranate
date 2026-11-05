@@ -8,7 +8,9 @@ import type {
   Standalone,
 } from './model.js';
 import { schemaType, typeSymbol } from './schema-types.js';
-import { sourceBudget } from './source-budget.js';
+import { byteBudget, sourceBudget } from './source-budget.js';
+import { boundType, familySource, typeFamily } from './type-families.js';
+import type { TypeFamily, TypeNode } from './type-families.js';
 
 type Variant = {
   name: string;
@@ -16,7 +18,6 @@ type Variant = {
   target: Client['target'];
   owners: Set<string>;
 };
-type TypeNode = Variant & { id: number; symbol: string; file?: string };
 
 // Identical schemas emitted independently can exceed TypeScript's structural
 // comparison limit when a standalone value enters a client, even though each
@@ -138,6 +139,7 @@ export function renderTypes(
         account(shape, `components.schemas.${name}`);
         shared = {
           ...variant,
+          schema: descriptor.schemas[variant.direction][name]!,
           owners: new Set(),
           id: canonical.length,
           symbol: typeSymbol(name, variant.direction),
@@ -149,8 +151,22 @@ export function renderTypes(
       nodes.set(key(name, variant.direction, variant.target), shared);
     }
   }
-  const groups = new Map<string, TypeNode[]>();
-  for (const entry of canonical) {
+  const families: TypeFamily[] = [];
+  for (const name of descriptor.schemaOrder) {
+    const members = [
+      ...new Set(
+        (byName.get(name) ?? []).map((variant) =>
+          node(name, variant.direction, variant.target),
+        ),
+      ),
+    ];
+    const family = typeFamily(members, (child, parent) =>
+      node(child, parent.direction, parent.target),
+    );
+    if (family) families.push(family);
+  }
+  const groups = new Map<string, (TypeNode | TypeFamily)[]>();
+  for (const entry of [...canonical, ...families]) {
     const owners = JSON.stringify([...entry.owners].sort());
     // Membership grouping keeps files small in number while preserving each
     // output's exact schema closure. Dependency owner sets only grow, so distinct
@@ -161,23 +177,46 @@ export function renderTypes(
     members.push(entry);
     groups.set(owners, members);
   }
-  const reference = (entry: TypeNode) =>
+  const reference = (entry: { file?: string; symbol: string }) =>
     `import('./${entry.file!}').${entry.symbol}`;
+  const accountDeclarations = byteBudget();
   for (const members of groups.values()) {
     const file = members[0]!.file!;
-    const declarations = members.map((entry) => {
-      const value = schemaType(
-        descriptor.schemas[entry.direction][entry.name]!,
-        entry.direction,
-        entry.target,
-        (child, direction) => {
-          const dependency = node(child, direction, entry.target);
-          return dependency.file === file
-            ? dependency.symbol
-            : reference(dependency);
-        },
-      );
-      return `export type ${entry.symbol} = ${value};`;
+    const local = (entry: { file?: string; symbol: string }) =>
+      entry.file === file ? entry.symbol : reference(entry);
+    const declarations = members.map((entry, index) => {
+      const location =
+        'name' in entry
+          ? `components.schemas.${entry.name}`
+          : 'generated type family';
+      let accounted = 0;
+      const accountPart = (source: string) => {
+        const bytes = Buffer.byteLength(source);
+        accounted += bytes;
+        accountDeclarations(bytes, location);
+      };
+      const admit = (source: string) => {
+        accountDeclarations(
+          Buffer.byteLength(source) - accounted + (index === 0 ? 0 : 1),
+          location,
+        );
+        return source;
+      };
+      if (!('schema' in entry)) return admit(familySource(entry, local));
+      const value =
+        boundType(entry, local, accountPart) ??
+        schemaType(
+          descriptor.schemas[entry.direction][entry.name]!,
+          entry.direction,
+          entry.target,
+          (child, direction) => {
+            const dependency = node(child, direction, entry.target);
+            return dependency.file === file
+              ? dependency.symbol
+              : reference(dependency);
+          },
+        );
+      return admit(`export type ${entry.symbol} = ${value};`);
     });
     addOutput(file, declarations.join('\n'));
   }

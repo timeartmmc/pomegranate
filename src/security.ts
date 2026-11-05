@@ -1,5 +1,5 @@
 import { annotations, fail, keys, record, safeKey } from './diagnostics.js';
-import type { AuthTransport } from './model.js';
+import type { Security } from './runtime.js';
 
 export function normalizeSecuritySchemes(input: unknown): ReadonlySet<string> {
   const location = 'components.securitySchemes';
@@ -78,10 +78,10 @@ export function normalizeSecurity(
   input: unknown,
   bearerSchemes: ReadonlySet<string>,
   location: string,
-): AuthTransport {
+): Security {
   if (!Array.isArray(input))
     fail(location, 'expected an array of security requirements');
-  if (input.length === 0) return 'none';
+  if (input.length === 0) return { transport: 'none' };
   // Multiple requirement objects mean OR, and multiple schemes in one object
   // mean AND. Neither can be reduced to one required transport without losing
   // credential-selection or optional-auth semantics. See OAS 3.1.0 §4.8.30.
@@ -92,7 +92,7 @@ export function normalizeSecurity(
     );
   const requirement = record(input[0], `${location}[0]`);
   const names = Object.keys(requirement);
-  if (names.length === 0) return 'none';
+  if (names.length === 0) return { transport: 'none' };
   if (names.length !== 1)
     fail(location, 'unsupported combined security schemes (AND)');
   const name = names[0]!;
@@ -106,5 +106,7 @@ export function normalizeSecurity(
       `${location}[0].${name}`,
       'nonempty security role requirements are unsupported',
     );
-  return 'bearer';
+  // Keep the requirement's declared name, including aliases. Transport alone
+  // loses the identity applications need to select the operation's credential.
+  return { transport: 'bearer', scheme: name };
 }

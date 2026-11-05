@@ -342,7 +342,7 @@ function define_operation_getWidget(): Operation<
     operationId: 'getWidget',
     method: 'GET',
     path: '/api/widgets/{widgetId}',
-    security: { transport: 'bearer' },
+    security: { transport: 'bearer', scheme: 'WidgetSession' },
     policy: { auth: 'session', retry: 'never', timeout: 'interactive' },
     bodyKind: 'none',
     parameters: [
@@ -447,7 +447,7 @@ function define_operation_prepareWidget(): Operation<
     operationId: 'prepareWidget',
     method: 'POST',
     path: '/api/widgets/{widgetId}/preparations',
-    security: { transport: 'bearer' },
+    security: { transport: 'bearer', scheme: 'WidgetSession' },
     policy: { auth: 'session', retry: 'never', timeout: 'interactive' },
     bodyKind: 'json',
     parameters: [
