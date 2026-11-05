@@ -599,8 +599,10 @@ export const formats = {
 } as const;
 export type StringFormat = keyof typeof formats;
 
+type PatternFormat = Readonly<{ pattern: string; message: string }>;
+
 export type StringRules = Readonly<{
-  format?: StringFormatRule | Readonly<{ pattern: string; message: string }>;
+  format?: StringFormatRule | PatternFormat;
   minLength?: number;
   maxLength?: number;
   pattern?: string;
@@ -608,9 +610,24 @@ export type StringRules = Readonly<{
 type Check<T> = (value: T, issues: Issues) => void;
 
 const stringCache = new WeakMap<StringRules, Check<string>>();
+// Generated fields share one private descriptor per registered format.
+// Weak keys share its lazy predicate without retaining transient rule data.
+const registeredFormatCache = new WeakMap<
+  PatternFormat,
+  (value: string) => boolean
+>();
+function registeredFormatCheck(
+  format: PatternFormat,
+): (value: string) => boolean {
+  const known = registeredFormatCache.get(format);
+  if (known) return known;
+  const check = formatPattern(format.pattern);
+  registeredFormatCache.set(format, check);
+  return check;
+}
 function isPatternFormat(
   format: NonNullable<StringRules['format']>,
-): format is Readonly<{ pattern: string; message: string }> {
+): format is PatternFormat {
   // An inherited pattern must not replace a built-in format's own predicate.
   return Object.hasOwn(format, 'pattern');
 }
@@ -626,7 +643,7 @@ function stringChecks(rules: StringRules): Check<string> {
     format === undefined
       ? undefined
       : isPatternFormat(format)
-        ? formatPattern(format.pattern)
+        ? registeredFormatCheck(format)
         : (value: string) => format.check(value);
   // Lengths count Unicode code points, as JSON Schema specifies.
   const check: Check<string> = (value, issues) => {

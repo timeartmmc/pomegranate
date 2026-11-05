@@ -119,6 +119,9 @@ export function schemaRenderer(
   const typeImports = new Set<string>();
   const declarations: string[] = [];
   const parts = new Map<string, number>();
+  // Validated names identify one format per output module. Retain these
+  // identities across declaration drains so later components share them.
+  const registeredFormats = new Map<string, Expression>();
   const account = sourceBudget();
   const append = (declaration: string, location = 'generated schema') => {
     // Charge each declaration before retaining it or joining a module. Draining
@@ -336,12 +339,18 @@ export function schemaRenderer(
   }
 
   function stringFormat(format: SchemaFormat): Expression {
-    return typeof format === 'string'
-      ? use(formatHelpers[format])
-      : object([
-          ['pattern', literal(format.pattern)],
-          ['message', literal(`expected ${format.name} format`)],
-        ]);
+    if (typeof format === 'string') return use(formatHelpers[format]);
+    const known = registeredFormats.get(format.name);
+    if (known) return known;
+    const definition = object([
+      ['pattern', literal(format.pattern)],
+      ['message', literal(`expected ${format.name} format`)],
+    ]);
+    const value = identifier(
+      constant(`registered_format${registeredFormats.size}`, definition.source),
+    );
+    registeredFormats.set(format.name, value);
+    return value;
   }
 
   function scalarRules(
