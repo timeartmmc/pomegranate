@@ -233,7 +233,7 @@ validation, including operations excluded from output.
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique nonempty operation IDs; whole-segment path placeholders                                                                                                                                                                                                                           |
 | Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; string and optional nullable string request headers; simple path/header and form query serialization |
 | Bodies      | Required or optional JSON bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON or bodyless responses; string response headers; local component references and aliases                                                                                                                        |
-| Schemas     | Explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                                                   |
+| Schemas     | {} and annotation-only schemas; explicit object, array, string, number, integer, boolean, and null types; directional fixed-object properties; scalar `const`/`enum`; acyclic local component references; restricted unions and maps described below                                                                                   |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                  |
 | Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, and `ipv6`; integer `int32`; no coercion                                                                                                                                                                                                                                   |
 
@@ -298,6 +298,12 @@ expressions, URI syntax or contact email syntax, and never fetches documentation
 server or license URLs or external example values. Unsupported standard keywords
 remain rejected. Unrelated `x-…` extension keywords require an explicit
 [`ignoreExtensions`](#configuration) entry.
+
+An empty Schema Object (`{}`), or one containing only supported annotations,
+accepts any JSON value: null, booleans, finite numbers, strings, arrays and
+objects. Generated types use `JsonValue`; validators reject non-JSON values
+and return detached copies while preserving payload keys. `{ type: "object" }`
+still accepts objects only. Other implicit types remain unsupported.
 
 Supported schema composition is deliberately limited:
 

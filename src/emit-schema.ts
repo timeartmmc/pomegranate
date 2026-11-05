@@ -373,6 +373,8 @@ export function schemaRenderer(
         `${use(helper).source}(${['input', 'issues', ...args].join(', ')})`,
       );
     switch (value.kind) {
+      case 'json':
+        return call('jsonValue');
       case 'binary':
         if (!target)
           fail(location, 'binary schema requires a multipart client target');

@@ -22,6 +22,7 @@ export type Schema = {
   readonly readOnly?: true;
   readonly writeOnly?: true;
 } & (
+  | { readonly kind: 'json' }
   | { readonly kind: 'binary' }
   | {
       readonly kind: 'ref';

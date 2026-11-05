@@ -25,6 +25,8 @@ export function schemaType(
   const child = (value: Schema): string =>
     schemaType(value, direction, target, reference);
   switch (schema.kind) {
+    case 'json':
+      return "import('./runtime.ts').JsonValue";
     case 'ref':
       return reference(schema.name, direction);
     case 'object':

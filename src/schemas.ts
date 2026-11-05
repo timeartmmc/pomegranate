@@ -560,6 +560,8 @@ function normalizeShape(
   }
   if (Object.hasOwn(value, 'anyOf') || Object.hasOwn(value, 'oneOf'))
     return normalizeUnion(value, location, nesting);
+  if (Object.keys(value).every((key) => annotationKeys.includes(key)))
+    return { kind: 'json' };
   const kind = value.type;
   if (Array.isArray(kind))
     return normalizeNullableType(value, location, nesting);
