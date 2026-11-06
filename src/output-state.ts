@@ -10,7 +10,9 @@ export const lockName = '.pom-lock';
 // Registry renames must not change which output inventory or journal POM owns.
 const generator = '@pomegranate/compiler';
 export type Files = Readonly<Record<string, string>>;
-export type Existing = { content: string; hash: string } | undefined;
+export type Existing =
+  | { content: string; hash: string; stamp: string }
+  | undefined;
 type Inventory = {
   version: 1;
   generator: typeof generator;
@@ -35,16 +37,29 @@ export const hash = (content: string | Uint8Array): string =>
 export const hasCode = (error: unknown, code: string): boolean =>
   error instanceof Error && 'code' in error && error.code === code;
 
-export async function existingFile(path: string): Promise<Existing> {
+export async function existingFileStamp(
+  path: string,
+): Promise<string | undefined> {
   try {
-    const stat = await lstat(path);
+    const stat = await lstat(path, { bigint: true });
     if (!stat.isFile() || stat.isSymbolicLink())
       fail(
         path,
         'output must be a regular file; symbolic links and directories are protected',
       );
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+  } catch (error) {
+    if (hasCode(error, 'ENOENT')) return undefined;
+    throw error;
+  }
+}
+
+export async function existingFile(path: string): Promise<Existing> {
+  try {
+    const stamp = await existingFileStamp(path);
+    if (stamp === undefined) return undefined;
     const bytes = await readFile(path);
-    return { content: bytes.toString('utf8'), hash: hash(bytes) };
+    return { content: bytes.toString('utf8'), hash: hash(bytes), stamp };
   } catch (error) {
     if (hasCode(error, 'ENOENT')) return undefined;
     throw error;
@@ -319,7 +334,7 @@ export async function inspectRecovery(
     if (current?.hash !== (oldHash ?? undefined) && current?.hash !== nextHash)
       fail(
         join(root, name),
-        'recovery conflict: output matches neither its prior nor intended contents',
+        `recovery conflict: output matches neither its prior nor intended contents; keep ${journalName} and preserve conflicting edits; generate into a fresh directory or restore a recorded prior or intended output state and matching manifest before retrying`,
       );
     snapshots.set(name, current);
   }

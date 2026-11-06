@@ -160,11 +160,25 @@ void test('an edited interrupted target blocks every recovery write', async (t) 
   await interrupt(t, root, 'b.ts');
   await fs.writeFile(join(root, 'a.ts'), 'user edit');
   const snapshot = await fileSnapshot(root);
-  await assert.rejects(
-    synchronizeOutputs(root, after, [], false),
-    /recovery conflict/,
-  );
+  await assert.rejects(synchronizeOutputs(root, after, [], false), (error) => {
+    assert.ok(error instanceof ContractError);
+    assert.equal(error.location, join(root, 'a.ts'));
+    assert.match(error.message, /recovery conflict/);
+    assert.match(error.message, /keep \.pom-journal\.json/);
+    assert.match(error.message, /preserve conflicting edits/);
+    assert.match(error.message, /generate into a fresh directory/);
+    assert.match(error.message, /matching manifest before retrying/);
+    return true;
+  });
   assert.deepEqual(await fileSnapshot(root), snapshot);
+  const fresh = await temporary(t);
+  await synchronizeOutputs(fresh, after, [], false);
+  assert.equal((await synchronizeOutputs(fresh, after, [], true)).clean, true);
+  assert.deepEqual(await fileSnapshot(root), snapshot);
+  // Follow the other supported recovery path using the journal's intended value.
+  await fs.writeFile(join(root, 'a.ts'), after['a.ts']);
+  await synchronizeOutputs(root, after, [], false);
+  assert.equal((await synchronizeOutputs(root, after, [], true)).clean, true);
 });
 
 void test('new unowned targets and protected inputs are checked before recovery writes', async (t) => {
@@ -344,6 +358,150 @@ for (const replacement of ['directory', 'owner token']) {
       await fs.readFile(join(root, '.pom-lock', 'owner'), 'utf8'),
       'replacement writer',
     );
+  });
+}
+
+void test('journal payload reads stay bounded as the output inventory grows', async (t) => {
+  for (const count of [20, 200]) {
+    const root = await temporary(t);
+    const content = 'x'.repeat(Math.floor((1024 * 1024) / count));
+    const files = Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [`file${index}.ts`, content]),
+    );
+    const reads = t.mock.method(fs, 'readFile');
+    syncBuiltinESMExports();
+    try {
+      await synchronizeOutputs(root, files, [], false);
+      let payloadBytes = 0;
+      for (const call of reads.mock.calls) {
+        if (call.arguments[0] !== join(root, journal)) continue;
+        const result: unknown = await call.result;
+        assert.ok(Buffer.isBuffer(result) || typeof result === 'string');
+        payloadBytes += Buffer.byteLength(result);
+      }
+      assert.ok(
+        payloadBytes <= 4 * 1024 * 1024 + 64 * 1024,
+        `journal validation reread ${payloadBytes} bytes for ${count} files`,
+      );
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+  }
+});
+
+for (const mutation of [
+  'in-place',
+  'restored timestamp',
+  'replacement',
+  'deletion',
+  'unchanged touch',
+  'coarse timestamps',
+  'after manifest',
+] as const) {
+  void test(`journal integrity checks handle ${mutation}`, async (t) => {
+    const root = await temporary(t);
+    await synchronizeOutputs(root, before, [], false);
+    const previousManifest = await fs.readFile(
+      join(root, '.pom-manifest.json'),
+    );
+    const path = join(root, journal);
+    const rename = fs.rename;
+    const lstat = fs.lstat;
+    let observed: { mtimeNs: bigint; ctimeNs: bigint } | undefined;
+    // Model timestamp precision that cannot distinguish a same-size in-place
+    // edit. Full hashes at commit/cleanup must remain authoritative there.
+    if (mutation === 'coarse timestamps' || mutation === 'after manifest') {
+      t.mock.method(
+        fs,
+        'lstat',
+        async (...args: Parameters<typeof fs.lstat>) => {
+          const metadata = await lstat(...args);
+          if (
+            args[0] === path &&
+            'mtimeNs' in metadata &&
+            typeof metadata.mtimeNs === 'bigint' &&
+            typeof metadata.ctimeNs === 'bigint'
+          ) {
+            observed ??= {
+              mtimeNs: metadata.mtimeNs,
+              ctimeNs: metadata.ctimeNs,
+            };
+            metadata.mtimeNs = observed.mtimeNs;
+            metadata.ctimeNs = observed.ctimeNs;
+          }
+          return metadata;
+        },
+      );
+    }
+    let triggered = false;
+    const trigger =
+      mutation === 'after manifest' ? '.pom-manifest.json' : 'a.ts';
+    t.mock.method(
+      fs,
+      'rename',
+      async (...args: Parameters<typeof fs.rename>) => {
+        const [from, to] = args;
+        await rename(from, to);
+        if (triggered || to !== join(root, trigger)) return;
+        triggered = true;
+        const metadata = await lstat(path);
+        if (mutation === 'deletion') {
+          await fs.rm(path);
+          return;
+        }
+        if (mutation === 'unchanged touch') {
+          await fs.utimes(
+            path,
+            metadata.atime,
+            new Date(metadata.mtimeMs + 2000),
+          );
+          return;
+        }
+        const source = await fs.readFile(path, 'utf8');
+        const changed = source.replace('new b', 'bad b');
+        assert.equal(Buffer.byteLength(changed), Buffer.byteLength(source));
+        if (mutation === 'replacement') {
+          const replacement = join(root, 'replacement.json');
+          await fs.writeFile(replacement, changed);
+          await rename(replacement, path);
+        } else await fs.writeFile(path, changed);
+        if (mutation === 'restored timestamp')
+          await fs.utimes(path, metadata.atime, metadata.mtime);
+      },
+    );
+    syncBuiltinESMExports();
+    try {
+      if (mutation === 'unchanged touch')
+        await synchronizeOutputs(root, after, [], false);
+      else
+        await assert.rejects(
+          synchronizeOutputs(root, after, [], false),
+          /recovery journal changed/,
+        );
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.equal(triggered, true);
+    assert.equal(await fs.readFile(join(root, 'a.ts'), 'utf8'), 'new a');
+    if (mutation === 'unchanged touch') {
+      assert.equal(
+        (await synchronizeOutputs(root, after, [], true)).clean,
+        true,
+      );
+      return;
+    }
+    if (mutation === 'coarse timestamps' || mutation === 'after manifest')
+      assert.equal(await fs.readFile(join(root, 'b.ts'), 'utf8'), 'new b');
+    else await assert.rejects(fs.readFile(join(root, 'b.ts')), /ENOENT/);
+    if (mutation !== 'after manifest')
+      assert.deepEqual(
+        await fs.readFile(join(root, '.pom-manifest.json')),
+        previousManifest,
+      );
+    if (mutation !== 'deletion')
+      assert.match(await fs.readFile(path, 'utf8'), /bad b/);
   });
 }
 

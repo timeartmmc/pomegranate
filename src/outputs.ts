@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { fail } from './diagnostics.js';
 import {
   existingFile,
+  existingFileStamp,
   filenames,
   hasCode,
   hash,
@@ -133,11 +134,26 @@ async function publish(
     newJournal === undefined
       ? plan.snapshots.get(journalName)?.hash
       : hash(newJournal);
-  const assertWriter = async () => {
+  let journalStamp: string | undefined;
+  const assertWriter = async (verifyContent = false) => {
     await ownLock(lock);
-    if ((await existingFile(join(root, journalName)))?.hash !== journalHash)
-      fail(journalName, 'recovery journal changed during generation');
+    if (
+      verifyContent ||
+      (await existingFileStamp(join(root, journalName))) !== journalStamp
+    ) {
+      const current = await existingFile(join(root, journalName));
+      if (current?.hash !== journalHash)
+        fail(journalName, 'recovery journal changed during generation');
+      journalStamp = current?.stamp;
+    }
   };
+  // The journal contains the complete output set. Fingerprints catch ordinary
+  // edits and replacements without rereading that payload for every target.
+  // Coarse timestamps can defer an in-place edit's detection until more targets
+  // reach their intended state. Full content hashes still gate manifest
+  // publication and recovery-evidence removal.
+  // Target content and lock ownership still receive their independent checks.
+  await assertWriter(true);
   for (const [name, content] of Object.entries(files)) {
     if (plan.snapshots.get(name)?.content === content) continue;
     await assertWriter();
@@ -161,7 +177,7 @@ async function publish(
       fail(name, 'output changed during generation; refusing to remove it');
     await rm(join(root, name));
   }
-  await assertWriter();
+  await assertWriter(true);
   if (
     (await existingFile(join(root, inventoryName)))?.hash !==
     plan.snapshots.get(inventoryName)?.hash
@@ -169,7 +185,7 @@ async function publish(
     fail(inventoryName, 'manifest changed during generation');
   if (plan.snapshots.get(inventoryName)?.content !== plan.nextManifest)
     await rename(join(stage, inventoryName), join(root, inventoryName));
-  await assertWriter();
+  await assertWriter(true);
   await rm(join(root, journalName));
 }
 
