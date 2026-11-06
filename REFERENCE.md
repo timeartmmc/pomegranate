@@ -531,6 +531,10 @@ functions, sparse arrays, class instances, and cycles. An explicit
 `{ "minimum": 1 }` remain unsupported. References to unconstrained JSON cannot
 add constraints that POM cannot represent.
 
+An exceeded string `maxLength` stops validation before pattern or format
+predicates run and reports only the length failure. Lengths count Unicode code
+points, including surrogate pairs as one code point.
+
 Patterns use ECMAScript 2024 syntax in Unicode (`u`) mode with Unicode 16.0
 property names, matching the supported Node minimums. Newer syntax, including
 inline flag modifiers and duplicate named capture groups, and newer Unicode
@@ -887,11 +891,18 @@ tagged unions must remain stable during parsing. Data on `Object.prototype`
 never supplies a field or an unknown request key, so prototype pollution through
 data, such as an unsafe merge, cannot fill a missing value. Accessors installed
 there run application code and are not covered.
-Dynamic maps require plain records.
+Dynamic maps require plain records and read each enumerable value once as it is
+validated.
 Schema registries and standalone `schema` exports expose `parse(unknown)` and
 `safeParse(unknown)`. `parse` returns the named output type or throws
 `ValidationError`; `safeParse` returns `{ success: true, data }` or
 `{ success: false, error }`. Errors expose `issues` with `path` and `message`.
+Each validation boundary retains at most 100 detailed issues and one omission
+marker. After the budget is exhausted, further schema traversal stops. Individual
+issue messages are limited to 1,024 UTF-16 code units; thrown error messages are
+limited to 8,192. Paths retain their original keys, and unknown-key messages show
+a bounded sample. Valid inputs are validated in full. These diagnostic limits do
+not impose a response-body size limit or bound JSON decoding memory.
 Generated `RequestTypes`, `ResponseTypes`, and standalone `Input`/`Output` are
 plain contract types. The validator API is limited to `parse` and `safeParse`;
 it does not implement schema-library methods or the Standard Schema interface.
@@ -901,6 +912,8 @@ it does not implement schema-library methods or the Standard Schema interface.
 Pass `parseResponse` numeric `status`, raw text `body`, and a plain `headers`
 record with string values. Incorrect JavaScript evidence types throw `TypeError`
 before protocol validation.
+Response header values normalize leading and trailing spaces and tabs before
+validation; request header values reject that boundary whitespace.
 Results discriminate on `kind` and the exact declared `status`:
 
 - `success`: a declared 2xx response with validated `data`.

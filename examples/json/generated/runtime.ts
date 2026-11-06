@@ -40,8 +40,75 @@ export type Absent = typeof absent;
 // issues are not fatal: later checks still run, and a union reports the one
 // branch that failed only on constraints instead of every alternative.
 type Problem = { path: (string | number)[]; message: string; fatal: boolean };
-export type Issues = Problem[];
+const maximumIssues = 100;
+const maximumIssueMessage = 1_024;
+const maximumErrorMessage = 8_192;
+const issueCapacity: unique symbol = Symbol('pom.issueCapacity');
+type Budget = { readonly [issueCapacity]?: number };
+type IssueBuffer<T> = T[] & Budget;
+export type Issues = IssueBuffer<Problem>;
 export type Parse<T> = (input: unknown, issues: Issues) => T | Invalid;
+
+const omitted = new WeakSet<readonly unknown[]>();
+const omittedMessage =
+  'issue limit reached; further validation and issues may be omitted';
+
+function issueBuffer<T>(capacity = maximumIssues): IssueBuffer<T> {
+  const issues: IssueBuffer<T> = [];
+  if (capacity < maximumIssues)
+    Object.defineProperty(issues, issueCapacity, { value: capacity });
+  return issues;
+}
+
+function remaining(issues: readonly unknown[] & Budget): number {
+  return Math.max(0, (issues[issueCapacity] ?? maximumIssues) - issues.length);
+}
+
+export function exhausted(issues: readonly unknown[] & Budget): boolean {
+  if (issues.length < (issues[issueCapacity] ?? maximumIssues)) return false;
+  omitted.add(issues);
+  return true;
+}
+
+function shortText(value: string, maximum = maximumIssueMessage): string {
+  if (maximum === 0) return '';
+  return value.length <= maximum
+    ? value
+    : `${value.slice(0, Math.max(0, maximum - 1))}…`;
+}
+
+function addIssue<T extends { message: string }>(
+  issues: IssueBuffer<T>,
+  issue: T,
+): void {
+  if (!exhausted(issues))
+    issues.push({ ...issue, message: shortText(issue.message) });
+}
+
+function mergeIssues<
+  T extends { message: string },
+  U extends { message: string },
+>(
+  target: IssueBuffer<T>,
+  source: IssueBuffer<U>,
+  convert: (issue: U) => T,
+): void {
+  for (let index = 0; index < source.length && !exhausted(target); index++)
+    addIssue(target, convert(source[index]!));
+  if (omitted.has(source)) omitted.add(target);
+}
+
+function publishedIssues<T extends { message: string }>(
+  issues: readonly T[] & Budget,
+  marker: T,
+): readonly T[] {
+  const capacity = issues[issueCapacity] ?? maximumIssues;
+  const result = issues
+    .slice(0, capacity)
+    .map((issue) => ({ ...issue, message: shortText(issue.message) }));
+  if (omitted.has(issues) || issues.length > capacity) result.push(marker);
+  return result;
+}
 
 export function report(
   issues: Issues,
@@ -49,7 +116,7 @@ export function report(
   fatal: boolean,
   path: (string | number)[] = [],
 ): Invalid {
-  issues.push({ path, message, fatal });
+  addIssue(issues, { path, message, fatal });
   return invalid;
 }
 
@@ -79,19 +146,53 @@ export type ValidationIssue = Readonly<{
   message: string;
 }>;
 
-function validationIssues(issues: Issues): ValidationIssue[] {
-  return issues.map(({ path, message }) => ({ path, message }));
+function validationIssues(issues: Issues): IssueBuffer<ValidationIssue> {
+  const details = issueBuffer<ValidationIssue>(
+    issues[issueCapacity] ?? maximumIssues,
+  );
+  mergeIssues(details, issues, ({ path, message }) => ({ path, message }));
+  return details;
+}
+
+function issuePath(path: readonly (string | number)[]): string {
+  let text = '';
+  for (const [index, key] of path.entries()) {
+    if (text.length >= maximumIssueMessage) return text;
+    if (index > 0) text += '.';
+    const part = String(key);
+    const room = maximumIssueMessage - text.length;
+    if (part.length > room) return text + shortText(part, room);
+    text += part;
+  }
+  return text;
+}
+
+function errorMessage(
+  prefix: string,
+  root: string,
+  issues: readonly ValidationIssue[],
+): string {
+  let text = `${shortText(prefix, maximumErrorMessage - 3)} (`;
+  for (const [index, issue] of issues.entries()) {
+    const detail = `${index === 0 ? '' : '; '}${issuePath(issue.path) || root}: ${issue.message}`;
+    const room = maximumErrorMessage - text.length - 1;
+    if (detail.length > room) return `${text}${shortText(detail, room)})`;
+    text += detail;
+  }
+  return `${text})`;
 }
 
 export class ValidationError extends Error {
   readonly issues: readonly ValidationIssue[];
 
   constructor(issues: readonly ValidationIssue[]) {
-    super(
-      `invalid value (${issues.map((issue) => `${issue.path.join('.') || 'value'}: ${issue.message}`).join('; ')})`,
-    );
+    const bounded = publishedIssues(issues, {
+      path: [],
+      message: omittedMessage,
+    });
+    super(errorMessage('invalid value', 'value', bounded));
     this.name = 'ValidationError';
-    this.issues = issues;
+    this.issues = bounded;
   }
 }
 
@@ -108,7 +209,7 @@ export interface Validator<T> {
 
 export function validator<T>(run: Parse<T>): Validator<T> {
   const safeParse = (input: unknown): SafeParseResult<T> => {
-    const issues: Issues = [];
+    const issues = issueBuffer<Problem>();
     const data = run(input, issues);
     if (data !== invalid && issues.length === 0) return { success: true, data };
     rejected(issues, 0);
@@ -173,6 +274,7 @@ export function field<T>(
   parse: Parse<T>,
   issues: Issues,
 ): T | Invalid {
+  if (exhausted(issues)) return invalid;
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
   const result = parse(value, issues);
@@ -192,6 +294,7 @@ export function optionalField<T>(
   parse: Parse<T>,
   issues: Issues,
 ): T | undefined | Absent | Invalid {
+  if (exhausted(issues)) return invalid;
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
   // The common absent case costs one membership test, as an explicit
@@ -201,6 +304,7 @@ export function optionalField<T>(
   const result = parse(value, issues);
   if (!present(source, key, value)) {
     issues.length = start;
+    omitted.delete(issues);
     return absent;
   }
   if (result === invalid) {
@@ -220,22 +324,30 @@ export function unknownKeys(
   known: readonly string[],
   issues: Issues,
 ): boolean {
+  if (exhausted(issues)) return true;
   let keys = keySets.get(known);
   if (!keys) {
     keys = new Set(known);
     keySets.set(known, keys);
   }
   const extra: string[] = [];
+  let more = false;
   // Strict request objects reject enumerable inherited keys too, as for...in
   // reports them, except keys held only by Object.prototype: it is never input.
   // Own __proto__ data is an unknown key like any other.
   // oxlint-disable-next-line guard-for-in -- inherited enumerable keys are input.
   for (const key in source)
-    if (!keys.has(key) && holds(source, key)) extra.push(key);
+    if (!keys.has(key) && holds(source, key)) {
+      if (extra.length === 10) {
+        more = true;
+        break;
+      }
+      extra.push(key);
+    }
   if (extra.length === 0) return false;
   report(
     issues,
-    `unrecognized ${extra.length === 1 ? 'key' : 'keys'}: ${extra.map((key) => JSON.stringify(key)).join(', ')}`,
+    `unrecognized ${extra.length === 1 ? 'key' : 'keys'}${more ? ' (additional keys omitted)' : ''}: ${extra.map((key) => JSON.stringify(shortText(key, 128))).join(', ')}`,
     false,
   );
   return true;
@@ -248,6 +360,7 @@ export function forbiddenKeys(
 ): boolean {
   let found = false;
   for (const key of names) {
+    if (exhausted(issues)) return true;
     // Known read-only fields follow structural presence even when they are
     // non-enumerable. Test membership without invoking an excluded getter.
     if (key in source && holds(source, key)) {
@@ -637,28 +750,40 @@ function stringChecks(rules: StringRules): Check<string> {
   const known = stringCache.get(rules);
   if (known) return known;
   const { format, minLength, maxLength, pattern } = rules;
-  const matches = pattern === undefined ? undefined : patternTest(pattern);
+  let matches: ((value: string) => boolean) | undefined;
   // Registered formats remain static data in generated modules. Compile their
   // expressions on first use, independently of the schema's own pattern.
-  const formatCheck =
-    format === undefined
-      ? undefined
-      : isPatternFormat(format)
-        ? registeredFormatCheck(format)
-        : (value: string) => format.check(value);
+  let formatCheck: ((value: string) => boolean) | undefined;
   // Lengths count Unicode code points, as JSON Schema specifies.
   const check: Check<string> = (value, issues) => {
-    if (format !== undefined && formatCheck && !formatCheck(value))
-      report(issues, format.message, false);
-    if (minLength !== undefined || maxLength !== undefined) {
-      const length = codePoints(value);
-      if (minLength !== undefined && length < minLength)
-        report(issues, 'string is too short', false);
-      if (maxLength !== undefined && length > maxLength)
-        report(issues, 'string is too long', false);
+    const length =
+      minLength === undefined && maxLength === undefined
+        ? 0
+        : codePoints(value);
+    // A value already rejected by size must not reach potentially expensive
+    // pattern or format predicates, or initialize their regular expressions.
+    if (maxLength !== undefined && length > maxLength) {
+      report(issues, 'string is too long', false);
+      return;
     }
-    if (matches && !matches(value))
-      report(issues, 'string does not match pattern', false);
+    if (format !== undefined) {
+      formatCheck ??= isPatternFormat(format)
+        ? registeredFormatCheck(format)
+        : (value: string) => format.check(value);
+      if (!formatCheck(value)) {
+        report(issues, format.message, false);
+        if (exhausted(issues)) return;
+      }
+    }
+    if (minLength !== undefined && length < minLength) {
+      report(issues, 'string is too short', false);
+      if (exhausted(issues)) return;
+    }
+    if (pattern !== undefined) {
+      matches ??= patternTest(pattern);
+      if (!matches(value))
+        report(issues, 'string does not match pattern', false);
+    }
   };
   stringCache.set(rules, check);
   return check;
@@ -669,6 +794,7 @@ export function text(
   issues: Issues,
   rules?: StringRules,
 ): string | Invalid {
+  if (exhausted(issues)) return invalid;
   if (typeof input !== 'string')
     return report(issues, 'expected a string', true);
   if (!rules) return input;
@@ -703,18 +829,30 @@ function numberChecks(rules: NumberRules): Check<number> {
     rules.multipleOf === undefined ? undefined : multipleOf(rules.multipleOf);
   // Integer checks add no implicit safe-integer range.
   const check: Check<number> = (value, issues) => {
-    if (integer && !Number.isInteger(value))
+    if (integer && !Number.isInteger(value)) {
       report(issues, 'expected an integer', false);
-    if (float && !Number.isFinite(Math.fround(value)))
+      if (exhausted(issues)) return;
+    }
+    if (float && !Number.isFinite(Math.fround(value))) {
       report(issues, 'expected a finite float32 value', false);
-    if (minimum !== undefined && !(value >= minimum))
+      if (exhausted(issues)) return;
+    }
+    if (minimum !== undefined && !(value >= minimum)) {
       report(issues, `expected value >= ${minimum}`, false);
-    if (maximum !== undefined && !(value <= maximum))
+      if (exhausted(issues)) return;
+    }
+    if (maximum !== undefined && !(value <= maximum)) {
       report(issues, `expected value <= ${maximum}`, false);
-    if (exclusiveMinimum !== undefined && !(value > exclusiveMinimum))
+      if (exhausted(issues)) return;
+    }
+    if (exclusiveMinimum !== undefined && !(value > exclusiveMinimum)) {
       report(issues, `expected value > ${exclusiveMinimum}`, false);
-    if (exclusiveMaximum !== undefined && !(value < exclusiveMaximum))
+      if (exhausted(issues)) return;
+    }
+    if (exclusiveMaximum !== undefined && !(value < exclusiveMaximum)) {
       report(issues, `expected value < ${exclusiveMaximum}`, false);
+      if (exhausted(issues)) return;
+    }
     if (multiple && !multiple(value))
       report(issues, 'expected a declared multiple', false);
   };
@@ -727,6 +865,7 @@ export function numeric(
   issues: Issues,
   rules?: NumberRules,
 ): number | Invalid {
+  if (exhausted(issues)) return invalid;
   if (typeof input !== 'number' || !Number.isFinite(input))
     return report(issues, 'expected a finite number', true);
   if (!rules) return input;
@@ -770,11 +909,23 @@ export function refineText<T extends string>(
   issues: Issues,
   base: Parse<T>,
   rules: readonly StringRules[],
+  maxLength?: number,
 ): T | Invalid {
+  // The compiler supplies the tightest bound across the terminal and aliases.
+  // Guard it before either the base or a sibling can run a regex.
+  if (
+    typeof input === 'string' &&
+    maxLength !== undefined &&
+    codePoints(input) > maxLength
+  )
+    return report(issues, 'string is too long', false);
   const start = issues.length;
   const value = base(input, issues);
   if (typeof input === 'string' && !fatalSince(issues, start))
-    for (const rule of rules) stringChecks(rule)(input, issues);
+    for (const rule of rules) {
+      if (exhausted(issues)) return invalid;
+      stringChecks(rule)(input, issues);
+    }
   return issues.length === start ? value : invalid;
 }
 
@@ -787,7 +938,10 @@ export function refineNumber<T extends number>(
   const start = issues.length;
   const value = base(input, issues);
   if (typeof input === 'number' && !fatalSince(issues, start))
-    for (const rule of rules) numberChecks(rule)(input, issues);
+    for (const rule of rules) {
+      if (exhausted(issues)) return invalid;
+      numberChecks(rule)(input, issues);
+    }
   return issues.length === start ? value : invalid;
 }
 
@@ -860,6 +1014,7 @@ export function list<T>(
   items: Parse<T>,
   rules?: ArrayRules,
 ): T[] | Invalid {
+  if (exhausted(issues)) return invalid;
   if (!Array.isArray(input)) return report(issues, 'expected an array', true);
   const length = arrayLength(input);
   if (length === undefined)
@@ -871,6 +1026,7 @@ export function list<T>(
   const start = issues.length;
   const output: T[] = [];
   for (let index = 0; index < length; index++) {
+    if (exhausted(issues)) return invalid;
     const before = issues.length;
     const element = arrayItem(input, index);
     const value = items(element, issues);
@@ -896,15 +1052,24 @@ export function map<T>(
   values: Parse<T>,
   rules?: ObjectRules,
 ): Record<string, T> | Invalid {
+  if (exhausted(issues)) return invalid;
   // Dynamic JSON keys are data: inspect own entries of plain records and build
   // the result with fromEntries so keys such as __proto__ stay own properties.
   if (!plainRecord(input)) return report(issues, 'expected an object', true);
   // Count the original own JSON keys before reading values or projecting data.
-  // Unbounded maps keep their existing traversal without an extra enumeration.
   if (rules && propertyCount(input, issues, rules)) return invalid;
   const start = issues.length;
   const entries: [string, T][] = [];
-  for (const [name, value] of Object.entries(input)) {
+  // Snapshot keys, then read values as they are validated. Eager Object.entries
+  // would invoke every getter before the issue budget could stop traversal.
+  for (const name of Reflect.ownKeys(input)) {
+    if (exhausted(issues)) return invalid;
+    if (
+      typeof name !== 'string' ||
+      !Object.getOwnPropertyDescriptor(input, name)?.enumerable
+    )
+      continue;
+    const value: unknown = Reflect.get(input, name);
     const before = issues.length;
     const parsed = values(value, issues);
     if (parsed === invalid) {
@@ -913,7 +1078,7 @@ export function map<T>(
     } else entries.push([name, parsed]);
   }
   // Getters may remove members or make hidden members enumerable while
-  // Object.entries captures values. Check the detached count too, without
+  // their values are captured. Check the detached count too, without
   // another enumeration or getter read.
   if (
     rules &&
@@ -966,23 +1131,27 @@ export function union<T>(
   left: Parse<T>,
   right: Parse<T>,
 ): T | Invalid {
-  const first: Issues = [];
+  if (exhausted(issues)) return invalid;
+  // A failed branch is speculative: bound its buffer to the remaining quota,
+  // but still try the alternative before choosing diagnostics or success.
+  const first = issueBuffer<Problem>(remaining(issues));
   const a = left(input, first);
   if (a !== invalid && first.length === 0) return a;
-  const second: Issues = [];
+  const second = issueBuffer<Problem>(remaining(issues));
   const b = right(input, second);
   if (b !== invalid && second.length === 0) return b;
   const start = issues.length;
   const leftFatal = fatalSince(first, 0);
   if (leftFatal !== fatalSince(second, 0)) {
-    // Copy one at a time. A spread call has an engine argument limit, so many
-    // constraint failures would otherwise throw RangeError instead of failing.
-    for (const issue of leftFatal ? second : first) issues.push(issue);
+    mergeIssues(issues, leftFatal ? second : first, (issue) => issue);
     return rejected(issues, start);
   }
   for (const [index, branch] of [first, second].entries())
-    for (const { path, message } of branch)
-      report(issues, `union branch ${index + 1}: ${message}`, true, path);
+    mergeIssues(issues, branch, ({ path, message }) => ({
+      path,
+      message: `union branch ${index + 1}: ${message}`,
+      fatal: true,
+    }));
   return rejected(issues, start);
 }
 
@@ -995,6 +1164,7 @@ export function taggedUnion<T>(
   // The compiler proves that each branch requires its distinct literal tag.
   // Dispatch before parsing: trying every branch repeats nested union work.
   // The selected branch validates its tag again; callers must keep it stable.
+  if (exhausted(issues)) return invalid;
   if (input === null || typeof input !== 'object' || Array.isArray(input))
     return report(issues, 'expected an object', true);
   const tag: unknown = Reflect.get(input, propertyName);
@@ -1281,12 +1451,20 @@ export class RequestValidationError extends Error {
   readonly issues: readonly ValidationIssue[];
 
   constructor(operationId: string, issues: readonly ValidationIssue[]) {
+    const bounded = publishedIssues(issues, {
+      path: [],
+      message: omittedMessage,
+    });
     super(
-      `${operationId}: invalid request (${issues.map((issue) => `${issue.path.join('.') || 'options'}: ${issue.message}`).join('; ')})`,
+      errorMessage(
+        `${shortText(operationId)}: invalid request`,
+        'options',
+        bounded,
+      ),
     );
     this.name = 'RequestValidationError';
     this.operationId = operationId;
-    this.issues = issues;
+    this.issues = bounded;
   }
 }
 
@@ -1374,9 +1552,9 @@ const contentType = new RegExp(
 );
 
 function validHeaderValue(value: string): boolean {
-  // Preserve canonical HTTP field bytes: Fetch requires ByteString values and
-  // trims boundary SP/HTAB. Reject those transformations before transport;
-  // internal HTAB and Latin-1 obs-text remain valid field content.
+  // Requests must reach the transport without transformations. Response values
+  // normalize boundary SP/HTAB first because Fetch implementations differ there.
+  // Internal HTAB and Latin-1 obs-text remain valid field content.
   return (
     // oxlint-disable-next-line no-control-regex -- HTTP field content excludes controls except internal HTAB.
     !/[\u0000-\u0008\u000a-\u001f\u007f\u0100-\uffff]/.test(value) &&
@@ -1384,17 +1562,28 @@ function validHeaderValue(value: string): boolean {
   );
 }
 
+function trimHeaderWhitespace(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && (value[start] === ' ' || value[start] === '\t'))
+    start++;
+  while (end > start && (value[end - 1] === ' ' || value[end - 1] === '\t'))
+    end--;
+  return value.slice(start, end);
+}
+
 function observedHeaders(input: HeaderContext) {
   if (!plainRecord(input))
     throw new TypeError('response headers must be a plain record');
   const context: Record<string, string> = dictionary<string>();
-  const issues: ProtocolIssue[] = [];
+  const issues = issueBuffer<ProtocolIssue>();
   const invalidFields = new Set<string>();
-  for (const [rawName, value] of Object.entries(input)) {
-    if (typeof value !== 'string')
+  for (const [rawName, rawValue] of Object.entries(input)) {
+    if (typeof rawValue !== 'string')
       throw new TypeError(
         `response header ${JSON.stringify(rawName)} must be a string`,
       );
+    const value = trimHeaderWhitespace(rawValue);
     const name = rawName.toLowerCase();
     const repeated = Object.hasOwn(context, name);
     context[name] = repeated ? `${context[name]}, ${value}` : value;
@@ -1402,7 +1591,7 @@ function observedHeaders(input: HeaderContext) {
     // declared ASCII field. Its value is evidence, not a validated header.
     if (rawName.length === 0 || invalidHeaderName.test(rawName)) {
       invalidFields.add(name);
-      issues.push({
+      addIssue(issues, {
         part: 'headers',
         message: `invalid HTTP header name ${JSON.stringify(rawName)}`,
       });
@@ -1411,14 +1600,14 @@ function observedHeaders(input: HeaderContext) {
     // reject repeated singleton fields independently of the combined text.
     if (name === 'content-type' && repeated) {
       invalidFields.add(name);
-      issues.push({
+      addIssue(issues, {
         part: 'content-type',
         message: 'expected a single Content-Type field',
       });
     }
     if (!validHeaderValue(value)) {
       invalidFields.add(name);
-      issues.push({
+      addIssue(issues, {
         part: 'headers',
         message: `invalid HTTP header value for ${JSON.stringify(rawName)}`,
       });
@@ -1432,28 +1621,27 @@ function declaredHeaders(
   spec: ResponseSpec | undefined,
   headers: HeaderContext,
   invalidFields: ReadonlySet<string>,
-  issues: ProtocolIssue[],
+  issues: IssueBuffer<ProtocolIssue>,
 ): HeaderContext {
   const validated: Record<string, string> = dictionary<string>();
   if (spec) {
     for (const [name, header] of Object.entries(spec.headers)) {
+      if (exhausted(issues)) break;
       const raw = headers[name];
       if (raw === undefined && !header.required) continue;
-      const problems: Issues = [];
+      const problems = issueBuffer<Problem>(remaining(issues));
       const parsed = header.schema(raw, problems);
       if (parsed === invalid || problems.length > 0) {
         rejected(problems, 0);
-        for (const detail of validationIssues(problems)) {
-          issues.push({
-            ...detail,
-            part: 'headers',
-            path: [name, ...detail.path],
-          });
-        }
+        mergeIssues(issues, problems, ({ path, message }) => ({
+          message,
+          part: 'headers' as const,
+          path: [name, ...path],
+        }));
       } else if (!invalidFields.has(name) && validHeaderValue(parsed))
         validated[name] = parsed;
       else
-        issues.push({
+        addIssue(issues, {
           part: 'headers',
           path: [name],
           message: `invalid or missing declared header ${name}`,
@@ -1483,7 +1671,10 @@ function responseParser<R extends Responses>(
       ? responses[status]
       : undefined;
     if (!spec)
-      issues.push({ part: 'status', message: 'undeclared response status' });
+      addIssue(issues, {
+        part: 'status',
+        message: 'undeclared response status',
+      });
     const validatedHeaders = declaredHeaders(
       spec,
       headers,
@@ -1492,13 +1683,13 @@ function responseParser<R extends Responses>(
     );
     let data: unknown;
     let selectedContentType: string | undefined;
-    if (spec?.bodyKind === 'none') {
+    if (!exhausted(issues) && spec?.bodyKind === 'none') {
       if (body !== '')
-        issues.push({
+        addIssue(issues, {
           part: 'body',
           message: 'expected an empty response body',
         });
-    } else if (spec?.bodyKind === 'content') {
+    } else if (!exhausted(issues) && spec?.bodyKind === 'content') {
       const field = headers['content-type'];
       const essence =
         field === undefined || invalidFields.has('content-type')
@@ -1509,7 +1700,7 @@ function responseParser<R extends Responses>(
           ? spec.content[essence]
           : undefined;
       if (media === undefined)
-        issues.push({
+        addIssue(issues, {
           part: 'content-type',
           message: 'expected a single valid declared response media type',
         });
@@ -1524,20 +1715,23 @@ function responseParser<R extends Responses>(
             decoded = JSON.parse(body) as unknown;
           } catch {
             decodedSuccessfully = false;
-            issues.push({
+            addIssue(issues, {
               part: 'body',
               message: 'invalid JSON response body',
             });
           }
         }
         if (decodedSuccessfully) {
-          const problems: Issues = [];
+          const problems = issueBuffer<Problem>(remaining(issues));
           const parsed = media.schema(decoded, problems);
           if (parsed !== invalid && problems.length === 0) data = parsed;
           else {
             rejected(problems, 0);
-            for (const detail of validationIssues(problems))
-              issues.push({ part: 'body', ...detail });
+            mergeIssues(issues, problems, ({ path, message }) => ({
+              part: 'body' as const,
+              path,
+              message,
+            }));
           }
         }
       }
@@ -1549,7 +1743,13 @@ function responseParser<R extends Responses>(
         status,
         headers,
         validatedHeaders,
-        issues: Object.freeze(issues),
+        issues: Object.freeze(
+          publishedIssues(issues, {
+            part: issues.at(-1)?.part ?? 'body',
+            path: [],
+            message: omittedMessage,
+          }),
+        ),
       });
     }
     // Successful lookups correlate one exact status and media type with its
@@ -1703,9 +1903,18 @@ function headerValidator(
   >,
 ) {
   return (input: HeaderContext): HeaderContext => {
+    if (!plainRecord(input))
+      throw new TypeError('request headers must be a plain record');
     const headers: Record<string, string> = dictionary<string>();
-    const issues: ValidationIssue[] = [];
-    for (const [rawName, value] of Object.entries(input)) {
+    const issues = issueBuffer<ValidationIssue>();
+    for (const rawName of Reflect.ownKeys(input)) {
+      if (exhausted(issues)) break;
+      if (
+        typeof rawName !== 'string' ||
+        !Object.getOwnPropertyDescriptor(input, rawName)?.enumerable
+      )
+        continue;
+      const value = input[rawName]!;
       const name = rawName.toLowerCase();
       if (
         !name ||
@@ -1714,24 +1923,23 @@ function headerValidator(
         !validHeaderValue(value) ||
         Object.hasOwn(headers, name)
       )
-        issues.push({
+        addIssue(issues, {
           path: ['headers', rawName],
           message: 'invalid or duplicate HTTP header',
         });
       headers[name] = value;
     }
     for (const [name, spec] of Object.entries(specs)) {
+      if (exhausted(issues)) break;
       if (headers[name] === undefined && !spec.required) continue;
-      const problems: Issues = [];
+      const problems = issueBuffer<Problem>(remaining(issues));
       const parsed = spec.schema(headers[name], problems);
       if (parsed === invalid || problems.length > 0) {
         rejected(problems, 0);
-        for (const detail of validationIssues(problems)) {
-          issues.push({
-            ...detail,
-            path: ['headers', name, ...detail.path],
-          });
-        }
+        mergeIssues(issues, problems, ({ path, message }) => ({
+          message,
+          path: ['headers', name, ...path],
+        }));
       }
     }
     if (issues.length) throw new RequestValidationError(operationId, issues);
@@ -1744,7 +1952,7 @@ export function validateOptions<O>(
   input: unknown,
   operationId: string,
 ): O {
-  const issues: Issues = [];
+  const issues = issueBuffer<Problem>();
   const parsed = schema(input, issues);
   if (parsed === invalid || issues.length > 0) {
     rejected(issues, 0);

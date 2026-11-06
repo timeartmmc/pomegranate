@@ -234,6 +234,7 @@ export function schemaRenderer(
         const value = `group${start / 64}`;
         values.push(value);
         body.push(`const ${value} = ${parser}(source, issues);`);
+        body.push(`if (${use('exhausted').source}(issues)) return invalid;`);
       }
       const failures = values.map((value) => `${value} === invalid`);
       if (strict) objectChecks(body, failures, name, fields, forbidden);
