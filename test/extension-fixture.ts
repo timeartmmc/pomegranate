@@ -296,7 +296,10 @@ export function verifyExtensionData(client: RuntimeClient): void {
   assert.equal(request.headers['x-note'], 'request');
   assert.deepEqual(request.body, input.body);
   assert.equal(request.policy['x-note'], 'kept');
-  assert.deepEqual(request.security, { transport: 'bearer', scheme: 'x-note' });
+  assert.deepEqual(
+    { ...request.security },
+    { transport: 'bearer', scheme: 'x-note' },
+  );
   const result = request.parseResponse({
     status: 200,
     headers: { 'content-type': 'application/json', 'x-note': 'response' },

@@ -32,8 +32,14 @@ Read [README.md](README.md) for an introduction,
   development dependency.
 - Use one canonical metadata and generated format. Adapt consumers to it rather
   than retaining project-specific compiler branches or obsolete formats.
-- Add capabilities for demonstrated needs. Unsupported semantics must produce
-  explicit diagnostics; no operation may disappear silently.
+- Improve POM's general usefulness, correctness, clarity, and interoperability.
+  Require benefits proportional to permanent implementation, testing, and
+  maintenance complexity. Prefer explicit limits and actionable diagnostics for
+  rare, avoidable cases that authors can express using existing supported
+  constructs. Do not add specialized machinery merely to make every technically
+  expressible input succeed.
+- Unsupported semantics must produce explicit diagnostics; no operation may
+  disappear silently.
 - Render and validate the complete output set before writing. Drift checks must
   be read-only. Cleanup must preserve inputs and unrelated or modified files.
 

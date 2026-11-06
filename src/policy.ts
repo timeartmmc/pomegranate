@@ -1,4 +1,5 @@
 import {
+  arrayValues,
   contractField,
   fail,
   keys,
@@ -20,7 +21,7 @@ function labels(input: unknown, location: string): readonly string[] {
   if (!Array.isArray(input) || input.length === 0)
     fail(location, 'expected a nonempty array of labels');
   // Visit holes as well as values for programmatic inputs.
-  const result = Array.from(input, (label, index) =>
+  const result = Array.from(arrayValues(input), (label, index) =>
     text(label, `${location}[${index}]`),
   );
   if (new Set(result).size !== result.length) fail(location, 'duplicate label');
@@ -53,7 +54,10 @@ export function normalizeMemberships(
   );
 }
 
-export function normalizeVocabulary(input: unknown): PolicyVocabulary {
+export function normalizeVocabulary(
+  input: unknown,
+  normalize: typeof normalizeSchema = normalizeSchema,
+): PolicyVocabulary {
   const location = 'x-pom-policy';
   const value = record(input, location);
   if (value.version !== 3)
@@ -99,7 +103,7 @@ export function normalizeVocabulary(input: unknown): PolicyVocabulary {
           )
         )
           fail(`${fieldLocation}.type`, 'expected a scalar type');
-        return [name, normalizeSchema(field, fieldLocation)];
+        return [name, normalize(field, fieldLocation)];
       }),
   );
   if (entries.length > 0)

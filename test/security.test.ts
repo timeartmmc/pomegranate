@@ -48,14 +48,20 @@ void test('bearer requirements retain distinct declared identities through inher
     path: { widgetId: 'synthetic' },
   });
   const overridden = present(staff.operations.getStaffReport).build();
-  assert.deepEqual(inherited.security, {
-    transport: 'bearer',
-    scheme: 'WidgetSession',
-  });
-  assert.deepEqual(overridden.security, {
-    transport: 'bearer',
-    scheme: 'ServiceToken',
-  });
+  assert.deepEqual(
+    { ...inherited.security },
+    {
+      transport: 'bearer',
+      scheme: 'WidgetSession',
+    },
+  );
+  assert.deepEqual(
+    { ...overridden.security },
+    {
+      transport: 'bearer',
+      scheme: 'ServiceToken',
+    },
+  );
   assert.ok(Object.isFrozen(inherited.security));
   assert.ok(Object.isFrozen(overridden.security));
   Object.assign(document, { security: [{ ServiceToken: [] }] });

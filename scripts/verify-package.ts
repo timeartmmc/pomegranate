@@ -1304,8 +1304,8 @@ try {
     await mkdir('./plain-generated');
     for(const [name,source] of Object.entries(plainFiles)) await writeFile('./plain-generated/'+name,source);
     const plainEntry=await import('./plain-generated/client.consumer.ts');
-    assert.deepEqual(plainEntry.operations.checkHealth.build().policy,{});
-    assert.deepEqual(plainEntry.operations.checkHealth.build().security,{transport:'none'});
+    assert.deepEqual({...plainEntry.operations.checkHealth.build().policy},{});
+    assert.deepEqual({...plainEntry.operations.checkHealth.build().security},{transport:'none'});
     const omittedPolicy=structuredClone(document);
     omittedPolicy['x-pom-policy']={version:3,surfaces:['consumer','staff']};
     for(const item of Object.values(omittedPolicy.paths)) for(const operation of Object.values(item)) operation['x-pom']={surfaces:operation['x-pom'].surfaces};
@@ -1889,12 +1889,12 @@ try {
     assert.equal(Object.hasOwn(requestSchemas,'StaffReport'),false);
     assert.equal(Object.hasOwn(responseSchemas,'StaffPeriod'),true);
     assert.equal(staff.getStaffReport.build().policy.auth, 'partnerStaff');
-  assert.deepEqual(staff.getStaffReport.build().security, {
+  assert.deepEqual({ ...staff.getStaffReport.build().security }, {
     transport: 'bearer',
     scheme: 'WidgetSession',
   });
     assert.equal(operations.checkHealth.build().policy.auth, 'public');
-  assert.deepEqual(operations.checkHealth.build().security, { transport: 'none' });
+  assert.deepEqual({ ...operations.checkHealth.build().security }, { transport: 'none' });
     assert.throws(() => operations.prepareWidget.build({}), RequestValidationError);
     const result = operations.prepareWidget.parseResponse({status:409,headers:{'Content-Type':'application/json','X-Request-ID':'isolated','Retry-After':'7'},body:'{'});
     assert.equal(result.kind,'protocol');

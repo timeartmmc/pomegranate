@@ -397,12 +397,15 @@ void test('normalized selection, memberships, policy and response content use ma
   );
   const prepared = present(operations.read).build({});
   assert.equal(prepared.policy instanceof Map, false);
-  assert.deepEqual(prepared.policy, {
-    '2': false,
-    '10': 'ten',
-    auth: 'toString',
-    priority: 'low',
-  });
+  assert.deepEqual(
+    { ...prepared.policy },
+    {
+      '2': false,
+      '10': 'ten',
+      auth: 'toString',
+      priority: 'low',
+    },
+  );
   assert.equal(prepared.url, '/items');
   const observed = prepared.parseResponse({
     status: 200,

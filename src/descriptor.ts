@@ -3,6 +3,7 @@ import {
   normalizeComponents,
 } from './component-references.js';
 import {
+  arrayValues,
   annotations,
   contractField,
   fail,
@@ -29,14 +30,13 @@ import type {
 } from './model.js';
 import {
   componentName,
-  normalizeSchema,
+  createSchemaNormalizer,
   normalizeFormats,
   orderSchemas,
   resolveSchema,
   validateSchema,
   schemaValidation,
 } from './schemas.js';
-import type { FormatRegistry } from './schemas.js';
 import {
   normalizeMemberships,
   normalizeOperationPolicy,
@@ -44,7 +44,7 @@ import {
 } from './policy.js';
 import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
 import { projectSchemas } from './directional.js';
-import { normalizeOpenApi30 } from './openapi30.js';
+import { normalizeOpenApi30, openApi30Diagnostic } from './openapi30.js';
 import { isRequired } from './required-index.js';
 import {
   deprecatedAnnotation,
@@ -72,7 +72,7 @@ type HeaderDefinition = Omit<ResponseHeader, 'name'>;
 type RequestBodyDefinition = Exclude<Operation['body'], { kind: 'none' }>;
 
 type SchemaContext = Readonly<{
-  formats: FormatRegistry;
+  normalize: ReturnType<typeof createSchemaNormalizer>;
   source: SchemaTable;
   projection: ReturnType<typeof projectSchemas>;
   sourceValidation: Validation;
@@ -100,7 +100,7 @@ function normalizeFor(
   direction: Direction,
   usage: Direction | 'multipart' = direction,
 ): Schema {
-  const source = normalizeSchema(input, location, 1, context.formats);
+  const source = context.normalize(input, location);
   // Source validation stays complete before projection: an excluded property
   // cannot hide malformed declarations or unresolved references.
   validateSchema(
@@ -590,7 +590,7 @@ function parameterList(
   location: string,
 ): readonly Parameter[] {
   if (!Array.isArray(input)) fail(location, 'expected an array');
-  const parameters = Array.from(input, (input, index) => {
+  const parameters = Array.from(arrayValues(input), (input, index) => {
     const path = `${location}[${index}]`;
     const value = record(input, path);
     const target = componentReference(value, 'parameters', path);
@@ -977,6 +977,7 @@ function validateDocumentMetadata(value: Record<string, unknown>): void {
       'termsOfService',
     ],
     'info',
+    'info',
   );
   text(info.title, 'info.title');
   text(info.version, 'info.version');
@@ -986,19 +987,21 @@ function validateDocumentMetadata(value: Record<string, unknown>): void {
   serverAnnotations(value);
   if (Object.hasOwn(value, 'tags')) {
     if (!Array.isArray(value.tags)) fail('tags', 'expected an array');
-    for (const [index, rawTag] of value.tags.entries()) {
-      const tag = record(rawTag, `tags[${index}]`);
-      keys(tag, ['name', 'description', 'externalDocs'], `tags[${index}]`);
-      text(tag.name, `tags[${index}].name`);
-      annotations(tag, `tags[${index}]`);
-      externalDocsAnnotation(tag, `tags[${index}]`);
+    let index = 0;
+    for (const rawTag of arrayValues(value.tags)) {
+      const location = `tags[${index++}]`;
+      const tag = record(rawTag, location);
+      keys(tag, ['name', 'description', 'externalDocs'], location);
+      text(tag.name, `${location}.name`);
+      annotations(tag, location);
+      externalDocsAnnotation(tag, location);
     }
   }
 }
 
 function prepareSchemas(
   input: unknown,
-  registeredFormats: SchemaContext['formats'],
+  normalize: ReturnType<typeof createSchemaNormalizer>,
 ): { context: SchemaContext; order: readonly string[] } {
   const rawSchemas = record(input, 'components.schemas');
   const schemas = new Map(
@@ -1006,12 +1009,7 @@ function prepareSchemas(
       .sort()
       .map((name) => [
         componentName(name, `components.schemas.${name}`),
-        normalizeSchema(
-          rawSchemas[name],
-          `components.schemas.${name}`,
-          1,
-          registeredFormats,
-        ),
+        normalize(rawSchemas[name], `components.schemas.${name}`),
       ]),
   );
   const schemaOrder = orderSchemas(schemas);
@@ -1027,7 +1025,7 @@ function prepareSchemas(
       validation,
     );
   const context: SchemaContext = {
-    formats: registeredFormats,
+    normalize,
     source: schemas,
     projection: projectSchemas(schemas),
     sourceValidation: validation,
@@ -1047,6 +1045,7 @@ function normalizeOperations(
   const { schemas: context, examples, parameterComponents } = operationContext;
   const paths = record(input, 'paths');
   const operations: Operation[] = [];
+  const pathHierarchies = new Map<string, string>();
   for (const path of Object.keys(paths).sort()) {
     pathTemplate(path, `paths.${path}`);
     const pathItem = record(paths[path], `paths.${path}`);
@@ -1076,6 +1075,16 @@ function normalizeOperations(
             operationContext,
           ),
         );
+    // Placeholder names bind parameters, but do not distinguish OpenAPI paths,
+    // including when their Path Items declare different HTTP methods.
+    const hierarchy = path.replace(/\{[^}]+\}/g, '{}');
+    const first = pathHierarchies.get(hierarchy);
+    if (first !== undefined)
+      fail(
+        `paths.${path}`,
+        `duplicate templated path hierarchy; first declared at paths.${first}`,
+      );
+    pathHierarchies.set(hierarchy, path);
   }
   const ids = new Map<string, string>();
   for (const operation of operations) {
@@ -1113,23 +1122,23 @@ function normalizeOperations(
   );
 }
 
-export function buildDescriptor(
-  input: unknown,
+function describeDocument(
+  source: Record<string, unknown>,
+  openApi30: boolean,
   membershipInput: { surfaces?: unknown; formats?: unknown } = {},
 ): Descriptor {
   const rawMembership = ownRecord(membershipInput);
-  const source = openApiDocument(input);
-  const openApi30 =
-    typeof source.openapi === 'string' && source.openapi.startsWith('3.0.');
   const value = openApi30
     ? record(normalizeOpenApi30(source), 'OpenAPI')
     : source;
   const registeredFormats = normalizeFormats(rawMembership.formats);
+  const normalize = createSchemaNormalizer(registeredFormats);
   validateDocumentMetadata(value);
   let vocabulary = normalizeVocabulary(
     Object.hasOwn(value, 'x-pom-policy')
       ? value['x-pom-policy']
       : { version: 3 },
+    normalize,
   );
   let memberships: Map<string, string[]> | undefined;
   const membership = {
@@ -1181,13 +1190,14 @@ export function buildDescriptor(
     Object.hasOwn(components, 'securitySchemes')
       ? components.securitySchemes
       : {},
+    openApi30 ? '3.0' : '3.1',
   );
   const inheritedSecurity = Object.hasOwn(value, 'security')
     ? normalizeSecurity(value.security, bearerSchemes, 'security')
     : ({ transport: 'none' } as const);
   const { context, order: schemaOrder } = prepareSchemas(
     Object.hasOwn(components, 'schemas') ? components.schemas : {},
-    membership.formats,
+    normalize,
   );
   const parameterComponents = normalizeComponents(
     Object.hasOwn(components, 'parameters') ? components.parameters : {},
@@ -1230,4 +1240,19 @@ export function buildDescriptor(
     schemaOrder,
     operations: normalizeOperations(value.paths, operationContext, configured),
   };
+}
+
+export function buildDescriptor(
+  input: unknown,
+  membershipInput: { surfaces?: unknown; formats?: unknown } = {},
+): Descriptor {
+  const source = openApiDocument(input);
+  const openApi30 =
+    typeof source.openapi === 'string' && source.openapi.startsWith('3.0.');
+  try {
+    return describeDocument(source, openApi30, membershipInput);
+  } catch (error) {
+    if (openApi30) throw openApi30Diagnostic(error);
+    throw error;
+  }
 }

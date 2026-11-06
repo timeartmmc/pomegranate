@@ -1,4 +1,4 @@
-import { fail, keys, record } from './diagnostics.js';
+import { fail, keys, mapKeywordError, record } from './diagnostics.js';
 import { mapOpenApi } from './extensions.js';
 
 const referenceContexts = new Set([
@@ -10,6 +10,35 @@ const referenceContexts = new Set([
   'example',
   'securityScheme',
 ]);
+
+const openApi31SchemaKeys = new Set([
+  'const',
+  '$comment',
+  'examples',
+  'contentMediaType',
+]);
+const exclusiveBounds = [
+  ['exclusiveMinimum', 'minimum'],
+  ['exclusiveMaximum', 'maximum'],
+] as const;
+
+export function openApi30Diagnostic(error: unknown): unknown {
+  return mapKeywordError(error, (allowed, context) => {
+    if (context === 'schema') {
+      const source = allowed.filter((key) => !openApi31SchemaKeys.has(key));
+      source.push('nullable');
+      // False exclusive flags are accepted for every 3.0 schema kind, even
+      // when canonical validation no longer sees the removed source keywords.
+      for (const [exclusive] of exclusiveBounds)
+        if (!source.includes(exclusive)) source.push(exclusive);
+      return source;
+    }
+    if (context === 'info') return allowed.filter((key) => key !== 'summary');
+    if (context === 'license')
+      return allowed.filter((key) => key !== 'identifier');
+    return allowed;
+  });
+}
 
 function defaultMatchesType(value: unknown, type: unknown): boolean {
   switch (type) {
@@ -37,7 +66,7 @@ function lowerSchema(
 ): Record<string, unknown> {
   if (Object.hasOwn(value, 'allOf'))
     fail(`${location}.allOf`, 'allOf is not supported in this version');
-  for (const key of ['const', '$comment', 'examples', 'contentMediaType'])
+  for (const key of openApi31SchemaKeys)
     if (Object.hasOwn(value, key))
       fail(`${location}.${key}`, 'unsupported OpenAPI 3.0 schema keyword');
   if (Array.isArray(value.type) || value.type === 'null')
@@ -84,10 +113,7 @@ function lowerSchema(
       `${location}.default`,
       'OpenAPI 3.0 default must match its declared type',
     );
-  for (const [exclusive, inclusive] of [
-    ['exclusiveMinimum', 'minimum'],
-    ['exclusiveMaximum', 'maximum'],
-  ] as const) {
+  for (const [exclusive, inclusive] of exclusiveBounds) {
     if (!Object.hasOwn(value, exclusive)) continue;
     if (typeof value[exclusive] !== 'boolean')
       fail(`${location}.${exclusive}`, 'OpenAPI 3.0 requires a boolean');

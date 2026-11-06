@@ -67,8 +67,8 @@ void test('policy declarations and metadata are optional without inferred applic
   assert.equal(typeof build, 'function');
   assert.ok(typeof build === 'function');
   const request = record((build as () => unknown)());
-  assert.deepEqual(request.policy, {});
-  assert.deepEqual(request.security, { transport: 'none' });
+  assert.deepEqual({ ...record(request.policy) }, {});
+  assert.deepEqual({ ...record(request.security) }, { transport: 'none' });
   assert.ok(Object.isFrozen(request.policy));
   assert.ok(Object.isFrozen(request.security));
 });
@@ -343,10 +343,13 @@ void test('literal replacement tokens survive policy field names, labels, declar
   const build = record(record(record(entry).operations).read).build;
   assert.ok(typeof build === 'function');
   const policy = record(record((build as () => unknown)()).policy);
-  assert.deepEqual(policy, {
-    auth: '$$',
-    ...Object.fromEntries(tokens.map((token) => [token, token])),
-  });
+  assert.deepEqual(
+    { ...policy },
+    {
+      auth: '$$',
+      ...Object.fromEntries(tokens.map((token) => [token, token])),
+    },
+  );
   const union = tokens.map((token) => JSON.stringify(token)).join(' | ');
   const checks = tokens
     .map(

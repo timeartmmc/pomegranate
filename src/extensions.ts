@@ -151,8 +151,9 @@ export function mapOpenApi(
     context: string,
     location: string,
   ) => Record<string, unknown>,
+  readAccessors = true,
 ): unknown {
-  return walkDocument(document, transform);
+  return walkDocument(document, transform, undefined, readAccessors);
 }
 
 function walkDocument(
@@ -163,6 +164,7 @@ function walkDocument(
     location: string,
   ) => Record<string, unknown>,
   names?: ReadonlySet<string>,
+  readAccessors = true,
 ): unknown {
   const seen = new WeakMap<object, Map<Context, object>>();
   const pending: {
@@ -249,6 +251,7 @@ function walkDocument(
       if (frame.shape.fields && Object.hasOwn(frame.shape.fields, key))
         context = frame.shape.fields[key];
       if (!context) continue;
+      if (!readAccessors && !Object.hasOwn(descriptor, 'value')) continue;
       // Semantic siblings of Reference Objects remain the owning parser's
       // error. A Schema Object ref permits only its externalDocs child here.
       if (

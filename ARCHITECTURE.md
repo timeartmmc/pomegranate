@@ -41,13 +41,17 @@ Fixed metadata records materialize every setting as an own field, including
 explicit defaults or `undefined` for absence. Keep sparse source and public
 configuration types at normalization boundaries; internal code consumes complete,
 kind-specific records. Use `Map` for internal tables indexed by contract names.
-Generated public values remain ordinary objects. Application payloads have their
+Runtime policy, security, context, and header dictionaries use null prototypes
+so inherited data cannot supply omitted metadata. Application payloads have their
 separate structural field policy; do not normalize them as compiler settings.
 
 Validate source declarations before projecting request and response fields.
 Use those projected schema graphs for usage validation, dependency selection,
 types, parsers, and protocol bindings. Keep fixed-object identity when projection
 excludes every property.
+Bound schema-normalization work before expanding shared declarations; opaque
+annotation payloads retain their own validation. Diagnose excessive schema
+expansion with guidance to use component references.
 
 Client projection retains only transitive request and response dependencies.
 Client modules must not import another client's operations or schemas. Shared
@@ -64,8 +68,8 @@ Keep non-obvious implementation rationale beside the owning code.
 Bound schema structure, generated-expression complexity, input reads, and output
 size before expensive traversal or formatting. Format modules sequentially.
 These limits bound supported work; they do not establish a fixed process memory
-ceiling or bound arbitrary getters and regular expressions. Exact limits belong
-in the [reference](REFERENCE.md#supported-vocabulary).
+ceiling or bound arbitrary getters, proxies, and regular expressions. Exact
+limits belong in the [reference](REFERENCE.md#supported-vocabulary).
 
 ## Generated runtime boundaries
 
@@ -124,5 +128,5 @@ migration and can be adopted independently of direct calls.
 Applications need their own contract, platform, scalar, and integration checks.
 Measure maintenance costs and device budgets in the application. Use the
 [measurement guidance](CONTRIBUTING.md#measurements-and-adoption) to assess adoption.
-Add capabilities for demonstrated needs, with observable tests and explicit
-diagnostics for unsupported neighboring forms.
+Keep improvements proportional to their permanent complexity, with observable
+tests and explicit diagnostics for unsupported neighboring forms.

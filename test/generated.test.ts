@@ -177,14 +177,20 @@ void test('clients account for exactly their selected operations and directional
     staffOperations.getStaffReport.build().policy.auth,
     'partnerStaff',
   );
-  assert.deepEqual(staffOperations.getStaffReport.build().security, {
-    transport: 'bearer',
-    scheme: 'WidgetSession',
-  });
+  assert.deepEqual(
+    { ...staffOperations.getStaffReport.build().security },
+    {
+      transport: 'bearer',
+      scheme: 'WidgetSession',
+    },
+  );
   assert.equal(operations.checkHealth.build().policy.auth, 'public');
-  assert.deepEqual(operations.checkHealth.build().security, {
-    transport: 'none',
-  });
+  assert.deepEqual(
+    { ...operations.checkHealth.build().security },
+    {
+      transport: 'none',
+    },
+  );
 });
 
 void test('application transport resolves bearer schemes and readiness labels and sends public overrides without credentials', async () => {
@@ -410,10 +416,13 @@ void test('builders validate before transport and do not retain mutable input ob
   input.body.label = 'Mutated';
   assert.equal(request.body.label, 'Example');
   assert.equal(request.policy.auth, 'session');
-  assert.deepEqual(request.security, {
-    transport: 'bearer',
-    scheme: 'WidgetSession',
-  });
+  assert.deepEqual(
+    { ...request.security },
+    {
+      transport: 'bearer',
+      scheme: 'WidgetSession',
+    },
+  );
   assert.equal(request.bodyKind, 'json');
   assert.equal(request.headers['Idempotency-Key'], 'attempt');
   for (const input of [

@@ -3,7 +3,7 @@ import type { Alias, ParsedNode, Scalar } from 'yaml';
 import { fail } from './diagnostics.js';
 import type { JsonValue } from './runtime.js';
 
-const maximumExpandedNodes = 1_000_000;
+import { maximumExpandedInputNodes as maximumExpandedNodes } from './input-limits.js';
 const maximumCollectionNesting = 256;
 type CollectionNode = Exclude<ParsedNode, Alias | Scalar>;
 

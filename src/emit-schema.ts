@@ -171,11 +171,12 @@ export function schemaRenderer(
     maxLength: number | undefined;
   }>;
   const refinements = {
-    request: new WeakMap<Schema, Refinement>(),
-    response: new WeakMap<Schema, Refinement>(),
+    request: new Map<string, Refinement>(),
+    response: new Map<string, Refinement>(),
   };
   // Share each alias's own rules, rather than copying all earlier siblings into
-  // every parser. Resolve and cache the chain iteratively, including forward links.
+  // every parser. Cache by parser name: shared source nodes can belong to distinct
+  // component names and inline scopes, each owning its emitted constants.
   function scalarRefinement(
     value: Extract<Schema, { kind: 'ref' }>,
     direction: Direction,
@@ -186,7 +187,7 @@ export function schemaRenderer(
       [];
     let current: Schema = value;
     let terminal = value.name;
-    let known = cache.get(current);
+    let known = cache.get(name);
     while (!known) {
       if (current.kind !== 'ref') {
         known = {
@@ -194,14 +195,14 @@ export function schemaRenderer(
           rules: null,
           maxLength: current.kind === 'string' ? current.maxLength : undefined,
         };
-        cache.set(current, known);
+        cache.set(name, known);
         break;
       }
       pending.push({ value: current, name });
       terminal = current.name;
       current = schemas[direction].get(terminal)!;
       name = parseSymbol(terminal, direction);
-      known = cache.get(current);
+      known = cache.get(name);
     }
     const kind = schemas[direction].get(known.terminal)!.kind;
     const keys = kind === 'string' ? stringRules : numberRules;
@@ -230,7 +231,7 @@ export function schemaRenderer(
                 ),
         };
       }
-      cache.set(entry.value, known);
+      cache.set(entry.name, known);
     }
     return known;
   }

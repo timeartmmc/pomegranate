@@ -71,14 +71,17 @@ void test('aliases preserve inherited bearer security, public overrides and appl
   const authenticated = present(operations.getWidget).build({
     path: { widgetId: 'synthetic' },
   });
-  assert.deepEqual(authenticated.security, {
-    transport: 'bearer',
-    scheme: 'WidgetSession',
-  });
+  assert.deepEqual(
+    { ...authenticated.security },
+    {
+      transport: 'bearer',
+      scheme: 'WidgetSession',
+    },
+  );
   assert.equal(authenticated.policy.auth, 'session');
   for (const id of ['checkHealth', 'widgetOptions']) {
     const request = present(operations[id]).build();
-    assert.deepEqual(request.security, { transport: 'none' });
+    assert.deepEqual({ ...request.security }, { transport: 'none' });
     assert.equal(request.policy.auth, 'public');
     assert.ok(Object.isFrozen(request.security));
   }

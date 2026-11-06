@@ -72,6 +72,11 @@ It can return raw
 record, and body text, or an inspection handle from `validateResponse`. It may reject
 with an application error. Raw executors can ignore the callback.
 
+POM calls executors and cancellation callbacks as unbound functions. If a class
+method reads instance state, pass an arrow function or
+`adapter.execute.bind(adapter)`. POM captures the callback; it does not bind it
+to the configuration object.
+
 The application resolves the API origin, credentials for `request.security.scheme`
 on bearer requests, and declared policy labels,
 validates merged headers with `request.validateHeaders`, serializes the prepared

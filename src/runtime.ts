@@ -413,9 +413,16 @@ export function formatPattern(pattern: string): (value: string) => boolean {
 }
 
 function decimal(value: number): readonly [bigint, number] {
-  const [mantissa = '', exponent] = value.toString().split('e');
-  const fraction = mantissa.split('.')[1]?.length ?? 0;
-  return [BigInt(mantissa.replace('.', '')), Number(exponent ?? 0) - fraction];
+  const source = value.toString();
+  const exponentAt = source.indexOf('e');
+  const mantissa = exponentAt < 0 ? source : source.slice(0, exponentAt);
+  const exponent = exponentAt < 0 ? 0 : Number(source.slice(exponentAt + 1));
+  const point = mantissa.indexOf('.');
+  // Missing decimal parts are syntax, never values inherited by a split array.
+  const fraction = point < 0 ? 0 : mantissa.length - point - 1;
+  const digits =
+    point < 0 ? mantissa : mantissa.slice(0, point) + mantissa.slice(point + 1);
+  return [BigInt(digits), exponent - fraction];
 }
 
 export function multipleOf(divisor: number): (value: number) => boolean {
@@ -1929,6 +1936,12 @@ function validateMultipart(
     const value = Object.hasOwn(body, field.name)
       ? body[field.name]
       : undefined;
+    // The options parser detached this object. Undefined optional values have
+    // no multipart part, even when structural parsing retained their key.
+    if (value === undefined && !field.required) {
+      delete body[field.name];
+      continue;
+    }
     if (
       field.required &&
       field.multiple &&
@@ -2117,8 +2130,10 @@ export function defineOperation<
   const B extends BodyKind,
 >(input: Definition<O, R, B>): Operation<O, R, PreparedBodyKind<O, B>> {
   const definition = operationSettings(input);
-  const security = Object.freeze({ ...definition.security });
-  const policy = Object.freeze({ ...definition.policy });
+  // Freezing own fields does not freeze Object.prototype. Metadata snapshots
+  // exclude it so omitted fields cannot gain values after construction.
+  const security = Object.freeze(ownFields(definition.security));
+  const policy = Object.freeze(ownFields(definition.policy));
   const requestContentType = definition.contentType;
   const multipart = Object.freeze(
     definition.multipart.map((field) => Object.freeze({ ...field })),
@@ -2138,9 +2153,10 @@ export function defineOperation<
       throw new RequestValidationError(definition.operationId, [
         { path: [], message: 'expected at most one options argument' },
       ]);
+    // An omitted rest argument has no own element; prototype data is not input.
+    const input = args.length === 0 ? undefined : args[0];
     const options: RequestParts =
-      validateOptions(definition.options, args[0], definition.operationId) ??
-      {};
+      validateOptions(definition.options, input, definition.operationId) ?? {};
     // Optional-field parsing omits polluted Object.prototype fields. Do not
     // recover one by reading an inherited body from the fresh options object.
     const body = Object.hasOwn(options, 'body') ? options.body : undefined;

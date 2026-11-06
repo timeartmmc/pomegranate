@@ -1,5 +1,6 @@
 import { RegExpSyntaxError, RegExpValidator } from '@eslint-community/regexpp';
 import {
+  arrayValues,
   ContractError,
   contractField,
   fail,
@@ -47,6 +48,7 @@ import {
   stringFormatHelpers,
 } from './formats.js';
 import type { StringFormat } from './runtime.js';
+import { createSchemaAdmission } from './input-limits.js';
 
 export type FormatRegistry = ReadonlyMap<string, RegisteredStringFormat>;
 
@@ -271,7 +273,7 @@ function literals(
     fail(`${location}.enum`, 'expected a nonempty array');
   const result: Scalar[] = [];
   const seen = new Set<Scalar>();
-  for (const item of raw) {
+  for (const item of arrayValues(raw)) {
     const matches =
       kind === 'null'
         ? item === null
@@ -285,6 +287,14 @@ function literals(
     result.push(item);
   }
   return result;
+}
+
+export function createSchemaNormalizer(registered: FormatRegistry) {
+  const admit = createSchemaAdmission();
+  return (input: unknown, location: string): Schema => {
+    admit(input, location);
+    return normalizeSchema(input, location, 1, registered);
+  };
 }
 
 export function normalizeSchema(
@@ -336,6 +346,8 @@ export function normalizeSchema(
   if (value.readOnly === true && value.writeOnly === true)
     fail(location, 'readOnly and writeOnly cannot both be true');
   const schema = {
+    // Virtual nullable branches stay access-neutral. The source annotation
+    // belongs to this declaration's outer node, including nullable wrappers.
     ...normalizeShape(value, location, nesting, registered),
     readOnly: value.readOnly === true,
     writeOnly: value.writeOnly === true,
@@ -381,11 +393,12 @@ function normalizeUnion(
       ...(keyword === 'oneOf' ? ['discriminator'] : []),
     ],
     location,
+    'schema',
   );
   const raw = value[keyword];
   if (!Array.isArray(raw) || raw.length < 2)
     fail(`${location}.${keyword}`, 'expected at least two union branches');
-  const branches = Array.from(raw, (branch: unknown, index) =>
+  const branches = Array.from(arrayValues(raw), (branch: unknown, index) =>
     normalizeSchema(
       branch,
       `${location}.${keyword}[${index}]`,
@@ -443,6 +456,7 @@ function normalizeObject(
       ...objectConstraints,
     ],
     location,
+    'schema',
   );
   const limits = bounds(
     value,
@@ -456,6 +470,8 @@ function normalizeObject(
     Object.hasOwn(value, 'properties') ? value.properties : {},
     `${location}.properties`,
   );
+  // Reapply ordinary record order: numeric property names enumerate first in
+  // numeric order. Preserve that established ordering when moving into a Map.
   const normalized = new Map(
     Object.entries(
       Object.fromEntries(
@@ -538,6 +554,7 @@ function normalizeScalar(
     value,
     [...typedSchemaKeys, 'const', 'enum', ...allowedConstraints],
     location,
+    'schema',
   );
   const allowed = literals(value, kind, location, nullable);
   let limits = constraints(value, location);
@@ -685,7 +702,12 @@ function normalizeShapeValue(
   if (Object.hasOwn(value, 'allOf'))
     fail(`${location}.allOf`, 'allOf is not supported in this version');
   if (Object.hasOwn(value, '$ref')) {
-    keys(value, ['$ref', ...annotationKeys, ...constraintKeys], location);
+    keys(
+      value,
+      ['$ref', ...annotationKeys, ...constraintKeys],
+      location,
+      'schema',
+    );
     return {
       kind: 'ref',
       constraints: constraints(value, location),
@@ -704,7 +726,12 @@ function normalizeShapeValue(
     kind === 'string' &&
     (value.format === 'binary' || Object.hasOwn(value, 'contentMediaType'))
   ) {
-    keys(value, [...typedSchemaKeys, 'format', 'contentMediaType'], location);
+    keys(
+      value,
+      [...typedSchemaKeys, 'format', 'contentMediaType'],
+      location,
+      'schema',
+    );
     if (Object.hasOwn(value, 'format') && value.format !== 'binary')
       fail(`${location}.format`, 'binary fields require format binary');
     if (
@@ -724,6 +751,7 @@ function normalizeShapeValue(
       value,
       [...typedSchemaKeys, 'items', 'minItems', 'maxItems'],
       location,
+      'schema',
     );
     const schema: SchemaDraft = {
       kind,

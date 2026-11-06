@@ -164,7 +164,7 @@ void test('derived operation IDs select policies, generated types, request build
           : undefined;
     const request = present(client.operations[id]).build(input);
     assert.equal(request.operationId, id);
-    assert.deepEqual(request.policy, { priority: 'foreground' });
+    assert.deepEqual({ ...request.policy }, { priority: 'foreground' });
     if (id === 'GET /items/{itemId}') assert.equal(request.url, '/items/a%2Fb');
     const result = request.parseResponse({
       status: 200,

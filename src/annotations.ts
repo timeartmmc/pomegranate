@@ -1,4 +1,5 @@
 import {
+  arrayValues,
   annotations,
   fail,
   keys,
@@ -51,8 +52,9 @@ export function jsonAnnotation(input: unknown, location: string): void {
       (typeof value === 'number' && Number.isFinite(value))
     )
       continue;
-    if (value === null || typeof value !== 'object')
-      fail(location, 'expected an object');
+    if (typeof value === 'number')
+      fail(location, 'annotation numbers must be finite JSON values');
+    if (typeof value !== 'object') fail(location, 'expected an object');
     // record() supplies an own-only view. Track the caller's identity so cycles
     // and shared annotation subtrees still refer to the same original object.
     // Check it before copying descriptors: wide shared records are read once.
@@ -64,7 +66,7 @@ export function jsonAnnotation(input: unknown, location: string): void {
     stack.push({
       source: value,
       values: Array.isArray(source)
-        ? source.values()
+        ? arrayValues(source)
         : Object.values(source).values(),
     });
   }
@@ -85,7 +87,7 @@ export function licenseAnnotation(info: Record<string, unknown>): void {
   if (!Object.hasOwn(info, 'license')) return;
   const location = 'info.license';
   const license = record(info.license, location);
-  keys(license, ['name', 'identifier', 'url'], location);
+  keys(license, ['name', 'identifier', 'url'], location, 'license');
   if (typeof license.name !== 'string')
     fail(`${location}.name`, 'expected a string');
   stringFields(license, ['identifier', 'url'], location);
@@ -121,8 +123,9 @@ export function serverAnnotations(value: Record<string, unknown>): void {
   // Only document-level endpoint configuration is accepted. Applications choose
   // and expand it, then append the generated contract path (OAS 3.1.1 §4.8.8).
   // Path/operation overrides remain unsupported rather than losing routing data.
-  for (const [index, input] of value.servers.entries()) {
-    const location = `servers[${index}]`;
+  let index = 0;
+  for (const input of arrayValues(value.servers)) {
+    const location = `servers[${index++}]`;
     const server = record(input, location);
     keys(server, ['url', 'description', 'variables'], location);
     if (typeof server.url !== 'string')

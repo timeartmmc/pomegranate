@@ -91,7 +91,7 @@ void test('generated literals escape bidi controls and line separators while pre
   const operation = present(client.operations[id]);
   const request = operation.build();
   assert.equal(request.operationId, id);
-  assert.deepEqual(request.policy, payload);
+  assert.deepEqual({ ...request.policy }, payload);
   const response = request.parseResponse({
     status: 200,
     headers: { 'Content-Type': 'application/json' },

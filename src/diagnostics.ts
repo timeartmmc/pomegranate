@@ -12,6 +12,39 @@ export function fail(location: string, detail: string): never {
   throw new ContractError(location, detail);
 }
 
+type KeywordContext = 'schema' | 'info' | 'license';
+
+function keywordDetail(allowed: readonly string[]): string {
+  return `unsupported keyword; supported keys: ${allowed.length ? allowed.map((name) => JSON.stringify(name)).join(', ') : '(none)'}`;
+}
+
+class KeywordError extends ContractError {
+  constructor(
+    location: string,
+    readonly allowed: readonly string[],
+    readonly context: KeywordContext | undefined,
+  ) {
+    super(location, keywordDetail(allowed));
+  }
+}
+
+// Lowering changes accepted syntax before canonical validation. Keep the owning
+// grammar's key list structured so a source dialect can present its own spelling
+// without parsing messages or changing which declarations pass validation.
+export function mapKeywordError(
+  error: unknown,
+  mapper: (
+    allowed: readonly string[],
+    context: KeywordContext | undefined,
+  ) => readonly string[],
+): unknown {
+  if (!(error instanceof KeywordError)) return error;
+  const allowed = mapper(error.allowed, error.context);
+  return allowed === error.allowed
+    ? error
+    : new ContractError(error.location, keywordDetail(allowed));
+}
+
 export function ownRecord<T extends object>(value: T): T {
   // Compiler records contain declarations, never inherited defaults. Preserve
   // own descriptors without invoking getters or mutating caller-owned objects.
@@ -38,13 +71,11 @@ export function keys(
   value: Record<string, unknown>,
   allowed: readonly string[],
   location: string,
+  context?: KeywordContext,
 ): void {
   for (const key of Object.keys(value)) {
     if (!allowed.includes(key))
-      fail(
-        `${location}.${key}`,
-        `unsupported keyword; supported keys: ${allowed.length ? allowed.map((name) => JSON.stringify(name)).join(', ') : '(none)'}`,
-      );
+      throw new KeywordError(`${location}.${key}`, allowed, context);
   }
 }
 
@@ -57,8 +88,17 @@ export function text(value: unknown, location: string): string {
 export function stringArray(value: unknown): value is string[] {
   if (!Array.isArray(value)) return false;
   for (let index = 0; index < value.length; index++)
-    if (typeof value[index] !== 'string') return false;
+    if (!Object.hasOwn(value, index) || typeof value[index] !== 'string')
+      return false;
   return true;
+}
+
+// A source array hole is missing data, even if a prototype supplies that index.
+export function* arrayValues(
+  value: readonly unknown[],
+): IterableIterator<unknown> {
+  for (let index = 0; index < value.length; index++)
+    yield Object.hasOwn(value, index) ? value[index] : undefined;
 }
 
 export function wellFormedUnicode(value: string): boolean {

@@ -66,7 +66,7 @@ void test('an unrecognized security type is diagnosed before its siblings withou
     name: 'ContractError',
     location: 'components.securitySchemes.Future.type',
     message:
-      'components.securitySchemes.Future.type: unrecognized security scheme type; recognized spellings are "http", "apiKey", "oauth2" and "openIdConnect"; only HTTP bearer schemes are supported',
+      'components.securitySchemes.Future.type: unrecognized security scheme type; recognized spellings are "http", "apiKey", "oauth2", "openIdConnect" and "mutualTLS"; only HTTP bearer schemes are supported',
   });
   // Correct the spelling only; API-key semantics remain explicitly unsupported.
   scheme.type = 'apiKey';

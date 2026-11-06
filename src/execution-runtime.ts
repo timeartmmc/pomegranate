@@ -453,6 +453,8 @@ export async function executeRequest<
     let returned: ObservedResponse | ValidatedResponse<R>;
     try {
       executorInvoked = true;
+      // Executors are callbacks. Adapters needing a receiver pass a bound
+      // method or arrow function; configuration does not supply `this`.
       returned = await execute(
         request,
         Object.freeze({ signal, context, validateResponse }),

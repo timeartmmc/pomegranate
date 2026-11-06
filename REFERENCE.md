@@ -168,8 +168,10 @@ Generated requests expose flat values such as `policy.auth`, `policy.retry` and
 fields in builders, direct executors and query executors. It describes the
 whole document's vocabulary, rather than narrowing to one operation's values.
 `policy-types.ts` accompanies the runtime even for standalone-only output.
-Policy and security objects are detached and frozen. No policy field enables
-retries or sets a numeric deadline automatically.
+Policy and security objects are detached and frozen. They have null prototypes,
+so absent metadata stays absent when `Object.prototype` changes; use
+`Object.hasOwn` to check presence. No policy field enables retries or sets a
+numeric deadline automatically.
 
 `Executor` and `QueryExecutor` default to this document's `Policy`. A transport
 shared across different generated documents can declare `Executor<SharedPolicy>`
@@ -476,6 +478,16 @@ in 3.0, a default must also match the explicit `type` at the same schema locatio
 formats, enum, or required properties. In 3.1, they are not checked against type
 either. This holds through references, maps, arrays, and union branches. Defaults
 never supply a missing response field or rescue an invalid response value.
+
+Component schemas, HTTP schemas, and policy field declarations share a
+per-document normalization budget of 1,000,000 expanded input nodes, counting
+keys, values, and collections. Shared
+inline values count at every occurrence; opaque annotation payloads such as
+`default` and `example` are excluded from this budget and retain their own
+validation. Unused declarations count before output selection. Move repeated
+inline schemas into components and use local `$ref` declarations to reduce
+expansion. This budget applies to JSON, YAML, and programmatic inputs; the YAML
+parser's whole-document expansion limit remains separate.
 
 Schemas support at most 128 structural levels, including structure behind
 references. Pure aliases add no levels. Each inline schema is limited to 32
@@ -799,6 +811,8 @@ validation is independent of whether a request body was sent.
 
 Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and occupy an
 entire segment. Path values cannot be empty, `.` or `..`.
+Paths that differ only in placeholder names are rejected, even when their HTTP
+methods or surfaces differ. Concrete paths may coexist with templated paths.
 
 Path-item and operation parameter lists accept
 [reusable component references](#reusable-components) as well as
@@ -868,8 +882,10 @@ and its dependencies, excluding browser modules from a mixed-target output.
 
 Prepared uploads have `bodyKind: "multipart"`, the complete validated `body`, and
 a `multipart` field inventory (`name`, `kind`, `multiple`, `required`). Applications
-resolve native references and serialize every field, repeating parts for file
-arrays. Required file arrays cannot be empty; optional empty arrays omit parts.
+resolve native references and serialize present fields, repeating parts for file
+arrays. Builders omit optional fields whose value is `undefined`. Serializers
+skip absent or `undefined` values and optional empty arrays; required file arrays
+cannot be empty.
 
 Multipart objects with `minProperties` or `maxProperties` require each optional
 file array to have an effective `minItems` of at least 1; local reference
@@ -982,7 +998,8 @@ outputs. `runProject` reads the configuration and uses the same output ownership
 checks as the CLI; omit `{ check: true }` to generate files. In check mode,
 `result.clean` reports whether the output agrees with the inputs, and
 `result.changes` describes any drift. Both APIs validate the complete input before
-selecting clients.
+selecting clients. The same [schema-normalization limits](#supported-vocabulary)
+apply to programmatic inputs.
 
 ## Generated output
 

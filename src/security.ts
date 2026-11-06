@@ -4,6 +4,7 @@ import {
   keys,
   record,
   safeKey,
+  stringArray,
   validComponentName,
 } from './diagnostics.js';
 import {
@@ -12,7 +13,10 @@ import {
 } from './component-references.js';
 import type { Security } from './runtime.js';
 
-export function normalizeSecuritySchemes(input: unknown): ReadonlySet<string> {
+export function normalizeSecuritySchemes(
+  input: unknown,
+  dialect: '3.0' | '3.1' = '3.1',
+): ReadonlySet<string> {
   const location = 'components.securitySchemes';
   const schemes = record(input, location);
   const references = new Map<string, string | undefined>();
@@ -43,10 +47,16 @@ export function normalizeSecuritySchemes(input: unknown): ReadonlySet<string> {
       references.set(name, target);
       continue;
     }
+    if (scheme.type === 'mutualTLS' && dialect === '3.0')
+      fail(
+        `${location}.${name}.type`,
+        'mutualTLS is not supported in OpenAPI 3.0; only HTTP bearer schemes are supported',
+      );
     if (
       scheme.type === 'apiKey' ||
       scheme.type === 'oauth2' ||
-      scheme.type === 'openIdConnect'
+      scheme.type === 'openIdConnect' ||
+      scheme.type === 'mutualTLS'
     )
       fail(
         `${location}.${name}`,
@@ -55,7 +65,7 @@ export function normalizeSecuritySchemes(input: unknown): ReadonlySet<string> {
     if (scheme.type !== 'http')
       fail(
         `${location}.${name}.type`,
-        'unrecognized security scheme type; recognized spellings are "http", "apiKey", "oauth2" and "openIdConnect"; only HTTP bearer schemes are supported',
+        `unrecognized security scheme type; recognized spellings are "http", "apiKey", "oauth2", "openIdConnect"${dialect === '3.1' ? ' and "mutualTLS"' : ''}; only HTTP bearer schemes are supported`,
       );
     keys(
       scheme,
@@ -99,7 +109,10 @@ export function normalizeSecurity(
       location,
       'unsupported security alternatives (OR); declare one bearer requirement or an explicit public override',
     );
-  const requirement = record(input[0], `${location}[0]`);
+  const requirement = record(
+    Object.hasOwn(input, 0) ? input[0] : undefined,
+    `${location}[0]`,
+  );
   const names = Object.keys(requirement);
   if (names.length === 0) return { transport: 'none' };
   if (names.length !== 1)
@@ -108,7 +121,7 @@ export function normalizeSecurity(
   if (!bearerSchemes.has(name))
     fail(`${location}[0].${name}`, 'undeclared bearer security scheme');
   const roles = requirement[name];
-  if (!Array.isArray(roles) || roles.some((role) => typeof role !== 'string'))
+  if (!stringArray(roles))
     fail(`${location}[0].${name}`, 'expected an array of role names');
   if (roles.length !== 0)
     fail(
