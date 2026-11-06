@@ -902,13 +902,30 @@ function neverValue(_input: unknown, issues: Issues): Invalid {
 // $ref siblings restrict the referenced value. Their checks run unless the base
 // already reported a wrong type or shape. A constraint failure remains eligible
 // for the remaining sibling rules.
-// Alias chains are resolved by the compiler: `rules` lists each reference's
-// siblings from the terminal outwards, so no wrapper frame grows with depth.
+// Each alias shares its preceding rules without recursive parser calls or
+// materializing every prefix. Reverse one chain per parse so issue order remains
+// terminal-outwards, including duplicate rules and independent patterns.
+export type RuleChain<T> = Readonly<{
+  previous: RuleChain<T> | null;
+  rule: T;
+}>;
+
+function ruleSequence<T>(chain: RuleChain<T>): T[] {
+  const sequence: T[] = [];
+  for (
+    let current: RuleChain<T> | null = chain;
+    current;
+    current = current.previous
+  )
+    sequence.push(current.rule);
+  return sequence.reverse();
+}
+
 export function refineText<T extends string>(
   input: unknown,
   issues: Issues,
   base: Parse<T>,
-  rules: readonly StringRules[],
+  rules: RuleChain<StringRules>,
   maxLength?: number,
 ): T | Invalid {
   // The compiler supplies the tightest bound across the terminal and aliases.
@@ -922,7 +939,7 @@ export function refineText<T extends string>(
   const start = issues.length;
   const value = base(input, issues);
   if (typeof input === 'string' && !fatalSince(issues, start))
-    for (const rule of rules) {
+    for (const rule of ruleSequence(rules)) {
       if (exhausted(issues)) return invalid;
       stringChecks(rule)(input, issues);
     }
@@ -933,12 +950,12 @@ export function refineNumber<T extends number>(
   input: unknown,
   issues: Issues,
   base: Parse<T>,
-  rules: readonly NumberRules[],
+  rules: RuleChain<NumberRules>,
 ): T | Invalid {
   const start = issues.length;
   const value = base(input, issues);
   if (typeof input === 'number' && !fatalSince(issues, start))
-    for (const rule of rules) {
+    for (const rule of ruleSequence(rules)) {
       if (exhausted(issues)) return invalid;
       numberChecks(rule)(input, issues);
     }

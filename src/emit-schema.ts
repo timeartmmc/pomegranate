@@ -10,7 +10,7 @@ import type {
   SchemaFormat,
 } from './model.js';
 import { hasUnicodeProperty, intersectConstraints } from './scalar-rules.js';
-import { schemaType } from './schema-types.js';
+import { parseSymbol, schemaType } from './schema-types.js';
 import { sourceBudget } from './source-budget.js';
 import type { StringFormat } from './runtime.js';
 
@@ -163,6 +163,76 @@ export function schemaRenderer(
       `generated parser ${name}`,
     );
     return name;
+  }
+
+  type Refinement = Readonly<{
+    terminal: string;
+    rules: string | null;
+    maxLength: number | undefined;
+  }>;
+  const refinements = {
+    request: new WeakMap<Schema, Refinement>(),
+    response: new WeakMap<Schema, Refinement>(),
+  };
+  // Share each alias's own rules, rather than copying all earlier siblings into
+  // every parser. Resolve and cache the chain iteratively, including forward links.
+  function scalarRefinement(
+    value: Extract<Schema, { kind: 'ref' }>,
+    direction: Direction,
+    name: string,
+  ): Refinement {
+    const cache = refinements[direction];
+    const pending: { value: Extract<Schema, { kind: 'ref' }>; name: string }[] =
+      [];
+    let current: Schema = value;
+    let terminal = value.name;
+    let known = cache.get(current);
+    while (!known) {
+      if (current.kind !== 'ref') {
+        known = {
+          terminal,
+          rules: null,
+          maxLength: current.kind === 'string' ? current.maxLength : undefined,
+        };
+        cache.set(current, known);
+        break;
+      }
+      pending.push({ value: current, name });
+      terminal = current.name;
+      current = schemas[direction][terminal]!;
+      name = parseSymbol(terminal, direction);
+      known = cache.get(current);
+    }
+    const kind = schemas[direction][known.terminal]!.kind;
+    const keys = kind === 'string' ? stringRules : numberRules;
+    for (const entry of pending.reverse()) {
+      const own =
+        kind === 'string' || kind === 'number' || kind === 'integer'
+          ? rules(entry.value.constraints, keys)
+          : undefined;
+      if (own) {
+        const type = kind === 'string' ? 'StringRules' : 'NumberRules';
+        typeImports.add(type);
+        typeImports.add('RuleChain');
+        known = {
+          terminal: known.terminal,
+          rules: constant(
+            `refinements_${entry.name}`,
+            `{previous: ${known.rules ?? 'null'}, rule: ${own.source}}`,
+            `RuleChain<${type}>`,
+          ),
+          maxLength:
+            entry.value.constraints.maxLength === undefined
+              ? known.maxLength
+              : Math.min(
+                  known.maxLength ?? Infinity,
+                  entry.value.constraints.maxLength,
+                ),
+        };
+      }
+      cache.set(entry.value, known);
+    }
+    return known;
   }
 
   function objectChecks(
@@ -396,6 +466,18 @@ export function schemaRenderer(
         return call(target === 'browser' ? 'browserFile' : 'nativeFile');
       case 'ref': {
         if (Object.keys(value.constraints).length === 0) return;
+        const refinement = scalarRefinement(value, direction, name);
+        if (refinement.rules !== null)
+          return call(
+            schemas[direction][refinement.terminal]!.kind === 'string'
+              ? 'refineText'
+              : 'refineNumber',
+            reference(refinement.terminal, direction).source,
+            refinement.rules,
+            ...(refinement.maxLength === undefined
+              ? []
+              : [literal(refinement.maxLength).source]),
+          );
         // Flatten aliases before delegation. Rebuilding a terminal container's
         // children here would expand shared bounded-reference graphs into trees.
         const { terminal, sets } = aliasChain(value, schemas[direction]);
@@ -426,25 +508,7 @@ export function schemaRenderer(
             `${base}(input, issues, ${constant(`rules_${name}`, limits.source, 'ArrayRules')})`,
           );
         }
-        const isText = terminalSchema.kind === 'string';
-        const keys = isText ? stringRules : numberRules;
-        const limits = sets
-          .map((set) => rules(set, keys))
-          .filter((item) => item !== undefined);
-        // A pure alias component needs no parser binding: every reference
-        // and registry entry resolves to its canonical parser and validator.
-        if (limits.length === 0) return;
-        const rulesType = isText ? 'StringRules' : 'NumberRules';
-        typeImports.add(rulesType);
-        return call(
-          isText ? 'refineText' : 'refineNumber',
-          base,
-          constant(
-            `rules_${name}`,
-            `[${limits.map((limit) => limit.source).join(',')}]`,
-            `readonly ${rulesType}[]`,
-          ),
-        );
+        return;
       }
       case 'map': {
         const values =
