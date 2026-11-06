@@ -12,36 +12,114 @@ const compile = (document: unknown) =>
   compileDocument(document, { clients: ['consumer', 'staff'] });
 
 for (const name of [
-  'Host',
-  'eXpEcT',
-  'Content-Length',
-  'TE',
-  'Connection',
-  'Origin',
-  'User-Agent',
-  'Sec-Fetch-Site',
-  'pRoXy-Custom',
-  'X-HTTP-Method-Override',
+  'accept',
+  'accept-charset',
+  'accept-encoding',
+  'access-control-request-headers',
+  'access-control-request-method',
+  'authorization',
+  'connection',
+  'content-length',
+  'content-type',
+  'cookie',
+  'cookie2',
+  'date',
+  'dnt',
+  'expect',
+  'host',
+  'keep-alive',
+  'origin',
+  'permissions-policy',
+  'proxy-authorization',
+  'referer',
+  'set-cookie',
+  'set-cookie2',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'user-agent',
+  'via',
+  'x-http-method',
+  'x-http-method-override',
+  'x-method-override',
+  'sec-fetch-site',
+  'proxy-custom',
 ]) {
   void test(`rejects the transport-owned request header ${name} before selection`, async () => {
-    const document = fixture();
+    for (const spelling of [name, name.toUpperCase()]) {
+      const document = fixture();
+      preparation(document).parameters.push({
+        name: spelling,
+        in: 'header',
+        required: true,
+        schema: { type: 'string' },
+      });
+      await assert.rejects(
+        compileDocument(document, {
+          clients: ['staff'],
+          transportHeaders: [spelling],
+        }),
+        (error) =>
+          error instanceof ContractError &&
+          /reserved request header/.test(error.message),
+        spelling,
+      );
+    }
+  });
+}
+
+void test('accepts custom header names beside reserved names and prefixes', async () => {
+  const document = fixture();
+  for (const name of [
+    'X-Host',
+    'Proxy',
+    'Sec',
+    'X-Proxy-Custom',
+    'X-Sec-Fetch-Site',
+  ])
     preparation(document).parameters.push({
       name,
       in: 'header',
       required: true,
       schema: { type: 'string' },
     });
-    await assert.rejects(
-      compileDocument(document, {
-        clients: ['staff'],
-        transportHeaders: [name],
-      }),
-      (error) =>
-        error instanceof ContractError &&
-        /reserved request header/.test(error.message),
-    );
-  });
-}
+  await compile(document);
+});
+
+void test('header parameters reject non-string schemas, including optional nullable values', async () => {
+  for (const type of ['number', 'integer', 'boolean'])
+    for (const nullable of [false, true]) {
+      const document = fixture();
+      preparation(document).parameters.push({
+        name: 'X-Value',
+        in: 'header',
+        schema: { type: nullable ? [type, 'null'] : type },
+      });
+      await assert.rejects(compile(document), (error) => {
+        assert.ok(error instanceof ContractError);
+        assert.match(error.location, /parameters\[\d+\]\.schema$/);
+        assert.match(
+          error.message,
+          /header parameters require string schemas|optional nullable string headers/,
+        );
+        return true;
+      });
+    }
+});
+
+void test('redirect and error responses cannot satisfy the required 2xx response', async () => {
+  for (const status of [300, 302, 400]) {
+    const document = fixture();
+    Object.assign(preparation(document), {
+      responses: { [status]: { description: 'No successful response' } },
+    });
+    await assert.rejects(compile(document), {
+      name: 'ContractError',
+      message: /responses: at least one 2xx response is required/,
+    });
+  }
+});
 
 for (const name of ['Set-Cookie', 'sEt-CoOkIe2']) {
   for (const required of [false, true]) {

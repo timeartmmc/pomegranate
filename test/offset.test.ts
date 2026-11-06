@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { QueryClient } from '@tanstack/query-core';
-import { compile, ContractError, runProject } from '../dist/index.js';
+import { compile, runProject } from '../dist/index.js';
 import { invalidOptions } from './assertions.ts';
 import { temporary, fileSnapshot } from './helpers.ts';
 import { offsetFixture, offsetSelection } from './offset-fixture.ts';
@@ -80,103 +80,190 @@ void test('offset sources and published declarations retain numeric parameters, 
 
 void test('offset bindings diagnose incomplete, mixed and ambiguous fields', async () => {
   const binding = offsetSelection.infiniteQueries.consumer.listRecords;
-  for (const bad of [
-    { offset: 'start' },
-    { ...binding, offset: 'missing' },
-    { ...binding, responseOffset: '' },
-    { ...binding, responseLimit: 'start' },
-    { ...binding, total: 'entries' },
-    { ...binding, cursor: 'cursor' },
-    { ...binding, nextCursor: 'next' },
-    { ...binding, typo: 'value' },
-  ])
+  for (const [bad, field, detail] of [
+    [{ offset: 'start' }, '.responseOffset', /expected a nonempty string/],
+    [
+      { ...binding, offset: 'missing' },
+      '.offset',
+      /offset must name a nonnullable integer query parameter/,
+    ],
+    [
+      { ...binding, responseOffset: '' },
+      '.responseOffset',
+      /expected a nonempty string/,
+    ],
+    [
+      { ...binding, responseLimit: 'start' },
+      '',
+      /offset pagination response fields must be distinct/,
+    ],
+    [
+      { ...binding, total: 'entries' },
+      '',
+      /offset pagination response fields must be distinct/,
+    ],
+    [
+      { ...binding, cursor: 'cursor' },
+      '.cursor',
+      /unsupported keyword; supported keys:/,
+    ],
+    [
+      { ...binding, nextCursor: 'next' },
+      '.nextCursor',
+      /unsupported keyword; supported keys:/,
+    ],
+    [
+      { ...binding, typo: 'value' },
+      '.typo',
+      /unsupported keyword; supported keys:/,
+    ],
+  ] as const)
     await assert.rejects(
       invalidOptions(compile, offsetFixture(), {
         ...offsetSelection,
         infiniteQueries: { consumer: { listRecords: bad } },
       }),
-      ContractError,
+      {
+        name: 'ContractError',
+        location: `infiniteQueries.consumer.listRecords${field}`,
+        message: detail,
+      },
     );
 });
 
 void test('offset contracts reject unsupported request and success shapes rather than silently dropping pages', async () => {
-  const mutations: ((document: ReturnType<typeof offsetFixture>) => void)[] = [
-    (d) => {
-      Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
-        in: 'header',
-      });
-    },
-    (d) => {
-      Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
-        schema: { type: 'number' },
-      });
-    },
-    (d) => {
-      Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
-        schema: { type: ['integer', 'null'] },
-      });
-    },
-    (d) => {
-      Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
-        schema: { type: 'integer', minimum: 1 },
-      });
-    },
-    (d) => {
-      Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
-        schema: { type: 'integer', maximum: -1 },
-      });
-    },
-    (d) => {
-      Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
-        schema: { type: 'integer', exclusiveMinimum: 0 },
-      });
-    },
-    (d) => {
-      Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
-        schema: { type: 'integer', enum: [1, 2] },
-      });
-    },
-    (d) => {
-      d.components.schemas.Page.required = ['entries', 'start', 'size', 'next'];
-    },
-    (d) => {
-      d.components.schemas.PartialPage.required = [
-        'entries',
-        'start',
-        'size',
-        'next',
-        'segment',
-      ];
-    },
-    (d) => {
-      Object.assign(d.components.schemas.Page.properties.count, {
-        type: 'number',
-      });
-    },
-    (d) => {
-      Object.assign(d.components.schemas.Page.properties.size, {
-        type: ['integer', 'null'],
-      });
-    },
-    (d) => {
-      Object.assign(d.components.schemas.Page.properties.entries, {
-        type: 'string',
-      });
-      Reflect.deleteProperty(
-        d.components.schemas.Page.properties.entries,
-        'items',
-      );
-    },
-    (d) => {
-      Object.assign(d.paths['/records/{category}'].get.responses, {
-        204: { description: 'Bodyless' },
-      });
-    },
+  const mutations: readonly [
+    (document: ReturnType<typeof offsetFixture>) => void,
+    string,
+    string,
+  ][] = [
+    [
+      (d) => {
+        // Keep the neighboring header valid so this reaches pagination binding
+        // validation rather than failing the header's source schema first.
+        Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
+          in: 'header',
+          schema: { type: 'string' },
+        });
+      },
+      '.offset',
+      'offset must name a nonnullable integer query parameter',
+    ],
+    [
+      (d) => {
+        Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
+          schema: { type: 'number' },
+        });
+      },
+      '.offset',
+      'offset must name a nonnullable integer query parameter',
+    ],
+    [
+      (d) => {
+        Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
+          schema: { type: ['integer', 'null'] },
+        });
+      },
+      '.offset',
+      'offset must name a nonnullable integer query parameter',
+    ],
+    ...[
+      { type: 'integer', minimum: 1 },
+      { type: 'integer', maximum: -1 },
+      { type: 'integer', exclusiveMinimum: 0 },
+      { type: 'integer', enum: [1, 2] },
+    ].map(
+      (
+        schema,
+      ): [
+        (document: ReturnType<typeof offsetFixture>) => void,
+        string,
+        string,
+      ] => [
+        (d) => {
+          Object.assign(d.paths['/records/{category}'].get.parameters[1]!, {
+            schema,
+          });
+        },
+        '.offset',
+        'offset schema must accept the initial value 0',
+      ],
+    ),
+    [
+      (d) => {
+        d.components.schemas.Page.required = [
+          'entries',
+          'start',
+          'size',
+          'next',
+        ];
+      },
+      '.responses.200.content.application/json',
+      'pagination field "count" must be required',
+    ],
+    [
+      (d) => {
+        d.components.schemas.PartialPage.required = [
+          'entries',
+          'start',
+          'size',
+          'next',
+          'segment',
+        ];
+      },
+      '.responses.206.content.application/json',
+      'pagination field "count" must be required',
+    ],
+    [
+      (d) => {
+        Object.assign(d.components.schemas.Page.properties.count, {
+          type: 'number',
+        });
+      },
+      '.responses.200.content.application/json.count',
+      'offset pagination metadata must name required nonnullable integer fields',
+    ],
+    [
+      (d) => {
+        Object.assign(d.components.schemas.Page.properties.size, {
+          type: ['integer', 'null'],
+        });
+      },
+      '.responses.200.content.application/json.size',
+      'offset pagination metadata must name required nonnullable integer fields',
+    ],
+    [
+      (d) => {
+        Object.assign(d.components.schemas.Page.properties.entries, {
+          type: 'string',
+        });
+        Reflect.deleteProperty(
+          d.components.schemas.Page.properties.entries,
+          'items',
+        );
+      },
+      '.responses.200.content.application/json.entries',
+      'items must name an array field',
+    ],
+    [
+      (d) => {
+        Object.assign(d.paths['/records/{category}'].get.responses, {
+          204: { description: 'Bodyless' },
+        });
+      },
+      '.responses.204',
+      'every infinite-query success must have a JSON object body',
+    ],
   ];
-  for (const mutate of mutations) {
+  for (const [mutate, field, detail] of mutations) {
     const document = offsetFixture();
     mutate(document);
-    await assert.rejects(compile(document, offsetSelection), ContractError);
+    const location = `infiniteQueries.consumer.listRecords${field}`;
+    await assert.rejects(compile(document, offsetSelection), {
+      name: 'ContractError',
+      location,
+      message: `${location}: ${detail}`,
+    });
   }
   const document = offsetFixture();
   Object.assign(document.components.schemas, {
@@ -185,14 +272,20 @@ void test('offset contracts reject unsupported request and success shapes rather
   Object.assign(document.paths['/records/{category}'].get.parameters[1]!, {
     schema: { $ref: '#/components/schemas/Origin' },
   });
-  await assert.rejects(compile(document, offsetSelection), /initial value 0/);
+  const location = 'infiniteQueries.consumer.listRecords.offset';
+  const expected = {
+    name: 'ContractError',
+    location,
+    message: `${location}: offset schema must accept the initial value 0`,
+  };
+  await assert.rejects(compile(document, offsetSelection), expected);
   Object.assign(document.components.schemas, {
     Origin: { type: 'integer', minimum: 0 },
   });
   Object.assign(document.paths['/records/{category}'].get.parameters[1]!, {
     schema: { $ref: '#/components/schemas/Origin', exclusiveMinimum: 0 },
   });
-  await assert.rejects(compile(document, offsetSelection), /initial value 0/);
+  await assert.rejects(compile(document, offsetSelection), expected);
 });
 
 void test('required referenced offsets support zero without inserting annotated request defaults', async () => {
