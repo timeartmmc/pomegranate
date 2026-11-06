@@ -37,7 +37,7 @@ export function parseJson(source: string, path: string): unknown {
   // to reject that ambiguity without changing values or recursively walking
   // deeply nested annotation data. Scan strings iteratively: a repeated regexp
   // group can exhaust the engine stack on an otherwise valid long string.
-  const stack: { keys?: Set<string>; keyExpected: boolean }[] = [];
+  const stack: { keys: Set<string> | undefined; keyExpected: boolean }[] = [];
   for (let index = 0; index < body.length; index++) {
     const token = body[index];
     if (token === '"') {
@@ -58,7 +58,7 @@ export function parseJson(source: string, path: string): unknown {
     if (token === '{') {
       stack.push({ keys: new Set(), keyExpected: true });
     } else if (token === '[') {
-      stack.push({ keyExpected: false });
+      stack.push({ keys: undefined, keyExpected: false });
     } else if (token === '}' || token === ']') {
       stack.pop();
     } else {

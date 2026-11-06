@@ -13,6 +13,7 @@ import {
   importGenerated,
 } from './generated-workspace.ts';
 import { fileSnapshot, temporary } from './helpers.ts';
+import { record } from './assertions.ts';
 import {
   openapi30Consumer,
   openapi30Fixture as fixture,
@@ -184,6 +185,19 @@ void test('OpenAPI 3.0 validates version-specific metadata, reference siblings a
     description: 'Ignored in 3.0',
   });
   cases.push([response, 'components.responses.ReplyAlias.description']);
+  for (const [section, name] of [
+    ['parameters', 'SearchAlias'],
+    ['requestBodies', 'BodyAlias'],
+    ['headers', 'ModeAlias'],
+    ['examples', 'SearchAlias'],
+    ['securitySchemes', 'SessionAlias'],
+    ['schemas', 'Alias'],
+  ] as const) {
+    const input = fixture();
+    const component = record(record(input.components[section])[name]);
+    Object.assign(component, { description: 'Ignored in OpenAPI 3.0' });
+    cases.push([input, `components.${section}.${name}.description`]);
+  }
   const deletion = fixture();
   const operation = deletion.paths['/round-trip'].post;
   Object.assign(deletion.paths['/round-trip'], { delete: operation });
@@ -195,6 +209,45 @@ void test('OpenAPI 3.0 validates version-specific metadata, reference siblings a
       assert.equal(error.location, location);
       return true;
     });
+});
+
+void test('OpenAPI 3.0 lowers inline array item nullability and exclusive bounds', async (t) => {
+  const document = (modern: boolean) => ({
+    openapi: modern ? '3.1.2' : '3.0.4',
+    info: { title: 'Synthetic nested dialect assertions', version: '1' },
+    paths: {},
+    components: {
+      schemas: {
+        Values: {
+          type: 'array',
+          items: modern
+            ? { type: ['number', 'null'], exclusiveMinimum: 0 }
+            : {
+                type: 'number',
+                nullable: true,
+                minimum: 0,
+                exclusiveMinimum: true,
+              },
+        },
+      },
+    },
+  });
+  const options = {
+    clients: [],
+    standalone: {
+      values: { schema: '#/components/schemas/Values', usage: 'request' },
+    },
+  } as const;
+  const files = await compile(document(false), options);
+  assert.deepEqual(files, await compile(document(true), options));
+  const root = await generatedTestWorkspace(t, files);
+  const { schema } = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.values.ts',
+  );
+  assert.deepEqual(schema.parse([null, 1]), [null, 1]);
+  for (const value of [[0], [-1], ['1']])
+    assert.equal(schema.safeParse(value).success, false);
 });
 
 void test('dialect lowering preserves application names and opaque annotation payloads', async () => {
@@ -222,7 +275,7 @@ void test('dialect lowering preserves application names and opaque annotation pa
   );
 });
 
-void test('nullable without a local type does not widen composite assertions', async (t) => {
+void test('removing unsupported untyped nullable preserves composite assertions', async (t) => {
   const input = fixture();
   input.components.schemas.Text = {
     nullable: true,
@@ -232,6 +285,12 @@ void test('nullable without a local type does not widen composite assertions', a
   modern.components.schemas.Text = {
     anyOf: [{ type: 'string' }, { type: 'integer' }],
   };
+  await assert.rejects(compile(input, selection), (error) => {
+    assert.ok(error instanceof ContractError);
+    assert.equal(error.location, 'components.schemas.Text.nullable');
+    return true;
+  });
+  delete input.components.schemas.Text.nullable;
   const files = await compile(input, selection);
   assert.deepEqual(files, await compile(modern, selection));
   const root = await generatedTestWorkspace(t, files);

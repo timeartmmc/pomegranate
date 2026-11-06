@@ -479,7 +479,7 @@ function normalizeHeaders(
       seen.add(name);
       const headerLocation = `${location}.${rawName}`;
       const value = record(headers[rawName], headerLocation);
-      const target = componentReference(value, 'header', headerLocation);
+      const target = componentReference(value, 'headers', headerLocation);
       const header =
         target === undefined
           ? normalizeHeader(value, context, examples, headerLocation)
@@ -594,7 +594,7 @@ function parameterList(
   const parameters = Array.from(input, (input, index) => {
     const path = `${location}[${index}]`;
     const value = record(input, path);
-    const target = componentReference(value, 'parameter', path);
+    const target = componentReference(value, 'parameters', path);
     if (target === undefined)
       return normalizeParameter(value, context, examples, path);
     const parameter = components.get(target);
@@ -706,7 +706,7 @@ function requestBody(
   if (method === 'get' || method === 'head')
     fail(bodyLocation, `${method.toUpperCase()} bodies are unsupported`);
   const request = record(value.requestBody, bodyLocation);
-  const target = componentReference(request, 'requestBody', bodyLocation);
+  const target = componentReference(request, 'requestBodies', bodyLocation);
   if (target === undefined)
     return normalizeRequestBody(request, context, examples, bodyLocation);
   const body = components.get(target);
@@ -783,7 +783,7 @@ function operationResponses(
       const status = Number(statusText);
       const responseLocation = `${location}.responses.${statusText}`;
       const value = record(rawResponses[statusText], responseLocation);
-      const target = componentReference(value, 'response', responseLocation);
+      const target = componentReference(value, 'responses', responseLocation);
       const response =
         target === undefined
           ? normalizeResponse(
@@ -1100,23 +1100,23 @@ export function buildDescriptor(
   };
   const parameterComponents = normalizeComponents(
     Object.hasOwn(components, 'parameters') ? components.parameters : {},
-    'parameter',
+    'parameters',
     (value, location) => normalizeParameter(value, context, examples, location),
   );
   const headerComponents = normalizeComponents(
     Object.hasOwn(components, 'headers') ? components.headers : {},
-    'header',
+    'headers',
     (value, location) => normalizeHeader(value, context, examples, location),
   );
   const requestBodyComponents = normalizeComponents(
     Object.hasOwn(components, 'requestBodies') ? components.requestBodies : {},
-    'requestBody',
+    'requestBodies',
     (value, location) =>
       normalizeRequestBody(value, context, examples, location),
   );
   const responseComponents = normalizeComponents(
     Object.hasOwn(components, 'responses') ? components.responses : {},
-    'response',
+    'responses',
     (value, location) =>
       normalizeResponse(value, context, examples, headerComponents, location),
   );

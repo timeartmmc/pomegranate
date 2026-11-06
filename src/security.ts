@@ -1,4 +1,15 @@
-import { annotations, fail, keys, record, safeKey } from './diagnostics.js';
+import {
+  annotations,
+  fail,
+  keys,
+  record,
+  safeKey,
+  validComponentName,
+} from './diagnostics.js';
+import {
+  localComponentReference,
+  validateComponentAliases,
+} from './component-references.js';
 import type { Security } from './runtime.js';
 
 export function normalizeSecuritySchemes(input: unknown): ReadonlySet<string> {
@@ -7,21 +18,19 @@ export function normalizeSecuritySchemes(input: unknown): ReadonlySet<string> {
   const references = new Map<string, string | undefined>();
   for (const [name, rawScheme] of Object.entries(schemes)) {
     safeKey(name, `${location}.${name}`);
-    if (name.length === 0 || /[^A-Za-z0-9._-]/.test(name))
+    if (!validComponentName(name))
       fail(`${location}.${name}`, 'unsupported security scheme component name');
     const scheme = record(rawScheme, `${location}.${name}`);
     if (Object.hasOwn(scheme, '$ref')) {
       keys(scheme, ['$ref', 'summary', 'description'], `${location}.${name}`);
       annotations(scheme, `${location}.${name}`);
-      const prefix = '#/components/securitySchemes/';
-      if (typeof scheme.$ref !== 'string' || !scheme.$ref.startsWith(prefix))
-        fail(
-          `${location}.${name}.$ref`,
-          'only local component security scheme references are supported',
-        );
-      const target = scheme.$ref.slice(prefix.length);
+      const target = localComponentReference(
+        scheme.$ref,
+        'securitySchemes',
+        `${location}.${name}.$ref`,
+      );
       safeKey(target, `${location}.${name}.$ref`);
-      if (target.length === 0 || /[^A-Za-z0-9._-]/.test(target))
+      if (!validComponentName(target))
         fail(
           `${location}.${name}.$ref`,
           'unsupported security scheme component name',
@@ -34,6 +43,20 @@ export function normalizeSecuritySchemes(input: unknown): ReadonlySet<string> {
       references.set(name, target);
       continue;
     }
+    if (
+      scheme.type === 'apiKey' ||
+      scheme.type === 'oauth2' ||
+      scheme.type === 'openIdConnect'
+    )
+      fail(
+        `${location}.${name}`,
+        `security scheme type "${scheme.type}" is not supported in this version; only HTTP bearer schemes are supported`,
+      );
+    if (scheme.type !== 'http')
+      fail(
+        `${location}.${name}.type`,
+        'unrecognized security scheme type; recognized spellings are "http", "apiKey", "oauth2" and "openIdConnect"; only HTTP bearer schemes are supported',
+      );
     keys(
       scheme,
       ['type', 'scheme', 'bearerFormat', 'description'],
@@ -41,7 +64,6 @@ export function normalizeSecuritySchemes(input: unknown): ReadonlySet<string> {
     );
     annotations(scheme, `${location}.${name}`);
     if (
-      scheme.type !== 'http' ||
       typeof scheme.scheme !== 'string' ||
       scheme.scheme.toLowerCase() !== 'bearer'
     )
@@ -57,20 +79,7 @@ export function normalizeSecuritySchemes(input: unknown): ReadonlySet<string> {
     // bearerFormat is documentation, not a token parser or provider selector.
     references.set(name, undefined);
   }
-  const checked = new Set<string>();
-  for (const name of references.keys()) {
-    const pending = new Set<string>();
-    let current: string | undefined = name;
-    // Alias depth is independent of schema nesting. Walk iteratively so a
-    // supported local chain cannot exhaust the JavaScript call stack.
-    while (current !== undefined && !checked.has(current)) {
-      if (pending.has(current))
-        fail(`${location}.${current}.$ref`, 'cyclic security scheme reference');
-      pending.add(current);
-      current = references.get(current);
-    }
-    for (const visited of pending) checked.add(visited);
-  }
+  validateComponentAliases(references, 'securitySchemes');
   return new Set(references.keys());
 }
 

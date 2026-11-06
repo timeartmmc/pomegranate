@@ -1,61 +1,107 @@
-import { annotations, fail, keys, record, safeKey } from './diagnostics.js';
+import {
+  annotations,
+  fail,
+  keys,
+  record,
+  safeKey,
+  validComponentName,
+} from './diagnostics.js';
 
-const kinds = {
-  parameter: { section: 'parameters', label: 'parameter' },
-  response: { section: 'responses', label: 'response' },
-  requestBody: { section: 'requestBodies', label: 'request body' },
-  header: { section: 'headers', label: 'header' },
+const labels = {
+  schemas: 'schema',
+  parameters: 'parameter',
+  responses: 'response',
+  requestBodies: 'request body',
+  headers: 'header',
+  securitySchemes: 'security scheme',
+  examples: 'example',
 } as const;
-type Kind = keyof typeof kinds;
+type Section = keyof typeof labels;
+type ReusableSection = 'parameters' | 'responses' | 'requestBodies' | 'headers';
 
-function componentName(name: string, kind: Kind, location: string): string {
-  if (name.length === 0 || /[^A-Za-z0-9._-]/.test(name))
+function componentName(
+  name: string,
+  section: ReusableSection,
+  location: string,
+): string {
+  if (!validComponentName(name))
     fail(
       location,
-      `component ${kinds[kind].label} names must match [A-Za-z0-9._-]+`,
+      `component ${labels[section]} names must match [A-Za-z0-9._-]+`,
     );
   return safeKey(name, location);
 }
 
+export function localComponentReference(
+  input: unknown,
+  section: Section,
+  location: string,
+): string {
+  const prefix = `#/components/${section}/`;
+  if (typeof input !== 'string' || !input.startsWith(prefix))
+    fail(
+      location,
+      `only local component ${labels[section]} references are supported`,
+    );
+  // Declaration owners retain their own name restrictions and target checks.
+  return input.slice(prefix.length);
+}
+
+export function validateComponentAliases(
+  references: ReadonlyMap<string, string | undefined>,
+  section: 'examples' | 'securitySchemes',
+): void {
+  const checked = new Set<string>();
+  // Targets were checked at their declarations. These are pure alias chains;
+  // schema references retain separate constraint and directional traversal.
+  for (const name of references.keys()) {
+    const pending = new Set<string>();
+    let current: string | undefined = name;
+    while (current !== undefined && !checked.has(current)) {
+      if (pending.has(current))
+        fail(
+          `components.${section}.${current}.$ref`,
+          `cyclic ${labels[section]} reference`,
+        );
+      pending.add(current);
+      current = references.get(current);
+    }
+    for (const visited of pending) checked.add(visited);
+  }
+}
+
 export function componentReference(
   value: Record<string, unknown>,
-  kind: Kind,
+  section: ReusableSection,
   location: string,
 ): string | undefined {
   if (!Object.hasOwn(value, '$ref')) return undefined;
-  const { section, label } = kinds[kind];
   // Reference annotations never override contract fields. Terminal declarations
   // still receive their own validation even when an alias supplies documentation.
   keys(value, ['$ref', 'summary', 'description'], location);
   annotations(value, location);
-  const prefix = `#/components/${section}/`;
-  if (typeof value.$ref !== 'string' || !value.$ref.startsWith(prefix))
-    fail(
-      `${location}.$ref`,
-      `only local component ${label} references are supported`,
-    );
   return componentName(
-    value.$ref.slice(prefix.length),
-    kind,
+    localComponentReference(value.$ref, section, `${location}.$ref`),
+    section,
     `${location}.$ref`,
   );
 }
 
 export function normalizeComponents<T>(
   input: unknown,
-  kind: Kind,
+  section: ReusableSection,
   normalize: (value: Record<string, unknown>, location: string) => T,
 ): ReadonlyMap<string, T> {
-  const { section, label } = kinds[kind];
+  const label = labels[section];
   const location = `components.${section}`;
   const components = record(input, location);
   const values = new Map<string, T>();
   const references = new Map<string, string>();
   for (const name of Object.keys(components).sort()) {
     const path = `${location}.${name}`;
-    componentName(name, kind, path);
+    componentName(name, section, path);
     const value = record(components[name], path);
-    const target = componentReference(value, kind, path);
+    const target = componentReference(value, section, path);
     if (target === undefined) {
       // Normalize unused terminals too. Each caller owns its direction-specific
       // validation; references cannot hide an unsupported declaration.

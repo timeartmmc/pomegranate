@@ -249,7 +249,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
         },
       });
     },
-    /unsupported keyword|unsupported security scheme/,
+    /security scheme type "apiKey" is not supported in this version/,
   ],
   [
     'missing security scheme reference',

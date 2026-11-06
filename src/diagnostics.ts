@@ -12,6 +12,14 @@ export function fail(location: string, detail: string): never {
   throw new ContractError(location, detail);
 }
 
+export function ownRecord<T extends object>(value: T): T {
+  // Compiler records contain declarations, never inherited defaults. Preserve
+  // own descriptors without invoking getters or mutating caller-owned objects.
+  return Object.getPrototypeOf(value) === null
+    ? value
+    : (Object.create(null, Object.getOwnPropertyDescriptors(value)) as T);
+}
+
 export function record(
   value: unknown,
   location: string,
@@ -23,7 +31,7 @@ export function record(
   if (prototype !== Object.prototype && prototype !== null) {
     fail(location, 'expected a plain object');
   }
-  return value as Record<string, unknown>;
+  return ownRecord(value as Record<string, unknown>);
 }
 
 export function keys(
@@ -33,7 +41,10 @@ export function keys(
 ): void {
   for (const key of Object.keys(value)) {
     if (!allowed.includes(key))
-      fail(`${location}.${key}`, 'unsupported keyword');
+      fail(
+        `${location}.${key}`,
+        `unsupported keyword; supported keys: ${allowed.length ? allowed.map((name) => JSON.stringify(name)).join(', ') : '(none)'}`,
+      );
   }
 }
 
@@ -63,6 +74,10 @@ export function validHeaderName(name: string): boolean {
   return name.length > 0 && !/[^!#$%&'*+.^_`|~0-9A-Za-z-]/.test(name);
 }
 
+export function validComponentName(name: string): boolean {
+  return name.length > 0 && !/[^A-Za-z0-9._-]/.test(name);
+}
+
 export function safeKey(value: string, location: string): string {
   if (['__proto__', 'prototype', 'constructor'].includes(value)) {
     fail(location, `unsupported object key ${JSON.stringify(value)}`);
@@ -70,12 +85,26 @@ export function safeKey(value: string, location: string): string {
   return value;
 }
 
+const objectPrototypeFields = new Set([
+  '__defineGetter__',
+  '__defineSetter__',
+  '__lookupGetter__',
+  '__lookupSetter__',
+  'hasOwnProperty',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+  'toLocaleString',
+  'toString',
+  'valueOf',
+]);
+
 export function contractField(value: string, location: string): string {
   safeKey(value, location);
   // Fixed parsers read inherited properties, and TypeScript even rejects {} as
   // {toString?: string}. Supporting these fields needs an explicit own-property
   // type policy; weakening generated inputs would hide the contract instead.
-  if (Object.hasOwn(Object.prototype, value))
+  // This policy must not change when another library adds a prototype property.
+  if (objectPrototypeFields.has(value))
     fail(
       location,
       'Object.prototype property names are unsupported as contract fields',

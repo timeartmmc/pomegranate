@@ -5,7 +5,12 @@ import {
   record,
   stringArray,
   stringFields,
+  validComponentName,
 } from './diagnostics.js';
+import {
+  localComponentReference,
+  validateComponentAliases,
+} from './component-references.js';
 
 export const exampleKeys = ['example', 'examples'];
 export const schemaAnnotationKeys = [
@@ -21,8 +26,8 @@ export const schemaAnnotationKeys = [
 export function jsonAnnotation(input: unknown, location: string): void {
   const pending = new Set<object>();
   const checked = new WeakSet<object>();
-  const stack: { source?: object; values: Iterator<unknown> }[] = [
-    { values: [input].values() },
+  const stack: { source: object | undefined; values: Iterator<unknown> }[] = [
+    { source: undefined, values: [input].values() },
   ];
   // Annotation payloads are opaque JSON, not schemas or generated expressions.
   // Iteration and identity tracking handle deep values and shared subtrees
@@ -46,13 +51,18 @@ export function jsonAnnotation(input: unknown, location: string): void {
       (typeof value === 'number' && Number.isFinite(value))
     )
       continue;
-    const source = Array.isArray(value) ? value : record(value, location);
-    if (pending.has(source))
+    if (value === null || typeof value !== 'object')
+      fail(location, 'expected an object');
+    // record() supplies an own-only view. Track the caller's identity so cycles
+    // and shared annotation subtrees still refer to the same original object.
+    // Check it before copying descriptors: wide shared records are read once.
+    if (pending.has(value))
       fail(location, 'annotation must be JSON without cycles');
-    if (checked.has(source)) continue;
-    pending.add(source);
+    if (checked.has(value)) continue;
+    const source = Array.isArray(value) ? value : record(value, location);
+    pending.add(value);
     stack.push({
-      source,
+      source: value,
       values: Array.isArray(source)
         ? source.values()
         : Object.values(source).values(),
@@ -165,13 +175,11 @@ function exampleObject(
   annotations(value, location);
   if (Object.hasOwn(value, '$ref')) {
     keys(value, ['$ref', 'summary', 'description'], location);
-    const prefix = '#/components/examples/';
-    if (typeof value.$ref !== 'string' || !value.$ref.startsWith(prefix))
-      fail(
-        `${location}.$ref`,
-        'only local component example references are supported',
-      );
-    const name = value.$ref.slice(prefix.length);
+    const name = localComponentReference(
+      value.$ref,
+      'examples',
+      `${location}.$ref`,
+    );
     if (!names.has(name))
       fail(`${location}.$ref`, `unresolved example reference ${name}`);
     return name;
@@ -196,7 +204,7 @@ export function exampleComponents(input: unknown): ReadonlySet<string> {
   const names = new Set(Object.keys(examples).sort());
   const references = new Map<string, string | undefined>();
   for (const name of names) {
-    if (name.length === 0 || /[^A-Za-z0-9._-]/.test(name))
+    if (!validComponentName(name))
       fail(
         `${location}.${name}`,
         'component example names must match [A-Za-z0-9._-]+',
@@ -206,18 +214,7 @@ export function exampleComponents(input: unknown): ReadonlySet<string> {
       exampleObject(examples[name], `${location}.${name}`, names),
     );
   }
-  const checked = new Set<string>();
-  for (const name of names) {
-    const pending = new Set<string>();
-    let current: string | undefined = name;
-    while (current !== undefined && !checked.has(current)) {
-      if (pending.has(current))
-        fail(`${location}.${current}.$ref`, 'cyclic example reference');
-      pending.add(current);
-      current = references.get(current);
-    }
-    for (const visited of pending) checked.add(visited);
-  }
+  validateComponentAliases(references, 'examples');
   return names;
 }
 

@@ -17,7 +17,7 @@ import {
   importGenerated,
 } from './generated-workspace.ts';
 import { fileSnapshot, temporary } from './helpers.ts';
-import type { RuntimeClient } from './runtime-types.ts';
+import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 
 const selection = { ...extensionSelection, ignoreExtensions: ['x-note'] };
 const targets = extensionKeywordTargets(extensionFixture()).map(
@@ -167,6 +167,46 @@ void test('one shared object can remain payload data while its schema occurrence
     compile(invalid, selection),
     /components.examples.x-note.value.*expected an object/,
   );
+});
+
+void test('shared schema and properties-map objects retain context-specific extension handling, including YAML aliases', async (t) => {
+  const shared = { 'x-note': { type: 'string' } };
+  const document = {
+    openapi: '3.1.2',
+    info: { title: 'Synthetic shared extension contexts', version: '1' },
+    paths: {},
+    components: {
+      schemas: {
+        Annotated: shared,
+        Payload: { type: 'object', properties: shared },
+      },
+    },
+  };
+  for (const input of [
+    document,
+    parseYaml(stringify(document), 'shared-contexts.yaml'),
+  ]) {
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(input, {
+        clients: [],
+        ignoreExtensions: ['x-note'],
+        standalone: {
+          payload: {
+            schema: '#/components/schemas/Payload',
+            usage: 'request',
+          },
+        },
+      }),
+    );
+    const { schema } = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.payload.ts',
+    );
+    assert.deepEqual(schema.parse({ 'x-note': 'text' }), { 'x-note': 'text' });
+    assert.equal(schema.safeParse({ 'x-note': 1 }).success, false);
+    assert.deepEqual(schema.parse({}), {});
+  }
 });
 
 void test('allowlisting cannot remove POM policy declarations or custom field values', async () => {

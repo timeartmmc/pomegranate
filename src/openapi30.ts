@@ -35,6 +35,8 @@ function lowerSchema(
   value: Record<string, unknown>,
   location: string,
 ): Record<string, unknown> {
+  if (Object.hasOwn(value, 'allOf'))
+    fail(`${location}.allOf`, 'allOf is not supported in this version');
   for (const key of ['const', '$comment', 'examples', 'contentMediaType'])
     if (Object.hasOwn(value, key))
       fail(`${location}.${key}`, 'unsupported OpenAPI 3.0 schema keyword');
@@ -60,6 +62,13 @@ function lowerSchema(
     // OAS 3.0.4 §4.7.24.2: nullable modifies only an explicitly declared type.
     // Enum and composition assertions still apply; the existing nullable-type
     // normalizer implements their intersection, including enums excluding null.
+    if (value.nullable && typeof value.type !== 'string')
+      fail(
+        `${location}.nullable`,
+        Object.hasOwn(value, 'anyOf') || Object.hasOwn(value, 'oneOf')
+          ? 'nullable: true requires an explicit type in the same schema; for a composition, remove nullable and wrap the supported anyOf or discriminated oneOf in an outer anyOf with the null-only branch { type: "string", nullable: true, enum: [null] }'
+          : 'nullable: true requires an explicit type in the same schema',
+      );
     if (value.nullable && typeof value.type === 'string')
       result.type = [value.type, 'null'];
     delete result.nullable;

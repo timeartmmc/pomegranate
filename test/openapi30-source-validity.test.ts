@@ -19,6 +19,51 @@ function document(version: string, schemas: Record<string, Schema>) {
   };
 }
 
+void test('OpenAPI 3.0 rejects active nullable without a same-object type before projection or selection', async () => {
+  for (const version of ['3.0.0', '3.0.4'])
+    for (const schema of [
+      { nullable: true },
+      { nullable: true, anyOf: [{ type: 'string' }, { type: 'integer' }] },
+    ] satisfies Schema[])
+      for (const [schemas, location] of [
+        [{ Root: schema }, 'components.schemas.Root.nullable'],
+        [
+          {
+            Root: { type: 'string' },
+            Unused: {
+              type: 'object',
+              properties: { value: { ...schema, readOnly: true } },
+            },
+          },
+          'components.schemas.Unused.properties.value.nullable',
+        ],
+      ] satisfies [Record<string, Schema>, string][]) {
+        const input = document(version, schemas);
+        const before = structuredClone(input);
+        await assert.rejects(compile(input, selection), (error) => {
+          assert.ok(error instanceof ContractError);
+          assert.equal(error.location, location);
+          assert.match(error.message, /nullable.*explicit type.*same schema/);
+          return true;
+        });
+        assert.deepEqual(input, before);
+      }
+});
+
+void test('OpenAPI 3.0 inactive nullable remains an annotation without an explicit type', async () => {
+  for (const schema of [
+    {},
+    { anyOf: [{ type: 'string' }, { type: 'integer' }] },
+  ] satisfies Schema[])
+    assert.deepEqual(
+      await compile(
+        document('3.0.4', { Root: { ...schema, nullable: false } }),
+        selection,
+      ),
+      await compile(document('3.0.4', { Root: schema }), selection),
+    );
+});
+
 void test('OpenAPI 3.0 rejects empty required arrays in selected, unused and shared source schemas', async () => {
   for (const version of ['3.0.0', '3.0.4']) {
     const empty: Schema = {

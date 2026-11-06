@@ -289,7 +289,9 @@ Schema syntax follows the declared OpenAPI version. OpenAPI 3.0 schemas use
 `nullable: true` alongside a single explicit `type`, and boolean
 `exclusiveMinimum` / `exclusiveMaximum` alongside `minimum` / `maximum`.
 A nullable enum accepts null only when its enum lists null. Without a same-object
-`type`, `nullable` has no effect. Use a single-value `enum` for 3.0 literals.
+`type`, `nullable: true` has no effect under OpenAPI; POM diagnoses that active
+flag instead of silently discarding it. `nullable: false` may be omitted.
+Use a single-value `enum` for 3.0 literals.
 POM accepts and ignores `false` exclusive flags, including without a bound.
 As a stricter POM policy, `true` requires a same-object `type: number` or
 `type: integer` and its matching finite `minimum` or `maximum`. Incomplete or
@@ -637,9 +639,9 @@ Header names must be ASCII HTTP tokens. Declarations reserve `__proto__`,
 valid Content-Type matching a declared media type for that status; quoted
 parameters are supported.
 
-Fixed schema property and parameter names that belong to `Object.prototype`,
-such as `toString`, `valueOf`, or `hasOwnProperty`, are unsupported. These names are legal
-in OpenAPI; POM rejects them explicitly to preserve request type inference and
+Built-in `Object.prototype` names, such as `toString`, `valueOf`, or
+`hasOwnProperty`, are unsupported as fixed schema property and parameter names.
+These names are legal in OpenAPI; POM rejects them explicitly to preserve request type inference and
 runtime omission behavior. Dynamic maps preserve their own JSON keys, including
 `__proto__` and `constructor`.
 

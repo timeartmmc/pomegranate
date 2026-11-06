@@ -1,4 +1,4 @@
-import { fail } from './diagnostics.js';
+import { fail, ownRecord } from './diagnostics.js';
 
 type Node =
   | 'document'
@@ -88,23 +88,51 @@ const children: Readonly<Record<Node, Fields>> = {
 };
 
 type Shape = Readonly<{
-  list?: true;
-  entries?: Node;
-  fields?: Fields;
+  list: boolean;
+  entries: Node | undefined;
+  fields: Fields | undefined;
   keywords: boolean;
 }>;
 
 function shape(context: Context): Shape {
   if (context.startsWith('list:'))
-    return { list: true, entries: context.slice(5) as Node, keywords: false };
+    return {
+      list: true,
+      entries: context.slice(5) as Node,
+      fields: undefined,
+      keywords: false,
+    };
   if (context.startsWith('map:'))
-    return { entries: context.slice(4) as Node, keywords: false };
+    return {
+      list: false,
+      entries: context.slice(4) as Node,
+      fields: undefined,
+      keywords: false,
+    };
   // These containers use path/status/media-type keys, so x- names are metadata
   // rather than application-defined identifiers such as header/property names.
-  if (context === 'paths') return { entries: 'pathItem', keywords: true };
-  if (context === 'responses') return { entries: 'response', keywords: true };
-  if (context === 'content') return { entries: 'media', keywords: true };
-  return { fields: children[context as Node], keywords: true };
+  if (context === 'paths')
+    return {
+      list: false,
+      entries: 'pathItem',
+      fields: undefined,
+      keywords: true,
+    };
+  if (context === 'responses')
+    return {
+      list: false,
+      entries: 'response',
+      fields: undefined,
+      keywords: true,
+    };
+  if (context === 'content')
+    return { list: false, entries: 'media', fields: undefined, keywords: true };
+  return {
+    list: false,
+    entries: undefined,
+    fields: children[context as Node],
+    keywords: true,
+  };
 }
 
 export function ignoreExtensions(
@@ -178,7 +206,7 @@ function walkDocument(
     const source =
       transform && frame.shape.fields
         ? transform(
-            frame.source as Record<string, unknown>,
+            ownRecord(frame.source as Record<string, unknown>),
             frame.context,
             frame.location,
           )

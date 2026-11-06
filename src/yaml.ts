@@ -58,11 +58,18 @@ export function parseYaml(source: string, path: string): unknown {
   const values = new WeakMap<ParsedNode, JsonValue>();
   const sizes = new WeakMap<ParsedNode, { size: number; depth: number }>();
   const stack: {
-    node?: CollectionNode;
+    node: CollectionNode | undefined;
     values: Iterator<ParsedNode | null>;
     size: number;
     depth: number;
-  }[] = [{ values: [document.contents].values(), size: 0, depth: 0 }];
+  }[] = [
+    {
+      node: undefined,
+      values: [document.contents].values(),
+      size: 0,
+      depth: 0,
+    },
+  ];
   const valueOf = (node: ParsedNode | null): JsonValue =>
     node === null ? null : values.get(node)!;
   const account = (size: number, depth: number, offset: number): void => {
