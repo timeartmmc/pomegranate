@@ -4,6 +4,7 @@ import {
   call,
   data,
   identifier,
+  jsonSource,
   literal,
   object,
   propertyKey,
@@ -11,6 +12,7 @@ import {
   source,
 } from './code.js';
 import type { Expression } from './code.js';
+import { hasConstraints } from './schema-node.js';
 import { fail } from './diagnostics.js';
 import { parserIdentities, schemaRenderer } from './emit-schema.js';
 import { renderTypes } from './emit-types.js';
@@ -78,14 +80,14 @@ function renderComponents(
   );
   const declarations = selections.flatMap(({ direction, names }) =>
     names.map((name) => {
-      const schema = descriptor.schemas[direction][name]!;
+      const schema = descriptor.schemas[direction].get(name)!;
       const parse = parseSymbol(name, direction);
       const type = typeSymbol(name, direction);
       const location = `components.schemas.${name}`;
       if (
         exportValidators ||
         schema.kind !== 'ref' ||
-        Object.keys(schema.constraints).length > 0
+        hasConstraints(schema.constraints)
       )
         renderer.push(
           `type ${type} = ${componentType(name, direction, target)};`,
@@ -259,26 +261,24 @@ function responseSpecs(
         entries.push([
           'content',
           object(
-            Object.entries(response.body.content).map(
-              ([mediaType, representation]) => {
-                const parse = renderer.part(
-                  representation.schema,
-                  'response',
-                  `${operation.id}.responses.${response.status}.content.${mediaType}`,
-                  prefix,
-                );
-                contentTypes.push(
-                  `readonly ${propertyKey(mediaType)}: {readonly bodyKind: '${representation.kind}'; readonly schema: typeof ${parse.source};};`,
-                );
-                return [
-                  mediaType,
-                  object([
-                    ['bodyKind', literal(representation.kind)],
-                    ['schema', parse],
-                  ]),
-                ];
-              },
-            ),
+            [...response.body.content].map(([mediaType, representation]) => {
+              const parse = renderer.part(
+                representation.schema,
+                'response',
+                `${operation.id}.responses.${response.status}.content.${mediaType}`,
+                prefix,
+              );
+              contentTypes.push(
+                `readonly ${propertyKey(mediaType)}: {readonly bodyKind: '${representation.kind}'; readonly schema: typeof ${parse.source};};`,
+              );
+              return [
+                mediaType,
+                object([
+                  ['bodyKind', literal(representation.kind)],
+                  ['schema', parse],
+                ]),
+              ];
+            }),
           ),
         ]);
         schemaType = `readonly content: {${contentTypes.join('')}};`;
@@ -316,7 +316,7 @@ function operationExpression(
     ['method', literal(operation.method)],
     ['path', literal(operation.path)],
     ['security', data(operation.security)],
-    ['policy', data(operation.policy)],
+    ['policy', data(Object.fromEntries(operation.policy))],
     ['bodyKind', literal(operation.body.kind)],
     [
       'parameters',
@@ -392,7 +392,7 @@ function renderClient(
           name,
           identifier(
             shared.includes(identity(name))
-              ? `shared[${JSON.stringify(identity(name))}]`
+              ? `shared[${jsonSource(identity(name))}]`
               : create(identity(name)),
           ),
         ]),
@@ -438,7 +438,7 @@ function renderClient(
     },
     (name, direction) => {
       usesSchemaTypes = true;
-      return `schemas.${direction === 'request' ? 'Request' : 'Response'}Types[${JSON.stringify(name)}]`;
+      return `schemas.${direction === 'request' ? 'Request' : 'Response'}Types[${jsonSource(name)}]`;
     },
     client.target,
   );
@@ -527,8 +527,8 @@ function renderExecution(client: Client): string {
   const entries = client.operations.map((operation) => {
     const member = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(operation.id)
       ? `.${operation.id}`
-      : `[${JSON.stringify(operation.id)}]`;
-    const entry = `${propertyKey(operation.id)}: defineCall({ operation: operations${member}, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`;
+      : `[${jsonSource(operation.id)}]`;
+    const entry = `${propertyKey(operation.id)}: defineCall({ operation: operations${member}, ...runtime, client: ${jsonSource(client.name)}, operationId: ${jsonSource(operation.id)} })`;
     account(entry, `paths.${operation.path}.${operation.method.toLowerCase()}`);
     return entry;
   });
@@ -566,7 +566,7 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
   const entries = client.queries.map((operation) =>
     entry(
       operation,
-      `${propertyKey(operation.id)}: defineQuery({ operation: ${operationScope(operation.id)}, bodyCache: ${operation.responses.filter((response) => response.status >= 200 && response.status < 300).every((response) => response.body.kind !== 'none')}, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
+      `${propertyKey(operation.id)}: defineQuery({ operation: ${operationScope(operation.id)}, bodyCache: ${operation.responses.filter((response) => response.status >= 200 && response.status < 300).every((response) => response.body.kind !== 'none')}, ...runtime, client: ${jsonSource(client.name)}, operationId: ${jsonSource(operation.id)} })`,
     ),
   );
   // Removing cursors and transport headers can remove every schema reference
@@ -582,14 +582,14 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     },
     (name, direction) => {
       usesSchemaTypes = true;
-      return `schemas.${direction === 'request' ? 'Request' : 'Response'}Types[${JSON.stringify(name)}]`;
+      return `schemas.${direction === 'request' ? 'Request' : 'Response'}Types[${jsonSource(name)}]`;
     },
     client.target,
   );
   const infiniteTypes: string[] = [];
   const infiniteEntries = client.infiniteQueries.map(
     ({ operation, binding }) => {
-      const offset = 'offset' in binding;
+      const offset = binding.kind === 'offset';
       const name = `infinite_${operationScope(operation.id)}_input`;
       const parameters = operation.parameters.filter(
         (parameter) =>
@@ -605,16 +605,16 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
       const input = parameterOptions(operation, parameters, renderer, name);
       const op = operationScope(operation.id);
       infiniteTypes.push(
-        `${propertyKey(operation.id)}: InfiniteQueryFactoryFor<typeof ${op}, ${input.type}, ${JSON.stringify(binding.items)}${offset ? ', number' : ''}>;`,
+        `${propertyKey(operation.id)}: InfiniteQueryFactoryFor<typeof ${op}, ${input.type}, ${jsonSource(binding.items)}${offset ? ', number' : ''}>;`,
       );
       if (offset)
         return entry(
           operation,
-          `${propertyKey(operation.id)}: defineOffsetQuery({ operation: ${op}, input: ${name}, offset: ${JSON.stringify(binding.offset)}, fields: ${JSON.stringify({ offset: binding.responseOffset, limit: binding.responseLimit, total: binding.total, items: binding.items })}, page: page => ({ offset: page[${JSON.stringify(binding.responseOffset)}], limit: page[${JSON.stringify(binding.responseLimit)}], total: page[${JSON.stringify(binding.total)}], items: page[${JSON.stringify(binding.items)}] }), bodyCache: true, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
+          `${propertyKey(operation.id)}: defineOffsetQuery({ operation: ${op}, input: ${name}, offset: ${jsonSource(binding.offset)}, fields: ${jsonSource({ offset: binding.responseOffset, limit: binding.responseLimit, total: binding.total, items: binding.items })}, page: page => ({ offset: page[${jsonSource(binding.responseOffset)}], limit: page[${jsonSource(binding.responseLimit)}], total: page[${jsonSource(binding.total)}], items: page[${jsonSource(binding.items)}] }), bodyCache: true, ...runtime, client: ${jsonSource(client.name)}, operationId: ${jsonSource(operation.id)} })`,
         );
       return entry(
         operation,
-        `${propertyKey(operation.id)}: defineInfiniteQuery({ operation: ${op}, input: ${name}, cursor: ${JSON.stringify(binding.cursor)}, nextCursor: page => page[${JSON.stringify(binding.nextCursor)}], items: page => page[${JSON.stringify(binding.items)}], bodyCache: true, ...runtime, client: ${JSON.stringify(client.name)}, operationId: ${JSON.stringify(operation.id)} })`,
+        `${propertyKey(operation.id)}: defineInfiniteQuery({ operation: ${op}, input: ${name}, cursor: ${jsonSource(binding.cursor)}, nextCursor: page => page[${jsonSource(binding.nextCursor)}], items: page => page[${jsonSource(binding.items)}], bodyCache: true, ...runtime, client: ${jsonSource(client.name)}, operationId: ${jsonSource(operation.id)} })`,
       );
     },
   );
@@ -626,9 +626,9 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     types.push('QueryFactories');
   }
   if (infinite) {
-    if (client.infiniteQueries.some(({ binding }) => 'cursor' in binding))
+    if (client.infiniteQueries.some(({ binding }) => binding.kind === 'cursor'))
       factories.push('defineInfiniteQuery');
-    if (client.infiniteQueries.some(({ binding }) => 'offset' in binding))
+    if (client.infiniteQueries.some(({ binding }) => binding.kind === 'offset'))
       factories.push('defineOffsetQuery');
     types.push('InfiniteQueryFactoryFor');
   }
@@ -729,20 +729,20 @@ export async function render(
   );
   // Requests and executor callbacks share the declaration. A build-only
   // generic would lose the application's enum labels at the executor boundary.
-  const policyFields = Object.entries(descriptor.policy.fields).map(
+  const policyFields = [...descriptor.policy.fields].map(
     ([name, schema]) =>
       `readonly ${propertyKey(name)}${descriptor.policy.required.includes(name) ? '' : '?'}: ${schemaType(schema, 'request')};`,
   );
   const policyType = policyFields.length
     ? `Readonly<{${policyFields.join('\n')}}>`
     : 'Readonly<Record<string, never>>';
-  const outputs: Record<string, string> = {};
+  const outputs = new Map<string, string>();
   const account = sourceBudget();
   const addOutput = (name: string, source: string): void => {
     // Admit each complete module as it finishes, before rendering the next.
     // Renderer declaration budgets separately guard construction within one.
     account(source, `generated ${name}`);
-    outputs[name] = source;
+    outputs.set(name, source);
   };
   addOutput('runtime.ts', `${banner}${helper}`);
   addOutput(
@@ -802,7 +802,7 @@ export async function render(
       `standalone.${moduleName(selection.name)}.ts`,
       renderStandalone(descriptor, selection, componentType),
     );
-  const entries = Object.entries(outputs);
+  const entries = [...outputs];
   const rendered: [string, string][] = [];
   for (const [name, source] of entries) {
     // Keep generated bytes independent of cwd, consumer formatter settings and

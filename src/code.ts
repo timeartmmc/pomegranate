@@ -4,6 +4,16 @@ import type { Scalar } from './model.js';
 export type Expression = Readonly<{ source: string; depth: number }>;
 const maximumExpressionNesting = 128;
 
+export function jsonSource(value: unknown): string {
+  // Preserve JSON data while making bidi controls and line separators explicit
+  // in generated string values, property keys, and literal types.
+  return JSON.stringify(value).replace(
+    /[\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu,
+    (character) =>
+      `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
 function node(
   source: string,
   children: readonly Expression[] = [],
@@ -16,8 +26,7 @@ function node(
 }
 
 export const identifier = (name: string): Expression => node(name);
-export const literal = (value: Scalar): Expression =>
-  node(JSON.stringify(value));
+export const literal = (value: Scalar): Expression => node(jsonSource(value));
 export const array = (values: readonly Expression[]): Expression =>
   node(`[${values.map((value) => value.source).join(',')}]`, values);
 export const call = (
@@ -29,7 +38,7 @@ export const call = (
     [callee, ...args],
   );
 export function propertyKey(name: string | number): string {
-  const quoted = JSON.stringify(name);
+  const quoted = jsonSource(name);
   // __proto__ is data, not an object-literal prototype setter. Negative
   // numbers also need computed syntax; other keys can use ordinary properties.
   if (name === '__proto__' || (typeof name === 'number' && name < 0))

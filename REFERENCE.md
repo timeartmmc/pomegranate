@@ -481,6 +481,9 @@ Schemas support at most 128 structural levels, including structure behind
 references. Pure aliases add no levels. Each inline schema is limited to 32
 levels; use component references for deeper structures. Named types and typed
 aggregate validators keep inference from expanding through every level.
+These limits count the normalized schema, including nullable wrappers. A nullable
+array or object uses one level for nullability and one for the container before
+counting its children.
 Generated expressions have a separate 128-level complexity limit. Excess
 nesting receives a location-specific diagnostic before formatting or writing.
 Default annotations do not add schema or expression levels; YAML document
@@ -713,6 +716,9 @@ A fixed object can share one schema across requests and responses:
 The request requires `secret` and `label`; it rejects a supplied `id`, including
 explicit `undefined`, non-enumerable properties and inherited properties before
 `Object.prototype`. Rejection checks presence without reading the excluded value.
+Request types declare excluded read-only fields as optional `never` properties
+so assignments and spreads cannot supply them. Enable TypeScript's
+`exactOptionalPropertyTypes` to reject explicit `undefined` in those types too.
 The response requires `id` and `label`; it strips `secret` without validating or
 reading its value. Generated types and standalone validators use the same
 projection, including nested objects, arrays and typed maps. An object with all

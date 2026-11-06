@@ -186,7 +186,7 @@ const invalid: [string, Schema, RegExp][] = [
   [
     'boolean type mismatch',
     { type: 'boolean', format: 'int32' },
-    /format.*unsupported keyword/,
+    /format is not supported on boolean schemas in this version/,
   ],
   [
     'reference format sibling',
@@ -211,7 +211,10 @@ for (const [name, schema, message] of invalid)
 void test('undeclared numeric formats diagnose', async () => {
   for (const format of ['custom', 'unknown']) {
     const input = document({ Value: { type: 'number', format } });
-    await assert.rejects(compile(input, roots), /format.*unsupported format/);
+    await assert.rejects(
+      compile(input, roots),
+      /format: unsupported numeric format; number schemas support float or double/,
+    );
   }
 });
 

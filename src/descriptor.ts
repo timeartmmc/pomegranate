@@ -8,6 +8,7 @@ import {
   fail,
   keys,
   record,
+  ownRecord,
   safeKey,
   stringArray,
   text,
@@ -25,7 +26,6 @@ import type {
   PolicyVocabulary,
   ResponseHeader,
   Schema,
-  RegisteredStringFormat,
 } from './model.js';
 import {
   componentName,
@@ -36,6 +36,7 @@ import {
   validateSchema,
   schemaValidation,
 } from './schemas.js';
+import type { FormatRegistry } from './schemas.js';
 import {
   normalizeMemberships,
   normalizeOperationPolicy,
@@ -44,6 +45,7 @@ import {
 import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
 import { projectSchemas } from './directional.js';
 import { normalizeOpenApi30 } from './openapi30.js';
+import { isRequired } from './required-index.js';
 import {
   deprecatedAnnotation,
   exampleAnnotations,
@@ -70,7 +72,7 @@ type HeaderDefinition = Omit<ResponseHeader, 'name'>;
 type RequestBodyDefinition = Exclude<Operation['body'], { kind: 'none' }>;
 
 type SchemaContext = Readonly<{
-  formats: Readonly<Record<string, RegisteredStringFormat>>;
+  formats: FormatRegistry;
   source: SchemaTable;
   projection: ReturnType<typeof projectSchemas>;
   sourceValidation: Validation;
@@ -171,7 +173,7 @@ type ContentDefinition = {
   kind: 'json' | 'text' | 'multipart';
   contentType: string;
   schema: Schema;
-  fields?: readonly MultipartField[];
+  fields: readonly MultipartField[] | undefined;
 };
 
 function contentDefinitions(
@@ -238,15 +240,14 @@ function contentDefinitions(
         kind,
         contentType,
         schema,
-        ...(kind === 'multipart'
-          ? {
-              fields: multipartFields(
+        fields:
+          kind === 'multipart'
+            ? multipartFields(
                 schema,
                 context.projection.schemas.request,
                 schemaLocation,
-              ),
-            }
-          : {}),
+              )
+            : undefined,
       };
     });
   if (candidates.length === 0)
@@ -398,9 +399,7 @@ function normalizeParameter(
     in: position,
     required,
     schema,
-    ...(queryArray && value.explode === false
-      ? { explode: false as const }
-      : {}),
+    explode: !queryArray || value.explode !== false,
   };
 }
 
@@ -517,7 +516,7 @@ function pathTemplate(path: string, location: string): void {
 
 function multipartFields(
   schema: Schema,
-  schemas: Readonly<Record<string, Schema>>,
+  schemas: SchemaTable,
   location: string,
 ): readonly MultipartField[] {
   const object = resolveSchema(schema, schemas);
@@ -529,9 +528,9 @@ function multipartFields(
     bounded =
       target.constraints.minProperties !== undefined ||
       target.constraints.maxProperties !== undefined;
-    target = schemas[target.name]!;
+    target = schemas.get(target.name)!;
   }
-  return Object.entries(object.properties).map(([name, field]) => {
+  return [...object.properties].map(([name, field]) => {
     if (!validHeaderName(name))
       fail(
         `${location}.properties.${name}`,
@@ -546,12 +545,12 @@ function multipartFields(
         `${location}.properties.${name}`,
         'multipart fields require strings, files or arrays of files',
       );
-    const required = object.required.includes(name);
+    const required = isRequired(object.required, name);
     if (bounded && multiple && !required) {
       let nonempty = (resolved.minItems ?? 0) > 0;
       for (let target = field; !nonempty && target.kind === 'ref';) {
         nonempty = (target.constraints.minItems ?? 0) > 0;
-        target = schemas[target.name]!;
+        target = schemas.get(target.name)!;
       }
       // An optional empty file array emits no multipart field. Its presence
       // cannot participate in property counts; require a representable value
@@ -736,7 +735,7 @@ function normalizeResponse(
     );
     body = {
       kind: 'content',
-      content: Object.fromEntries(
+      content: new Map(
         representations.map((representation) => {
           // Response validation above excludes multipart. The shared helper's
           // return type also covers requests, so narrow it before building content.
@@ -949,17 +948,7 @@ export function openApiDocument(input: unknown): Record<string, unknown> {
   return value;
 }
 
-export function buildDescriptor(
-  input: unknown,
-  membership: { surfaces?: unknown; formats?: unknown } = {},
-): Descriptor {
-  const source = openApiDocument(input);
-  const openApi30 =
-    typeof source.openapi === 'string' && source.openapi.startsWith('3.0.');
-  const value = openApi30
-    ? record(normalizeOpenApi30(source), 'OpenAPI')
-    : source;
-  const registeredFormats = normalizeFormats(membership.formats);
+function validateDocumentMetadata(value: Record<string, unknown>): void {
   keys(
     value,
     [
@@ -1005,65 +994,14 @@ export function buildDescriptor(
       externalDocsAnnotation(tag, `tags[${index}]`);
     }
   }
-  let vocabulary = normalizeVocabulary(
-    Object.hasOwn(value, 'x-pom-policy')
-      ? value['x-pom-policy']
-      : { version: 3 },
-  );
-  let memberships: Map<string, string[]> | undefined;
-  const configured = Object.hasOwn(membership, 'surfaces')
-    ? normalizeMemberships(membership.surfaces)
-    : undefined;
-  if (configured !== undefined) {
-    if (
-      Object.hasOwn(value, 'x-pom-policy') &&
-      Object.hasOwn(record(value['x-pom-policy'], 'x-pom-policy'), 'surfaces')
-    )
-      fail(
-        'x-pom-policy.surfaces',
-        'cannot combine inline and configured surface membership',
-      );
-    vocabulary = { ...vocabulary, surfaces: Object.keys(configured) };
-    memberships = new Map();
-    for (const [surface, ids] of Object.entries(configured)) {
-      for (const id of ids) {
-        const names = memberships.get(id) ?? [];
-        names.push(surface);
-        memberships.set(id, names);
-      }
-    }
-  }
-  const components = Object.hasOwn(value, 'components')
-    ? record(value.components, 'components')
-    : {};
-  keys(
-    components,
-    [
-      'schemas',
-      'securitySchemes',
-      'examples',
-      'parameters',
-      'responses',
-      'requestBodies',
-      'headers',
-    ],
-    'components',
-  );
-  const examples = exampleComponents(
-    Object.hasOwn(components, 'examples') ? components.examples : {},
-  );
-  const bearerSchemes = normalizeSecuritySchemes(
-    Object.hasOwn(components, 'securitySchemes')
-      ? components.securitySchemes
-      : {},
-  );
-  const inheritedSecurity = Object.hasOwn(value, 'security')
-    ? normalizeSecurity(value.security, bearerSchemes, 'security')
-    : ({ transport: 'none' } as const);
-  const rawSchemas = Object.hasOwn(components, 'schemas')
-    ? record(components.schemas, 'components.schemas')
-    : {};
-  const schemas = Object.fromEntries(
+}
+
+function prepareSchemas(
+  input: unknown,
+  registeredFormats: SchemaContext['formats'],
+): { context: SchemaContext; order: readonly string[] } {
+  const rawSchemas = record(input, 'components.schemas');
+  const schemas = new Map(
     Object.keys(rawSchemas)
       .sort()
       .map((name) => [
@@ -1082,7 +1020,7 @@ export function buildDescriptor(
   const validation = schemaValidation();
   for (const name of schemaOrder)
     validateSchema(
-      schemas[name]!,
+      schemas.get(name)!,
       schemas,
       `components.schemas.${name}`,
       'component',
@@ -1098,42 +1036,16 @@ export function buildDescriptor(
       response: schemaValidation(),
     },
   };
-  const parameterComponents = normalizeComponents(
-    Object.hasOwn(components, 'parameters') ? components.parameters : {},
-    'parameters',
-    (value, location) => normalizeParameter(value, context, examples, location),
-  );
-  const headerComponents = normalizeComponents(
-    Object.hasOwn(components, 'headers') ? components.headers : {},
-    'headers',
-    (value, location) => normalizeHeader(value, context, examples, location),
-  );
-  const requestBodyComponents = normalizeComponents(
-    Object.hasOwn(components, 'requestBodies') ? components.requestBodies : {},
-    'requestBodies',
-    (value, location) =>
-      normalizeRequestBody(value, context, examples, location),
-  );
-  const responseComponents = normalizeComponents(
-    Object.hasOwn(components, 'responses') ? components.responses : {},
-    'responses',
-    (value, location) =>
-      normalizeResponse(value, context, examples, headerComponents, location),
-  );
-  const operationContext: OperationContext = {
-    openApi30,
-    vocabulary,
-    schemas: context,
-    examples,
-    parameterComponents,
-    responseComponents,
-    requestBodyComponents,
-    headerComponents,
-    bearerSchemes,
-    inheritedSecurity,
-    memberships,
-  };
-  const paths = record(value.paths, 'paths');
+  return { context, order: schemaOrder };
+}
+
+function normalizeOperations(
+  input: unknown,
+  operationContext: OperationContext,
+  configured: ReadonlyMap<string, readonly string[]> | undefined,
+): Operation[] {
+  const { schemas: context, examples, parameterComponents } = operationContext;
+  const paths = record(input, 'paths');
   const operations: Operation[] = [];
   for (const path of Object.keys(paths).sort()) {
     pathTemplate(path, `paths.${path}`);
@@ -1175,21 +1087,147 @@ export function buildDescriptor(
       );
     ids.set(operation.id, location);
   }
-  for (const [surface, configuredIds] of Object.entries(configured ?? {})) {
-    for (const id of configuredIds) {
-      if (!ids.has(id))
-        fail(
-          `surfaces.${surface}`,
-          `unknown operation identifier ${JSON.stringify(id)}`,
-        );
+  if (configured !== undefined) {
+    // A mistyped configured ID also leaves an operation unassigned. Report the
+    // bad config entry first, then require complete coverage of the known IDs.
+    for (const [surface, configuredIds] of configured) {
+      for (const [index, id] of configuredIds.entries()) {
+        if (!ids.has(id))
+          fail(
+            `surfaces.${surface}[${index}]`,
+            `unknown operation identifier ${JSON.stringify(id)}`,
+          );
+      }
+    }
+    const unassigned = operations.find(
+      (operation) => operation.surfaces.length === 0,
+    );
+    if (unassigned)
+      fail(
+        'surfaces',
+        `operation identifier ${JSON.stringify(unassigned.id)} has no configured surface membership; add it to the config "surfaces" map`,
+      );
+  }
+  return operations.sort((left, right) =>
+    left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+  );
+}
+
+export function buildDescriptor(
+  input: unknown,
+  membershipInput: { surfaces?: unknown; formats?: unknown } = {},
+): Descriptor {
+  const rawMembership = ownRecord(membershipInput);
+  const source = openApiDocument(input);
+  const openApi30 =
+    typeof source.openapi === 'string' && source.openapi.startsWith('3.0.');
+  const value = openApi30
+    ? record(normalizeOpenApi30(source), 'OpenAPI')
+    : source;
+  const registeredFormats = normalizeFormats(rawMembership.formats);
+  validateDocumentMetadata(value);
+  let vocabulary = normalizeVocabulary(
+    Object.hasOwn(value, 'x-pom-policy')
+      ? value['x-pom-policy']
+      : { version: 3 },
+  );
+  let memberships: Map<string, string[]> | undefined;
+  const membership = {
+    formats: registeredFormats,
+    surfaces: Object.hasOwn(rawMembership, 'surfaces')
+      ? normalizeMemberships(rawMembership.surfaces)
+      : undefined,
+  };
+  const configured = membership.surfaces;
+  if (configured !== undefined) {
+    if (
+      Object.hasOwn(value, 'x-pom-policy') &&
+      Object.hasOwn(record(value['x-pom-policy'], 'x-pom-policy'), 'surfaces')
+    )
+      fail(
+        'x-pom-policy.surfaces',
+        'cannot combine inline and configured surface membership',
+      );
+    vocabulary = { ...vocabulary, surfaces: [...configured.keys()] };
+    memberships = new Map();
+    for (const [surface, ids] of configured) {
+      for (const id of ids) {
+        const names = memberships.get(id) ?? [];
+        names.push(surface);
+        memberships.set(id, names);
+      }
     }
   }
+  const components = Object.hasOwn(value, 'components')
+    ? record(value.components, 'components')
+    : {};
+  keys(
+    components,
+    [
+      'schemas',
+      'securitySchemes',
+      'examples',
+      'parameters',
+      'responses',
+      'requestBodies',
+      'headers',
+    ],
+    'components',
+  );
+  const examples = exampleComponents(
+    Object.hasOwn(components, 'examples') ? components.examples : {},
+  );
+  const bearerSchemes = normalizeSecuritySchemes(
+    Object.hasOwn(components, 'securitySchemes')
+      ? components.securitySchemes
+      : {},
+  );
+  const inheritedSecurity = Object.hasOwn(value, 'security')
+    ? normalizeSecurity(value.security, bearerSchemes, 'security')
+    : ({ transport: 'none' } as const);
+  const { context, order: schemaOrder } = prepareSchemas(
+    Object.hasOwn(components, 'schemas') ? components.schemas : {},
+    membership.formats,
+  );
+  const parameterComponents = normalizeComponents(
+    Object.hasOwn(components, 'parameters') ? components.parameters : {},
+    'parameters',
+    (value, location) => normalizeParameter(value, context, examples, location),
+  );
+  const headerComponents = normalizeComponents(
+    Object.hasOwn(components, 'headers') ? components.headers : {},
+    'headers',
+    (value, location) => normalizeHeader(value, context, examples, location),
+  );
+  const requestBodyComponents = normalizeComponents(
+    Object.hasOwn(components, 'requestBodies') ? components.requestBodies : {},
+    'requestBodies',
+    (value, location) =>
+      normalizeRequestBody(value, context, examples, location),
+  );
+  const responseComponents = normalizeComponents(
+    Object.hasOwn(components, 'responses') ? components.responses : {},
+    'responses',
+    (value, location) =>
+      normalizeResponse(value, context, examples, headerComponents, location),
+  );
+  const operationContext: OperationContext = {
+    openApi30,
+    vocabulary,
+    schemas: context,
+    examples,
+    parameterComponents,
+    responseComponents,
+    requestBodyComponents,
+    headerComponents,
+    bearerSchemes,
+    inheritedSecurity,
+    memberships,
+  };
   return {
     policy: vocabulary,
     schemas: context.projection.schemas,
     schemaOrder,
-    operations: operations.sort((left, right) =>
-      left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
-    ),
+    operations: normalizeOperations(value.paths, operationContext, configured),
   };
 }

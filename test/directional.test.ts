@@ -9,7 +9,11 @@ import { stringify } from 'yaml';
 import { compile, runProject, ContractError } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
 import { fileSnapshot, temporary } from './helpers.ts';
-import { generatedWorkspace } from './generated-workspace.ts';
+import {
+  generatedTestWorkspace,
+  generatedWorkspace,
+  importGenerated,
+} from './generated-workspace.ts';
 import {
   directionalFixture,
   directionalSelection,
@@ -90,6 +94,75 @@ void test('directional fields agree across builders, standalone, raw/scoped exec
     await standalone('empty-request'),
     await standalone('empty-response'),
   );
+});
+
+void test('array items and map values preserve request and response field direction', async (t) => {
+  const item = {
+    type: 'object',
+    properties: {
+      id: { type: 'string', readOnly: true },
+      secret: { type: 'string', writeOnly: true },
+      label: { type: 'string' },
+    },
+    required: ['id', 'secret', 'label'],
+  };
+  const input = {
+    openapi: '3.1.2',
+    info: { title: 'Synthetic directional containers', version: '1' },
+    paths: {},
+    components: {
+      schemas: {
+        Items: { type: 'array', items: item },
+        Entries: { type: 'object', additionalProperties: item },
+      },
+    },
+  };
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(input, {
+      clients: [],
+      standalone: Object.fromEntries(
+        ['Items', 'Entries'].flatMap((name) =>
+          (['request', 'response'] as const).map((usage) => [
+            `${name.toLowerCase()}-${usage}`,
+            { schema: `#/components/schemas/${name}`, usage },
+          ]),
+        ),
+      ),
+    }),
+  );
+  for (const name of ['Items', 'Entries']) {
+    const wrap = (value: unknown) =>
+      name === 'Items' ? [value] : { first: value };
+    const request = await importGenerated<StandaloneModule>(
+      root,
+      `standalone.${name.toLowerCase()}-request.ts`,
+    );
+    const response = await importGenerated<StandaloneModule>(
+      root,
+      `standalone.${name.toLowerCase()}-response.ts`,
+    );
+    const valid = { label: 'visible', secret: 'private' };
+    assert.deepEqual(request.schema.parse(wrap(valid)), wrap(valid));
+    assert.equal(
+      request.schema.safeParse(wrap({ ...valid, id: 'forbidden' })).success,
+      false,
+    );
+    assert.equal(
+      request.schema.safeParse(wrap({ label: 'visible' })).success,
+      false,
+    );
+    assert.deepEqual(
+      response.schema.parse(
+        wrap({ id: 'record', label: 'visible', secret: { ignored: true } }),
+      ),
+      wrap({ id: 'record', label: 'visible' }),
+    );
+    assert.equal(
+      response.schema.safeParse(wrap({ label: 'visible' })).success,
+      false,
+    );
+  }
 });
 
 void test('read-only presence rejection covers non-enumerable and inherited properties without reading them', async (t) => {
@@ -230,8 +303,9 @@ void test('directional input and output types survive declaration-only publicati
     build({body:input});
     // @ts-expect-error Published response does not expose a secret.
     output.secret;
-    // @ts-expect-error Published request does not accept server id.
-    input.id;
+    // @ts-expect-error Published request rejects server id through a fetched spread.
+    const roundTrip:Request={...output,secret:input.secret,nested:input.nested};
+    void roundTrip;
   `,
   );
   await writeFile(

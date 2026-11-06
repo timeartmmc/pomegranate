@@ -27,7 +27,8 @@ function roots(
   return operation.responses.flatMap((response) => [
     ...response.headers.map((header) => header.schema),
     ...(response.body.kind !== 'none'
-      ? Object.values(response.body.content).map(
+      ? Array.from(
+          response.body.content.values(),
           (representation) => representation.schema,
         )
       : []),
@@ -47,7 +48,7 @@ function closure(
       if (needed.has(name)) continue;
       needed.add(name);
       // buildDescriptor already resolved every reference and rejected cycles.
-      pending.push(descriptor.schemas[direction][name]!);
+      pending.push(descriptor.schemas[direction].get(name)!);
     }
   }
   return descriptor.schemaOrder.filter((name) => needed.has(name));
@@ -78,11 +79,24 @@ export function selectClients(
         'transportHeaders',
         `undeclared request header ${JSON.stringify(name)}`,
       );
+  const operationIds = new Set(
+    descriptor.operations.map((operation) => operation.id),
+  );
   // Projection only receives a complete validated descriptor. Filtering raw
   // OpenAPI here would hide unsupported operations on unselected surfaces.
   return [...names].sort().map((name) => {
-    if (!descriptor.policy.surfaces.includes(name))
-      fail('clients', `undeclared surface ${JSON.stringify(name)}`);
+    if (!descriptor.policy.surfaces.includes(name)) {
+      const surfaces = descriptor.policy.surfaces;
+      const listed = surfaces
+        .slice(0, 8)
+        .map((surface) => JSON.stringify(surface))
+        .join(', ');
+      const remaining = surfaces.length - 8;
+      fail(
+        'clients',
+        `undeclared surface ${JSON.stringify(name)}; declared surfaces: ${listed || '(none)'}${remaining > 0 ? `, ... (${remaining} more)` : ''}`,
+      );
+    }
     const operations = descriptor.operations.filter((operation) =>
       operation.surfaces.includes(name),
     );
@@ -91,7 +105,7 @@ export function selectClients(
         'clients',
         `selected surface ${JSON.stringify(name)} has no operations`,
       );
-    const target = Object.hasOwn(targets, name) ? targets[name] : undefined;
+    const target = targets.get(name);
     if (
       target === undefined &&
       operations.some((operation) => operation.body.kind === 'multipart')
@@ -100,12 +114,25 @@ export function selectClients(
         `targets.${name}`,
         'multipart clients require an explicit browser or native target',
       );
-    const queryIds = Object.hasOwn(queries, name) ? queries[name]! : [];
-    const selectedQueries = queryIds.map((id) => {
+    const queryOperation = (
+      id: string,
+      location: string,
+      kind: 'query' | 'infinite query',
+    ) => {
       const operation = operations.find((candidate) => candidate.id === id);
-      const location = `queries.${name}.${id}`;
       if (!operation)
-        fail(location, 'query operation must belong to this client');
+        fail(
+          location,
+          operationIds.has(id)
+            ? `${kind} operation must belong to this client; include ${JSON.stringify(id)} in surface ${JSON.stringify(name)} or select a client that includes it`
+            : `unknown operationId ${JSON.stringify(id)}; use an operationId declared in paths`,
+        );
+      return operation;
+    };
+    const queryIds = queries.get(name) ?? [];
+    const selectedQueries = queryIds.map((id) => {
+      const location = `queries.${name}.${id}`;
+      const operation = queryOperation(id, location, 'query');
       if (
         (operation.method !== 'GET' && operation.method !== 'HEAD') ||
         operation.body.kind !== 'none'
@@ -113,20 +140,18 @@ export function selectClients(
         fail(location, 'queries support only bodyless GET and HEAD operations');
       return operation;
     });
-    const selectedInfinite = Object.entries(
-      Object.hasOwn(infiniteQueries, name) ? infiniteQueries[name]! : {},
-    ).map(([id, binding]) => {
-      const location = `infiniteQueries.${name}.${id}`;
-      const operation = operations.find((candidate) => candidate.id === id);
-      if (!operation)
-        fail(location, 'infinite query operation must belong to this client');
-      validatePagination(operation, binding, descriptor, location);
-      return { operation, binding };
-    });
+    const selectedInfinite = [...(infiniteQueries.get(name) ?? [])].map(
+      ([id, binding]) => {
+        const location = `infiniteQueries.${name}.${id}`;
+        const operation = queryOperation(id, location, 'infinite query');
+        validatePagination(operation, binding, descriptor, location);
+        return { operation, binding };
+      },
+    );
     return {
       name,
       execution: executionClients.includes(name),
-      ...(target === undefined ? {} : { target }),
+      target,
       transportHeaders,
       operations,
       queries: selectedQueries,

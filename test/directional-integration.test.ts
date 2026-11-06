@@ -263,7 +263,10 @@ for (const offset of [false, true]) {
           error.location,
           'infiniteQueries.consumer.page.responses.200.content.application/json',
         );
-        assert.match(error.message, /pagination field.*must be required/);
+        assert.match(
+          error.message,
+          /pagination field.*must name an existing top-level response property/,
+        );
         return true;
       },
     );

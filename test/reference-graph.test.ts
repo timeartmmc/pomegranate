@@ -6,7 +6,8 @@ import test from 'node:test';
 import { compile, ContractError } from '../dist/index.js';
 import { buildDescriptor } from '../dist/descriptor.js';
 import { normalizeSchema, resolveSchema } from '../dist/schemas.js';
-import { entry } from './assertions.ts';
+import type { Schema as NormalizedSchema } from '../dist/model.js';
+import { entry, present } from './assertions.ts';
 import { generatedWorkspace } from './generated-workspace.ts';
 import { temporary } from './helpers.ts';
 import type { StandaloneModule } from './runtime-types.ts';
@@ -29,19 +30,20 @@ function forwardAliases(count = 10000) {
 
 void test('terminal resolution traverses shared aliases once per normalized table', () => {
   const descriptor = buildDescriptor(documentWith(forwardAliases(512)));
-  const leaf = entry(descriptor.schemas.request, 'Leaf');
-  let reads = 0;
-  const schemas = new Proxy(descriptor.schemas.request, {
-    get(target, key, receiver): unknown {
-      reads++;
-      return Reflect.get(target, key, receiver);
-    },
-  });
-  for (const schema of Object.values(descriptor.schemas.request))
+  const leaf = present(descriptor.schemas.request.get('Leaf'));
+  class CountedSchemas extends Map<string, NormalizedSchema> {
+    reads = 0;
+    override get(name: string) {
+      this.reads++;
+      return super.get(name);
+    }
+  }
+  const schemas = new CountedSchemas(descriptor.schemas.request);
+  for (const schema of descriptor.schemas.request.values())
     assert.equal(resolveSchema(schema, schemas), leaf);
   // Count table lookups rather than elapsed time: resolving each suffix must
   // take linear total work, including when aliases appear before their target.
-  assert.ok(reads <= 512, `${reads} lookups for 512 aliases`);
+  assert.ok(schemas.reads <= 512, `${schemas.reads} lookups for 512 aliases`);
 });
 
 void test('terminal resolution separates tables even for the same reference node', () => {

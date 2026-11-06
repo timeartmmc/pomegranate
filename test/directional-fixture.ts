@@ -236,8 +236,17 @@ export function directionalTypeConsumer(): string {
   const input: Request = {label:'visible',secret:'private',nested:{label:'nested',password:'private'}};
   const output: Response = {id:'id',label:'visible',nested:{id:'nested',label:'nested'}};
   build({body:input});
-  // @ts-expect-error Read-only fields are absent from input.
-  input.id;
+  const excludedId: undefined = input.id;
+  const withId = {...input,id:output.id};
+  // @ts-expect-error Structural assignment cannot supply a read-only field.
+  const assignedId: Request = withId;
+  // @ts-expect-error A fetched record spread still contains its server id.
+  build({body:{...output,secret:input.secret,nested:input.nested}});
+  const nestedWithId = {...input.nested,id:output.nested.id};
+  // @ts-expect-error Nested read-only fields remain forbidden through spreads.
+  const assignedNestedId: Request = {...input,nested:nestedWithId};
+  // @ts-expect-error Explicit undefined is still a supplied forbidden field.
+  const undefinedId: Request = {...input,id:undefined};
   // @ts-expect-error Write-only fields are absent from output.
   output.secret;
   // @ts-expect-error Nested write-only fields are absent from output.
@@ -246,7 +255,7 @@ export function directionalTypeConsumer(): string {
   const missingInput: Request = {label:'visible',nested:input.nested};
   // @ts-expect-error Required read-only output is still required.
   const missingOutput: Response = {label:'visible',nested:output.nested};
-  void [missingInput,missingOutput];
+  void [excludedId,assignedId,assignedNestedId,undefinedId,missingInput,missingOutput];
   export const api: ReturnType<typeof createClient> = createClient({namespace:'types',execute:async()=>({status:200,headers:{'Content-Type':'application/json'},body:'{}'})});
   `;
 }

@@ -1,5 +1,12 @@
 import { fail } from './diagnostics.js';
-import type { Constraints, Scalar, Schema, SchemaFormat } from './model.js';
+import type {
+  ConstraintInput,
+  Constraints,
+  Scalar,
+  Schema,
+  SchemaFormat,
+} from './model.js';
+import { constraintRecord } from './schema-node.js';
 import { formatPattern, formats, multipleOf, patternTest } from './runtime.js';
 
 function adjacentNumber(value: number, direction: 1 | -1): number {
@@ -11,45 +18,66 @@ function adjacentNumber(value: number, direction: 1 | -1): number {
   return bits.getFloat64(0);
 }
 
+function strongestBound(
+  left: number | undefined,
+  right: number | undefined,
+  choose: (left: number, right: number) => number,
+): number | undefined {
+  return left === undefined
+    ? right
+    : right === undefined
+      ? left
+      : choose(left, right);
+}
+
 export function intersectConstraints(
-  base: Constraints,
-  extra: Constraints,
+  base: ConstraintInput,
+  extra: ConstraintInput,
 ): Constraints {
-  const merged = { ...base, ...extra };
-  for (const key of [
-    'minimum',
-    'exclusiveMinimum',
-    'minLength',
-    'minItems',
-    'minProperties',
-  ] as const) {
-    const left = base[key];
-    const right = extra[key];
-    if (left !== undefined && right !== undefined)
-      merged[key] = Math.max(left, right);
-  }
-  for (const key of [
-    'maximum',
-    'exclusiveMaximum',
-    'maxLength',
-    'maxItems',
-    'maxProperties',
-  ] as const) {
-    const left = base[key];
-    const right = extra[key];
-    if (left !== undefined && right !== undefined)
-      merged[key] = Math.min(left, right);
-  }
-  return merged;
+  const left = constraintRecord(base);
+  const right = constraintRecord(extra);
+  // Undefined slots represent absence and must not erase an earlier assertion.
+  return {
+    minLength: strongestBound(left.minLength, right.minLength, Math.max),
+    maxLength: strongestBound(left.maxLength, right.maxLength, Math.min),
+    minItems: strongestBound(left.minItems, right.minItems, Math.max),
+    maxItems: strongestBound(left.maxItems, right.maxItems, Math.min),
+    minProperties: strongestBound(
+      left.minProperties,
+      right.minProperties,
+      Math.max,
+    ),
+    maxProperties: strongestBound(
+      left.maxProperties,
+      right.maxProperties,
+      Math.min,
+    ),
+    minimum: strongestBound(left.minimum, right.minimum, Math.max),
+    maximum: strongestBound(left.maximum, right.maximum, Math.min),
+    exclusiveMinimum: strongestBound(
+      left.exclusiveMinimum,
+      right.exclusiveMinimum,
+      Math.max,
+    ),
+    exclusiveMaximum: strongestBound(
+      left.exclusiveMaximum,
+      right.exclusiveMaximum,
+      Math.min,
+    ),
+    pattern: right.pattern ?? left.pattern,
+    multipleOf: right.multipleOf ?? left.multipleOf,
+    float: right.float ?? left.float,
+  };
 }
 
 export function assertScalarRules(
   kind: Schema['kind'],
-  limits: Constraints,
+  limits: ConstraintInput,
   literals: readonly Scalar[] | undefined,
   location: string,
   format?: SchemaFormat,
 ): void {
+  limits = constraintRecord(limits);
   for (const [minimum, maximum] of [
     ['minLength', 'maxLength'],
     ['minItems', 'maxItems'],
@@ -98,9 +126,10 @@ export function assertScalarRules(
 }
 
 export function literalViolation(
-  limits: Constraints,
+  limits: ConstraintInput,
   format?: SchemaFormat,
 ): (item: Scalar) => string | undefined {
+  limits = constraintRecord(limits);
   // Bounds, formats and stable patterns use the emitted predicates. Property
   // escapes depend on the engine's Unicode data: defer their matching instead
   // of rejecting literals or pruning reference candidates on this host.

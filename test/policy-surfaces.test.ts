@@ -242,6 +242,76 @@ void test('config membership does not suppress unsupported unselected operations
   );
 });
 
+void test('configured operation ID typos name the exact config entry before reporting missing membership', async () => {
+  for (const [surface, index, id] of [
+    ['consumer', 0, 'listItems'],
+    ['consumer', 1, 'updateItem'],
+    ['staff', 0, 'updateItem'],
+    ['internal', 0, 'internalReport'],
+  ] as const)
+    for (const clients of [['consumer'], []]) {
+      const document = plainFixture();
+      const surfaces = structuredClone(memberships);
+      const typo = `${id}Typo`;
+      surfaces[surface][index] = typo;
+      const options: CompileOptions = {
+        clients,
+        surfaces,
+        ...(clients.length === 0
+          ? {
+              standalone: {
+                item: {
+                  schema: '#/components/schemas/PublicItem',
+                  usage: 'response',
+                },
+              },
+            }
+          : {}),
+      };
+      const before = structuredClone({ document, options });
+      await assert.rejects(compile(document, options), {
+        name: 'ContractError',
+        location: `surfaces.${surface}[${index}]`,
+        message: `surfaces.${surface}[${index}]: unknown operation identifier ${JSON.stringify(typo)}`,
+      });
+      assert.deepEqual({ document, options }, before);
+    }
+});
+
+void test('missing configured membership names the operation and the config map', async () => {
+  await assert.rejects(
+    compile(plainFixture(), {
+      clients: ['consumer'],
+      surfaces: { consumer: ['listItems', 'updateItem'] },
+    }),
+    {
+      name: 'ContractError',
+      location: 'surfaces',
+      message:
+        'surfaces: operation identifier "internalReport" has no configured surface membership; add it to the config "surfaces" map',
+    },
+  );
+});
+
+void test('configured ID typos are diagnosed against derived method-and-path operation IDs', async () => {
+  const document = plainFixture();
+  Reflect.deleteProperty(document.paths['/items'].get, 'operationId');
+  await assert.rejects(
+    compile(document, {
+      ...selection,
+      surfaces: {
+        ...memberships,
+        consumer: ['GET /item', 'updateItem'],
+      },
+    }),
+    {
+      name: 'ContractError',
+      location: 'surfaces.consumer[0]',
+      message: 'surfaces.consumer[0]: unknown operation identifier "GET /item"',
+    },
+  );
+});
+
 void test('valid inline and configured memberships cannot both own the document', async () => {
   await assert.rejects(compile(inlineFixture(), selection), {
     name: 'ContractError',
@@ -303,13 +373,16 @@ void test('project config and programmatic memberships agree and failures preser
   const snapshot = await fileSnapshot(output);
   assert.equal((await runProject(config, { check: true })).clean, true);
   assert.deepEqual(await fileSnapshot(output), snapshot);
-  for (const surfaces of [
-    { ...memberships, internal: ['missing'] },
-    { consumer: ['listItems', 'updateItem'] },
-  ]) {
+  for (const [surfaces, location] of [
+    [{ ...memberships, internal: ['missing'] }, 'surfaces.internal[0]'],
+    [{ consumer: ['listItems', 'updateItem'] }, 'surfaces'],
+  ] as const) {
     await writeFile(config, JSON.stringify({ ...configuration, surfaces }));
-    await assert.rejects(runProject(config));
-    await assert.rejects(runProject(config, { check: true }));
+    for (const check of [false, true])
+      await assert.rejects(runProject(config, { check }), {
+        name: 'ContractError',
+        location,
+      });
     assert.deepEqual(await fileSnapshot(output), snapshot);
     assert.equal(await readFile(input, 'utf8'), JSON.stringify(document));
   }

@@ -187,7 +187,7 @@ void test('clients account for exactly their selected operations and directional
   });
 });
 
-void test('application transport resolves bearer schemes and sends public overrides without credentials', async () => {
+void test('application transport resolves bearer schemes and readiness labels and sends public overrides without credentials', async () => {
   const request = operations.prepareWidget.build(options());
   const result = await execute(
     request,
@@ -207,8 +207,9 @@ void test('application transport resolves bearer schemes and sends public overri
         },
       );
     },
-    async (label) => {
-      assert.equal(label, 'WidgetSession');
+    async (scheme, label) => {
+      assert.equal(scheme, 'WidgetSession');
+      assert.equal(label, 'session');
       return 'app-owned-token';
     },
     'https://example.invalid',
@@ -234,7 +235,7 @@ void test('the example transport resolves relative requests for real Node fetch'
   const server = createServer((incoming, outgoing) => {
     assert.equal(incoming.url, '/api/health');
     assert.equal(incoming.method, 'HEAD');
-    outgoing.writeHead(204);
+    outgoing.writeHead(204, { 'X-Powered-By': 'Express \t' });
     outgoing.end();
   });
   server.listen(0, '127.0.0.1');
@@ -256,6 +257,27 @@ void test('the example transport resolves relative requests for real Node fetch'
   );
   assert.equal(result.kind, 'success');
   assert.equal(result.status, 204);
+  assert.equal(result.headers['x-powered-by'], 'Express');
+  const { createClient } = (await import(
+    pathToFileURL(join(root, 'built/generated/client.consumer.js')).href
+  )) as Consumer;
+  const client = createClient({
+    namespace: 'node-fetch-headers',
+    execute: async (request, execution) => {
+      const response = await fetch(new URL(request.url, origin), {
+        method: request.method,
+        signal: execution.signal,
+      });
+      return {
+        status: response.status,
+        headers: Object.fromEntries(response.headers),
+        body: await response.text(),
+      };
+    },
+  });
+  const called = await client.checkHealth.call({ context: {} });
+  assert.equal(called.status, 204);
+  assert.equal(called.headers['x-powered-by'], 'Express');
 });
 
 void test('header values preserve Fetch wire bytes and allow internal tabs in requests and responses', () => {
@@ -285,10 +307,6 @@ void test('header values preserve Fetch wire bytes and allow internal tabs in re
     'a\nb',
     'a\rb',
     'a\u007fb',
-    ' value',
-    'value ',
-    '\tvalue',
-    'value\t',
   ]) {
     assert.throws(
       () =>
@@ -326,6 +344,36 @@ void test('header values preserve Fetch wire bytes and allow internal tabs in re
       }),
     RequestValidationError,
   );
+});
+
+void test('request headers reject boundary spaces and tabs that responses normalize', () => {
+  for (const value of [' value', 'value ', '\tvalue', 'value\t']) {
+    assert.throws(
+      () =>
+        operations.prepareWidget.build({
+          ...options(),
+          headers: { 'Idempotency-Key': value },
+        }),
+      RequestValidationError,
+    );
+    const request = operations.prepareWidget.build(options());
+    assert.throws(
+      () => request.validateHeaders({ 'Idempotency-Key': value }),
+      RequestValidationError,
+    );
+    const response = request.parseResponse(
+      observed(
+        202,
+        { state: 'pending', reference: 'ref' },
+        {
+          'X-Request-ID': value,
+        },
+      ),
+    );
+    assert.equal(response.kind, 'success');
+    assert.equal(response.headers['x-request-id'], 'value');
+    assert.equal(response.validatedHeaders['x-request-id'], 'value');
+  }
 });
 
 void test('query strings reject malformed Unicode and round-trip valid astral names and values', () => {
@@ -691,23 +739,22 @@ void test('malformed or combined response media types fail with observed evidenc
   }
 });
 
-void test('joining response fields cannot promote invalid raw values into validated headers', () => {
+void test('response fields normalize each value before combining repeated names', () => {
   const result = operations.prepareWidget.parseResponse(
     observed(
       202,
       { state: 'pending', reference: 'ref' },
       {
-        'X-Request-ID': 'request-1 ',
-        'x-request-id': 'request-2',
+        'X-Request-ID': ' request-1 \t',
+        'x-request-id': '\trequest-2 ',
         'X-Key': 'independent',
       },
     ),
   );
-  assert.equal(result.kind, 'protocol');
-  assert.equal(result.headers['x-request-id'], 'request-1 , request-2');
-  assert.equal(Object.hasOwn(result.validatedHeaders, 'x-request-id'), false);
+  assert.equal(result.kind, 'success');
+  assert.equal(result.headers['x-request-id'], 'request-1, request-2');
+  assert.equal(result.validatedHeaders['x-request-id'], 'request-1, request-2');
   assert.equal(result.validatedHeaders['x-key'], 'independent');
-  assert.equal(Object.hasOwn(result, 'data'), false);
 });
 
 void test('response Content-Type is a singleton even when joining fields repairs a quoted parameter', () => {

@@ -14,9 +14,53 @@ import {
   nullValue,
   list,
   formats,
+  text,
 } from '../dist/runtime.js';
 import type { Invalid, Issues, Parse } from '../dist/runtime.js';
 import { browserFile } from '../dist/runtime.browser.js';
+
+void test('maximum string length prevents pattern and format execution without skipping checks on bounded values', (t) => {
+  // oxlint-disable-next-line typescript/unbound-method -- Invoke the saved intrinsic with each original RegExp receiver below.
+  const original = RegExp.prototype.test;
+  let calls = 0;
+  t.mock.method(
+    RegExp.prototype,
+    'test',
+    function (this: RegExp, value: string) {
+      if (
+        this.source.includes('lengthProbe') ||
+        this.source.includes('formatProbe')
+      ) {
+        calls++;
+        assert.ok(
+          Array.from(value).length <= 2,
+          'oversized input reached a regex',
+        );
+      }
+      return original.call(this, value);
+    },
+  );
+  const rules = {
+    maxLength: 2,
+    pattern: '(?<lengthProbe>a|😀)+$',
+    format: { pattern: '(?<formatProbe>a|😀)+', message: 'invalid format' },
+  };
+  const schema = validator((input, issues) => text(input, issues, rules));
+  for (const input of ['aaa', '😀😀😀', 'a'.repeat(100_000)]) {
+    const result = schema.safeParse(input);
+    assert.equal(result.success, false);
+    if (!result.success)
+      assert.deepEqual(result.error.issues, [
+        { path: [], message: 'string is too long' },
+      ]);
+  }
+  assert.equal(calls, 0);
+  assert.equal(schema.parse('a😀'), 'a😀');
+  assert.equal(calls, 2);
+  assert.equal(schema.safeParse('!').success, false);
+  assert.equal(calls, 4);
+});
+
 void test('native facade rejects either invalid returns or recorded issues', () => {
   assert.equal(
     validator((_input, issues) => report(issues, 'bad', true)).safeParse(0)

@@ -98,7 +98,7 @@ void test('flat declared metadata preserves scalar values and omits optional fie
     },
   );
   const operation = present(buildDescriptor(input).operations[0]);
-  assert.deepEqual(operation.policy, {
+  assert.deepEqual(Object.fromEntries(operation.policy), {
     attempts: 2,
     audit: false,
     empty: null,
@@ -107,7 +107,7 @@ void test('flat declared metadata preserves scalar values and omits optional fie
     security: true,
   });
   assert.deepEqual(operation.security, { transport: 'none' });
-  assert.equal(Object.hasOwn(operation.policy, 'optional'), false);
+  assert.equal(operation.policy.has('optional'), false);
 });
 
 for (const [name, fields, required, metadata] of [
@@ -250,7 +250,7 @@ void test('optional auth binding preserves explicit readiness labels and transpo
       security: [{ Token: [] }],
     });
     const operation = present(buildDescriptor(input).operations[0]);
-    assert.equal(operation.policy.auth, label);
+    assert.equal(operation.policy.get('auth'), label);
     assert.deepEqual(operation.security, {
       transport: 'bearer',
       scheme: 'Token',
@@ -269,7 +269,7 @@ void test('optional auth binding preserves explicit readiness labels and transpo
   assert.deepEqual(
     present(buildDescriptor(document(optional, membership)).operations[0])
       .policy,
-    {},
+    new Map(),
   );
 });
 

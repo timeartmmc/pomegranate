@@ -8,24 +8,25 @@ export type RegisteredStringFormat = Readonly<{
 }>;
 export type SchemaFormat = StringFormat | RegisteredStringFormat;
 export type Constraints = {
-  readonly minLength?: number;
-  readonly maxLength?: number;
-  readonly pattern?: string;
-  readonly minimum?: number;
-  readonly maximum?: number;
-  readonly exclusiveMinimum?: number;
-  readonly exclusiveMaximum?: number;
-  readonly multipleOf?: number;
-  readonly float?: true;
-  readonly minItems?: number;
-  readonly maxItems?: number;
-  readonly minProperties?: number;
-  readonly maxProperties?: number;
+  readonly minLength: number | undefined;
+  readonly maxLength: number | undefined;
+  readonly pattern: string | undefined;
+  readonly minimum: number | undefined;
+  readonly maximum: number | undefined;
+  readonly exclusiveMinimum: number | undefined;
+  readonly exclusiveMaximum: number | undefined;
+  readonly multipleOf: number | undefined;
+  readonly float: true | undefined;
+  readonly minItems: number | undefined;
+  readonly maxItems: number | undefined;
+  readonly minProperties: number | undefined;
+  readonly maxProperties: number | undefined;
 };
+export type ConstraintInput = Partial<Constraints>;
 
-export type Schema = {
-  readonly readOnly?: true;
-  readonly writeOnly?: true;
+export type SchemaDraft = {
+  readonly readOnly?: boolean | undefined;
+  readonly writeOnly?: boolean | undefined;
 } & (
   | { readonly kind: 'json' }
   | { readonly kind: 'binary' }
@@ -40,64 +41,130 @@ export type Schema = {
   | {
       readonly kind: 'map';
       readonly values: Schema | true;
-      readonly minProperties?: number;
-      readonly maxProperties?: number;
+      readonly minProperties?: number | undefined;
+      readonly maxProperties?: number | undefined;
     }
   | {
       readonly kind: 'union';
       readonly branches: readonly Schema[];
-      readonly discriminator?: {
-        readonly propertyName: string;
-        readonly mapping: Readonly<Record<string, string>>;
-      };
+      // Diagnostic provenance: these branches came from a nullable type
+      // declaration, rather than an anyOf keyword in the source document.
+      readonly sourceTypeArray?: true | undefined;
+      readonly discriminator?:
+        | {
+            readonly propertyName: string;
+            readonly mapping: ReadonlyMap<string, string>;
+          }
+        | undefined;
     }
   | {
       readonly kind: 'object';
-      readonly properties: Readonly<Record<string, Schema>>;
+      readonly properties: ReadonlyMap<string, Schema>;
       readonly required: readonly string[];
-      readonly forbidden?: readonly string[];
-      readonly minProperties?: number;
-      readonly maxProperties?: number;
+      readonly forbidden?: readonly string[] | undefined;
+      readonly minProperties?: number | undefined;
+      readonly maxProperties?: number | undefined;
     }
   | {
       readonly kind: 'array';
       readonly items: Schema;
-      readonly minItems?: number;
-      readonly maxItems?: number;
+      readonly minItems?: number | undefined;
+      readonly maxItems?: number | undefined;
     }
   | {
       readonly kind: 'string';
-      readonly minLength?: number;
-      readonly maxLength?: number;
-      readonly pattern?: string;
-      readonly format?: SchemaFormat;
-      readonly literals?: readonly Scalar[];
+      readonly minLength?: number | undefined;
+      readonly maxLength?: number | undefined;
+      readonly pattern?: string | undefined;
+      readonly format?: SchemaFormat | undefined;
+      readonly literals?: readonly Scalar[] | undefined;
     }
   | {
       readonly kind: 'number' | 'integer';
-      readonly minimum?: number;
-      readonly maximum?: number;
-      readonly exclusiveMinimum?: number;
-      readonly exclusiveMaximum?: number;
-      readonly multipleOf?: number;
-      readonly float?: true;
-      readonly literals?: readonly Scalar[];
+      readonly minimum?: number | undefined;
+      readonly maximum?: number | undefined;
+      readonly exclusiveMinimum?: number | undefined;
+      readonly exclusiveMaximum?: number | undefined;
+      readonly multipleOf?: number | undefined;
+      readonly float?: true | undefined;
+      readonly literals?: readonly Scalar[] | undefined;
     }
   | {
       readonly kind: 'boolean' | 'null';
-      readonly literals?: readonly Scalar[];
+      readonly literals?: readonly Scalar[] | undefined;
     }
 );
 
-export type SchemaTable = Readonly<Record<string, Schema>>;
+// Sparse declarations enter schemaNode() once. Every fixed field in the normalized
+// graph is an own slot, including absence, and remains so through projection.
+export type Schema = {
+  readonly readOnly: boolean;
+  readonly writeOnly: boolean;
+} & (
+  | { readonly kind: 'json' | 'binary' }
+  | {
+      readonly kind: 'ref';
+      readonly name: string;
+      readonly location: string;
+      readonly constraints: Constraints;
+    }
+  | ({ readonly kind: 'map'; readonly values: Schema | true } & Pick<
+      Constraints,
+      'minProperties' | 'maxProperties'
+    >)
+  | {
+      readonly kind: 'union';
+      readonly branches: readonly Schema[];
+      readonly sourceTypeArray: true | undefined;
+      readonly discriminator:
+        | {
+            readonly propertyName: string;
+            readonly mapping: ReadonlyMap<string, string>;
+          }
+        | undefined;
+    }
+  | ({
+      readonly kind: 'object';
+      readonly properties: ReadonlyMap<string, Schema>;
+      readonly required: readonly string[];
+      readonly forbidden: readonly string[] | undefined;
+    } & Pick<Constraints, 'minProperties' | 'maxProperties'>)
+  | ({ readonly kind: 'array'; readonly items: Schema } & Pick<
+      Constraints,
+      'minItems' | 'maxItems'
+    >)
+  | ({
+      readonly kind: 'string';
+      readonly format: SchemaFormat | undefined;
+      readonly literals: readonly Scalar[] | undefined;
+    } & Pick<Constraints, 'minLength' | 'maxLength' | 'pattern'>)
+  | ({
+      readonly kind: 'number' | 'integer';
+      readonly literals: readonly Scalar[] | undefined;
+    } & Pick<
+      Constraints,
+      | 'minimum'
+      | 'maximum'
+      | 'exclusiveMinimum'
+      | 'exclusiveMaximum'
+      | 'multipleOf'
+      | 'float'
+    >)
+  | {
+      readonly kind: 'boolean' | 'null';
+      readonly literals: readonly Scalar[] | undefined;
+    }
+);
+
+export type SchemaTable = ReadonlyMap<string, Schema>;
 export type DirectionalSchemas = Readonly<Record<Direction, SchemaTable>>;
 
 export type AuthTransport = Security['transport'];
-export type Policy = Readonly<Record<string, Scalar>>;
+export type Policy = ReadonlyMap<string, Scalar>;
 export type PolicyVocabulary = {
   readonly version: 3;
-  readonly auth: Readonly<Record<string, AuthTransport>>;
-  readonly fields: Readonly<Record<string, Schema>>;
+  readonly auth: ReadonlyMap<string, AuthTransport>;
+  readonly fields: ReadonlyMap<string, Schema>;
   readonly required: readonly string[];
   readonly surfaces: readonly string[];
 };
@@ -107,7 +174,7 @@ export type Parameter = {
   readonly in: 'path' | 'query' | 'header';
   readonly required: boolean;
   readonly schema: Schema;
-  readonly explode?: false;
+  readonly explode: boolean;
 };
 
 export type ResponseHeader = {
@@ -121,11 +188,9 @@ export type ContractResponse = {
     | { readonly kind: 'none' }
     | {
         readonly kind: 'content';
-        readonly content: Readonly<
-          Record<
-            string,
-            { readonly kind: 'json' | 'text'; readonly schema: Schema }
-          >
+        readonly content: ReadonlyMap<
+          string,
+          { readonly kind: 'json' | 'text'; readonly schema: Schema }
         >;
       };
   readonly headers: readonly ResponseHeader[];
@@ -179,7 +244,7 @@ export type Descriptor = {
 export type Client = {
   readonly name: string;
   readonly execution: boolean;
-  readonly target?: 'browser' | 'native';
+  readonly target: 'browser' | 'native' | undefined;
   readonly transportHeaders: readonly string[];
   readonly operations: readonly Operation[];
   readonly queries: readonly Operation[];
@@ -202,7 +267,13 @@ type OffsetQueryBinding = Readonly<{
   items: string;
 }>;
 
-export type InfiniteQueryBinding = CursorQueryBinding | OffsetQueryBinding;
+export type InfiniteQueryBindingInput = CursorQueryBinding | OffsetQueryBinding;
+
+// Public bindings are sparse inputs. Internal dispatch uses an owned tag rather
+// than the presence of a field that could be inherited from Object.prototype.
+export type InfiniteQueryBinding =
+  | (CursorQueryBinding & { readonly kind: 'cursor' })
+  | (OffsetQueryBinding & { readonly kind: 'offset' });
 
 type InfiniteQuery = Readonly<{
   operation: Operation;

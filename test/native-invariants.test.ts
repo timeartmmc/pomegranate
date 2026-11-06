@@ -239,7 +239,7 @@ void test('arbitrary JSON uses the same observed-count policy and detaches repea
   }
 });
 
-void test('wide checked parsers aggregate every sibling and preserve structural/unknown-key policy', () => {
+void test('wide checked parsers retain ordered bounded issues and preserve structural/unknown-key policy', () => {
   for (const direction of ['requestSchemas', 'responseSchemas'] as const) {
     for (const width of [256, 1024] as const) {
       const parser = schemas[direction][width === 256 ? 'Wide256' : 'Wide1024'];
@@ -268,8 +268,8 @@ void test('wide checked parsers aggregate every sibling and preserve structural/
       assert.equal(failure.success, false);
       if (!failure.success)
         assert.deepEqual(
-          failure.error.issues.map((issue) => issue.path[0]),
-          [...keys].sort(),
+          failure.error.issues.slice(0, 100).map((issue) => issue.path[0]),
+          [...keys].sort().slice(0, 100),
         );
       for (const key of ['unknown', '__proto__']) {
         const extra = { ...result };
@@ -388,8 +388,7 @@ void test('nullable constraints report their useful branch without expected-null
   }
 });
 
-void test('many constraint failures in a nullable container fail instead of throwing', () => {
-  // Above V8's call argument limit: union branches must not spread issues.
+void test('many constraint failures in a nullable container retain bounded diagnostics', () => {
   const count = 200_000;
   const entries = Object.fromEntries(
     Array.from({ length: count }, (_, index) => [`key${index}`, 'x']),
@@ -397,7 +396,11 @@ void test('many constraint failures in a nullable container fail instead of thro
   for (const registry of [schemas.requestSchemas, schemas.responseSchemas]) {
     const result = registry.NullableMap.safeParse(entries);
     assert.equal(result.success, false);
-    if (!result.success) assert.equal(result.error.issues.length, count);
+    if (!result.success) {
+      assert.equal(result.error.issues.length, 101);
+      assert.match(result.error.issues.at(-1)?.message ?? '', /omitted/);
+      assert.ok(result.error.message.length <= 8_192);
+    }
   }
   assert.throws(
     () => operations.checkNullableMap.build({ body: entries }),

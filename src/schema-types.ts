@@ -1,5 +1,6 @@
 import { fail } from './diagnostics.js';
-import { propertyKey } from './code.js';
+import { jsonSource, propertyKey } from './code.js';
+import { isRequired } from './required-index.js';
 import type { Client, Direction, Schema } from './model.js';
 
 function identifier(name: string): string {
@@ -32,14 +33,11 @@ export function schemaType(
     case 'object': {
       // TypeScript's {} includes non-null primitives. Match the empty-object
       // parser so named types cannot admit values the validator rejects.
-      if (Object.keys(schema.properties).length === 0)
-        return 'Record<string, never>';
-      const properties = Object.entries(schema.properties).map(
-        ([name, value]) => {
-          const required = schema.required.includes(name);
-          return `${propertyKey(name)}${required ? '' : '?'}: ${child(value)}${required ? '' : ' | undefined'};`;
-        },
-      );
+      if (schema.properties.size === 0) return 'Record<string, never>';
+      const properties = [...schema.properties].map(([name, value]) => {
+        const required = isRequired(schema.required, name);
+        return `${propertyKey(name)}${required ? '' : '?'}: ${child(value)}${required ? '' : ' | undefined'};`;
+      });
       // Explicit forbidden keys also reject structural assignments and spreads.
       for (const name of schema.forbidden ?? [])
         properties.push(`${propertyKey(name)}?: never;`);
@@ -66,7 +64,7 @@ export function schemaType(
     case 'boolean':
     case 'null':
       return schema.literals
-        ? schema.literals.map((literal) => JSON.stringify(literal)).join(' | ')
+        ? schema.literals.map((literal) => jsonSource(literal)).join(' | ')
         : schema.kind === 'integer'
           ? 'number'
           : schema.kind;

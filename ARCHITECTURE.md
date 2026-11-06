@@ -37,6 +37,13 @@ validators, builders, response parsers, and optional helpers use one normalized
 descriptor. Every operation and response must be represented or rejected with a
 useful diagnostic, including declarations excluded from selected clients.
 
+Fixed metadata records materialize every setting as an own field, including
+explicit defaults or `undefined` for absence. Keep sparse source and public
+configuration types at normalization boundaries; internal code consumes complete,
+kind-specific records. Use `Map` for internal tables indexed by contract names.
+Generated public values remain ordinary objects. Application payloads have their
+separate structural field policy; do not normalize them as compiler settings.
+
 Validate source declarations before projecting request and response fields.
 Use those projected schema graphs for usage validation, dependency selection,
 types, parsers, and protocol bindings. Keep fixed-object identity when projection

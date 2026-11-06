@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { QueryClient } from '@tanstack/query-core';
-import { compile, ContractError, runProject } from '../dist/index.js';
+import { compile, runProject } from '../dist/index.js';
 import { invalidOptions, runtimeInput } from './assertions.ts';
 import { temporary, fileSnapshot } from './helpers.ts';
 import { infiniteFixture, infiniteSelection } from './infinite-fixture.ts';
@@ -115,53 +115,62 @@ void test('infinite selection is explicit, deterministic and isolated from ordin
 });
 
 void test('invalid pagination configuration and unsupported neighboring contracts receive diagnostics', async () => {
-  for (const selection of [
-    null,
-    [],
-    { consumer: {} },
-    {
-      missing: {
-        listItems: infiniteSelection.infiniteQueries.consumer.listItems,
-      },
-    },
-    {
-      staff: {
-        listItems: infiniteSelection.infiniteQueries.consumer.listItems,
-      },
-    },
-    {
-      consumer: {
-        missing: infiniteSelection.infiniteQueries.consumer.listItems,
-      },
-    },
-    {
-      consumer: { listItems: { cursor: 'after', nextCursor: 'continuation' } },
-    },
-    {
-      consumer: {
-        listItems: {
-          ...infiniteSelection.infiniteQueries.consumer.listItems,
-          typo: true,
+  const binding = infiniteSelection.infiniteQueries.consumer.listItems;
+  for (const [selection, location, message] of [
+    [null, 'infiniteQueries', /expected an object/],
+    [[], 'infiniteQueries', /expected an object/],
+    [
+      { consumer: {} },
+      'infiniteQueries.consumer',
+      /expected at least one infinite query/,
+    ],
+    [
+      { missing: { listItems: binding } },
+      'infiniteQueries.missing',
+      /infinite queries must name a selected client/,
+    ],
+    [
+      { staff: { listItems: binding } },
+      'infiniteQueries.staff.listItems',
+      /infinite query operation must belong to this client/,
+    ],
+    [
+      { consumer: { missing: binding } },
+      'infiniteQueries.consumer.missing',
+      /unknown operationId "missing"/,
+    ],
+    [
+      {
+        consumer: {
+          listItems: { cursor: 'after', nextCursor: 'continuation' },
         },
       },
-    },
-    {
-      consumer: {
-        listItems: {
-          ...infiniteSelection.infiniteQueries.consumer.listItems,
-          cursor: 'unknown',
-        },
-      },
-    },
-  ])
+      'infiniteQueries.consumer.listItems.items',
+      /expected a nonempty string/,
+    ],
+    [
+      { consumer: { listItems: { ...binding, typo: true } } },
+      'infiniteQueries.consumer.listItems.typo',
+      /unsupported keyword; supported keys:/,
+    ],
+    [
+      { consumer: { listItems: { ...binding, cursor: 'unknown' } } },
+      'infiniteQueries.consumer.listItems.cursor',
+      /cursor must name an optional string or nullable string query parameter/,
+    ],
+  ] as const)
     await assert.rejects(
       invalidOptions(compile, infiniteFixture(), {
         ...infiniteSelection,
         infiniteQueries: selection,
       }),
-      ContractError,
+      { name: 'ContractError', location, message },
     );
-  const mutations: ((document: ReturnType<typeof infiniteFixture>) => void)[] =
+  const mutations: readonly [
+    (document: ReturnType<typeof infiniteFixture>) => void,
+    string,
+    string,
+  ][] = [
     [
       (d) => {
         Object.assign(
@@ -169,24 +178,44 @@ void test('invalid pagination configuration and unsupported neighboring contract
           { required: true },
         );
       },
+      '.cursor',
+      'cursor must name an optional string or nullable string query parameter',
+    ],
+    [
       (d) => {
         Object.assign(
           d.paths['/collections/{collection}/items'].get.parameters[1]!,
           { schema: { type: 'integer' } },
         );
       },
+      '.cursor',
+      'cursor must name an optional string or nullable string query parameter',
+    ],
+    [
       (d) => {
         Object.assign(
           d.paths['/collections/{collection}/items'].get.parameters[1]!,
           { schema: { type: ['integer', 'null'] } },
         );
       },
+      '.cursor',
+      'cursor must name an optional string or nullable string query parameter',
+    ],
+    [
       (d) => {
         d.components.schemas.Page.required = ['results'];
       },
+      '.responses.200.content.application/json',
+      'pagination field "continuation" must be required',
+    ],
+    [
       (d) => {
         d.components.schemas.Page.required = ['continuation'];
       },
+      '.responses.200.content.application/json',
+      'pagination field "results" must be required',
+    ],
+    [
       (d) => {
         Object.assign(d.components.schemas.Page.properties.results, {
           type: 'string',
@@ -196,29 +225,47 @@ void test('invalid pagination configuration and unsupported neighboring contract
           'items',
         );
       },
+      '.responses.200.content.application/json.results',
+      'items must name an array field',
+    ],
+    [
       (d) => {
         Object.assign(d.components.schemas.Page.properties.continuation, {
           type: 'string',
         });
       },
+      '.responses.200.content.application/json.continuation',
+      'nextCursor must name a nullable string field',
+    ],
+    [
       (d) => {
         Object.assign(d.components.schemas.Page.properties.continuation, {
           type: 'null',
         });
       },
+      '.responses.200.content.application/json.continuation',
+      'nextCursor must name a nullable string field',
+    ],
+    [
       (d) => {
         Object.assign(d.components.schemas.Page.properties, {
-          continuation: {
-            anyOf: [{ type: 'string' }, { type: 'integer' }],
-          },
+          continuation: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
         });
       },
+      '.responses.200.content.application/json.continuation',
+      'nextCursor must name a nullable string field',
+    ],
+    [
       (d) => {
         Object.assign(
           d.paths['/collections/{collection}/items'].get.responses,
           { 201: { description: 'Bodyless success' } },
         );
       },
+      '.responses.201',
+      'every infinite-query success must have a JSON object body',
+    ],
+    [
       (d) => {
         Object.assign(
           d.paths['/collections/{collection}/items'].get.responses,
@@ -234,11 +281,19 @@ void test('invalid pagination configuration and unsupported neighboring contract
           },
         );
       },
-    ];
-  for (const mutate of mutations) {
+      '.responses.201.content.application/json',
+      'every infinite-query success must have a fixed object body',
+    ],
+  ];
+  for (const [mutate, field, detail] of mutations) {
     const document = infiniteFixture();
     mutate(document);
-    await assert.rejects(compile(document, infiniteSelection), ContractError);
+    const location = `infiniteQueries.consumer.listItems${field}`;
+    await assert.rejects(compile(document, infiniteSelection), {
+      name: 'ContractError',
+      location,
+      message: `${location}: ${detail}`,
+    });
   }
 });
 
@@ -481,6 +536,19 @@ void test('nullable cursor defaults and literal narrowing retain ordinary reques
   }
 });
 
+void test('cursor bindings cannot use a header with the same name as the configured query parameter', async () => {
+  const document = infiniteFixture();
+  Object.assign(
+    document.paths['/collections/{collection}/items'].get.parameters[1]!,
+    { in: 'header' },
+  );
+  await assert.rejects(compile(document, infiniteSelection), {
+    name: 'ContractError',
+    message:
+      /\.cursor: cursor must name an optional string or nullable string query parameter/,
+  });
+});
+
 void test('nullable cursor bindings reject neighboring scalar types and required presence', async () => {
   for (const type of ['number', 'integer', 'boolean']) {
     const document = infiniteFixture();
@@ -597,7 +665,11 @@ void test('infinite outputs retain read-only drift and safe cleanup ownership', 
       },
     }),
   );
-  await assert.rejects(runProject(configFile), /belong to this client/);
+  await assert.rejects(runProject(configFile), {
+    name: 'ContractError',
+    location: 'infiniteQueries.consumer.unknown',
+    message: /unknown operationId "unknown"/,
+  });
   assert.deepEqual(await fileSnapshot(output), before);
   await writeFile(
     configFile,

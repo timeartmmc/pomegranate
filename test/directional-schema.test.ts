@@ -14,7 +14,7 @@ import { present } from './assertions.ts';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 function source(input: Record<string, InputSchema>): SchemaTable {
-  const schemas = Object.fromEntries(
+  const schemas = new Map(
     Object.entries(input).map(([name, schema]) => [
       name,
       normalizeSchema(schema, `components.schemas.${name}`),
@@ -23,7 +23,7 @@ function source(input: Record<string, InputSchema>): SchemaTable {
   const cache = schemaValidation();
   for (const name of orderSchemas(schemas))
     validateSchema(
-      present(schemas[name]),
+      present(schemas.get(name)),
       schemas,
       `components.schemas.${name}`,
       'component',
@@ -59,22 +59,21 @@ function shared() {
 
 void test('directional graphs remove fields and requiredness consistently through reference aliases', () => {
   const raw = shared();
-  const before = structuredClone(raw);
+  const before = shared();
   const { schemas } = projectSchemas(raw);
-  const request = object(present(schemas.request.Payload));
-  const response = object(present(schemas.response.Payload));
-  assert.deepEqual(Object.keys(request.properties), [
-    'label',
-    'nested',
-    'password',
-  ]);
+  const request = object(present(schemas.request.get('Payload')));
+  const response = object(present(schemas.response.get('Payload')));
+  assert.deepEqual(
+    [...request.properties.keys()],
+    ['label', 'nested', 'password'],
+  );
   assert.deepEqual(request.required, ['label', 'nested', 'password']);
   assert.deepEqual(request.forbidden, ['id']);
-  assert.deepEqual(Object.keys(response.properties), ['id', 'label', 'nested']);
+  assert.deepEqual([...response.properties.keys()], ['id', 'label', 'nested']);
   assert.deepEqual(response.required, ['id', 'label', 'nested']);
   assert.equal(response.forbidden, undefined);
   assert.deepEqual(raw, before);
-  assert.deepEqual(schemaAccess(present(raw.IdAlias), raw), {
+  assert.deepEqual(schemaAccess(present(raw.get('IdAlias')), raw), {
     readOnly: true,
     writeOnly: false,
   });
@@ -83,9 +82,11 @@ void test('directional graphs remove fields and requiredness consistently throug
 void test('all-excluded properties leave a fixed object and an empty required list', () => {
   const { schemas } = projectSchemas(shared());
   const nested = object(
-    present(object(present(schemas.response.Payload)).properties.nested),
+    present(
+      object(present(schemas.response.get('Payload'))).properties.get('nested'),
+    ),
   );
-  assert.deepEqual(nested.properties, {});
+  assert.equal(nested.properties.size, 0);
   assert.deepEqual(nested.required, []);
   assert.equal(nested.kind, 'object');
 });
@@ -93,23 +94,23 @@ void test('all-excluded properties leave a fixed object and an empty required li
 void test('projection preserves alias identity and annotations while separating directional cache identities', () => {
   const raw = shared();
   const projection = projectSchemas(raw);
-  for (const name of Object.keys(raw)) {
-    assert.notEqual(projection.schemas.request[name], raw[name]);
-    assert.notEqual(projection.schemas.response[name], raw[name]);
+  for (const name of raw.keys()) {
+    assert.notEqual(projection.schemas.request.get(name), raw.get(name));
+    assert.notEqual(projection.schemas.response.get(name), raw.get(name));
     assert.notEqual(
-      projection.schemas.request[name],
-      projection.schemas.response[name],
+      projection.schemas.request.get(name),
+      projection.schemas.response.get(name),
     );
     assert.equal(
-      projection.schema(present(raw[name]), 'request'),
-      projection.schemas.request[name],
+      projection.schema(present(raw.get(name)), 'request'),
+      projection.schemas.request.get(name),
     );
   }
-  const alias = present(projection.schemas.response.IdAlias);
+  const alias = present(projection.schemas.response.get('IdAlias'));
   assert.ok(alias.kind === 'ref');
   assert.equal(alias.name, 'Id');
   assert.equal(alias.location, 'components.schemas.IdAlias.$ref');
-  assert.equal(projection.schemas.response.Secret?.writeOnly, true);
+  assert.equal(projection.schemas.response.get('Secret')?.writeOnly, true);
 });
 
 void test('inline roots use the same projected tables without retaining caller data', () => {
@@ -125,7 +126,7 @@ void test('inline roots use the same projected tables without retaining caller d
   );
   validateSchema(inline, raw, 'requestBody', 'component');
   const request = object(projection.schema(inline, 'request'));
-  assert.deepEqual(Object.keys(request.properties), ['name']);
+  assert.deepEqual([...request.properties.keys()], ['name']);
   assert.deepEqual(request.required, ['name']);
   assert.deepEqual(request.forbidden, ['id']);
   const response = object(projection.schema(inline, 'response'));
@@ -152,7 +153,19 @@ void test('false annotations are neutral and direct or alias-combined contradict
     { type: 'string', readOnly: false, writeOnly: false },
     'field',
   );
-  assert.deepEqual(neutral, { kind: 'string' });
+  assert.deepEqual(neutral, normalizeSchema({ type: 'string' }, 'field'));
+  assert.equal(neutral.readOnly, false);
+  assert.equal(neutral.writeOnly, false);
+  for (const name of [
+    'readOnly',
+    'writeOnly',
+    'format',
+    'literals',
+    'minLength',
+    'maxLength',
+    'pattern',
+  ])
+    assert.equal(Object.hasOwn(neutral, name), true, name);
   assert.throws(
     () =>
       normalizeSchema(
@@ -214,16 +227,16 @@ void test('nullable wrapper annotations apply to the whole property without beco
     },
   });
   const projection = projectSchemas(raw);
-  const request = object(present(projection.schemas.request.Payload));
-  assert.deepEqual(request.properties, {});
+  const request = object(present(projection.schemas.request.get('Payload')));
+  assert.equal(request.properties.size, 0);
   assert.deepEqual(request.required, []);
-  const response = object(present(projection.schemas.response.Payload));
-  const field = present(response.properties.id);
+  const response = object(present(projection.schemas.response.get('Payload')));
+  const field = present(response.properties.get('id'));
   assert.ok(field.kind === 'union');
   assert.equal(field.readOnly, true);
-  assert.ok(field.branches.every((branch) => branch.readOnly === undefined));
+  assert.ok(field.branches.every((branch) => branch.readOnly === false));
   validateSchema(
-    present(projection.schemas.response.Payload),
+    present(projection.schemas.response.get('Payload')),
     projection.schemas.response,
     'reply',
     'response',
@@ -241,7 +254,10 @@ void test('conditional branch annotations reject before projection, including re
       (error) => {
         assert.ok(error instanceof ContractError);
         assert.equal(error.location, 'components.schemas.Choice.anyOf[0]');
-        assert.match(error.message, /union branches are unsupported/);
+        assert.match(
+          error.message,
+          /union branches are not supported in this version/,
+        );
         return true;
       },
     );
@@ -261,13 +277,13 @@ void test('excluded defaults and binaries do not enter response usage, while ret
   });
   const projection = projectSchemas(raw);
   validateSchema(
-    present(projection.schemas.response.Payload),
+    present(projection.schemas.response.get('Payload')),
     projection.schemas.response,
     'reply',
     'response',
   );
   validateSchema(
-    present(projection.schemas.request.Payload),
+    present(projection.schemas.request.get('Payload')),
     projection.schemas.request,
     'upload',
     'multipart',
@@ -275,7 +291,7 @@ void test('excluded defaults and binaries do not enter response usage, while ret
   assert.throws(
     () =>
       validateSchema(
-        present(projection.schemas.request.Payload),
+        present(projection.schemas.request.get('Payload')),
         projection.schemas.request,
         'json',
         'request',
@@ -287,7 +303,7 @@ void test('excluded defaults and binaries do not enter response usage, while ret
   );
   assert.doesNotThrow(() =>
     validateSchema(
-      present(retained.schemas.response.Value),
+      present(retained.schemas.response.get('Value')),
       retained.schemas.response,
       'reply',
       'response',
@@ -307,7 +323,7 @@ void test('active annotations outside object properties reject in the direction 
     assert.throws(
       () =>
         validateSchema(
-          present(projection.schemas.request[name]),
+          present(projection.schemas.request.get(name)),
           projection.schemas.request,
           name,
           'request',
@@ -315,7 +331,7 @@ void test('active annotations outside object properties reject in the direction 
       /readOnly.*object properties/,
     );
     validateSchema(
-      present(projection.schemas.response[name]),
+      present(projection.schemas.response.get(name)),
       projection.schemas.response,
       name,
       'response',
@@ -357,7 +373,7 @@ for (const [annotation, excluded, permitted] of [
     assert.throws(
       () =>
         validateSchema(
-          present(projection.schemas[excluded].Choice),
+          present(projection.schemas[excluded].get('Choice')),
           projection.schemas[excluded],
           'choice',
           excluded,
@@ -373,7 +389,7 @@ for (const [annotation, excluded, permitted] of [
       },
     );
     validateSchema(
-      present(projection.schemas[permitted].Choice),
+      present(projection.schemas[permitted].get('Choice')),
       projection.schemas[permitted],
       'choice',
       permitted,
@@ -395,7 +411,9 @@ void test('long alias chains preserve access annotations without recursive trave
     properties: { id: ref('Alias0') },
   };
   const raw = source(input);
-  const request = object(present(projectSchemas(raw).schemas.request.Payload));
+  const request = object(
+    present(projectSchemas(raw).schemas.request.get('Payload')),
+  );
   assert.deepEqual(request.required, []);
   assert.deepEqual(request.forbidden, ['id']);
 });

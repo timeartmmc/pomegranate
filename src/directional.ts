@@ -22,7 +22,7 @@ export function schemaAccess(schema: Schema, schemas: SchemaTable): Access {
   while (!cache.has(target)) {
     path.push(target);
     if (target.kind !== 'ref') break;
-    const next = schemas[target.name];
+    const next = schemas.get(target.name);
     if (!next) fail(target.location, `unresolved reference ${target.name}`);
     target = next;
   }
@@ -54,26 +54,23 @@ export function projectSchemas(raw: SchemaTable): {
     let projected: Schema;
     if (schema.kind === 'object') {
       const forbidden: string[] = [];
-      const properties = Object.fromEntries(
-        Object.entries(schema.properties).flatMap(([name, value]) => {
-          const access = schemaAccess(value, raw);
-          const excluded =
-            direction === 'request' ? access.readOnly : access.writeOnly;
-          if (excluded) {
-            if (direction === 'request') forbidden.push(name);
-            return [];
-          }
-          return [[name, child(value)]];
-        }),
-      );
+      const properties = new Map<string, Schema>();
+      for (const [name, value] of schema.properties) {
+        const access = schemaAccess(value, raw);
+        const excluded =
+          direction === 'request' ? access.readOnly : access.writeOnly;
+        if (excluded) {
+          if (direction === 'request') forbidden.push(name);
+          continue;
+        }
+        properties.set(name, child(value));
+      }
       // Preserve a fixed object's kind even when every field is excluded. Raw
       // JSON renormalization would reinterpret an empty declaration as a map.
       projected = {
         ...schema,
         properties,
-        required: schema.required.filter((name) =>
-          Object.hasOwn(properties, name),
-        ),
+        required: schema.required.filter((name) => properties.has(name)),
         ...(forbidden.length ? { forbidden } : {}),
       };
     } else if (schema.kind === 'array')
@@ -92,11 +89,8 @@ export function projectSchemas(raw: SchemaTable): {
     return projected;
   }
   const table = (direction: Direction): SchemaTable =>
-    Object.fromEntries(
-      Object.entries(raw).map(([name, schema]) => [
-        name,
-        project(schema, direction),
-      ]),
+    new Map(
+      [...raw].map(([name, schema]) => [name, project(schema, direction)]),
     );
   return {
     schemas: { request: table('request'), response: table('response') },

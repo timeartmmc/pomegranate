@@ -44,7 +44,7 @@ export function renderTypes(
       case 'ref':
         return binary[direction].get(schema.name)!;
       case 'object':
-        return Object.values(schema.properties).some((value) =>
+        return [...schema.properties.values()].some((value) =>
           hasBinary(value, direction),
         );
       case 'array':
@@ -66,7 +66,7 @@ export function renderTypes(
     for (const direction of ['request', 'response'] as const)
       binary[direction].set(
         name,
-        hasBinary(descriptor.schemas[direction][name]!, direction),
+        hasBinary(descriptor.schemas[direction].get(name)!, direction),
       );
 
   const key = (name: string, direction: Direction, target?: Client['target']) =>
@@ -132,7 +132,7 @@ export function renderTypes(
       // an exact type-shape comparison, including directional field projection
       // and browser/native file types, without expanding reference graphs.
       const shape = schemaType(
-        descriptor.schemas[variant.direction][name]!,
+        descriptor.schemas[variant.direction].get(name)!,
         variant.direction,
         variant.target,
         (child, direction) =>
@@ -190,7 +190,7 @@ export function renderTypes(
         return source;
       };
       const value = schemaType(
-        descriptor.schemas[entry.direction][entry.name]!,
+        descriptor.schemas[entry.direction].get(entry.name)!,
         entry.direction,
         entry.target,
         (child, direction) => {

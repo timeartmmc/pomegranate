@@ -180,6 +180,18 @@ void test('request bounds count serialized snapshot fields and preserve single-r
 });
 
 void test('bounded maps retain their bounds when getters change the captured member set', async (t) => {
+  const direct = fixture();
+  Object.assign(present(direct.components.schemas.CountedMap), {
+    minProperties: 2,
+  });
+  const directDirectory = await generatedTestWorkspace(
+    t,
+    await compile(direct, selection),
+  );
+  const directModules = await importGenerated<PropertyCountSchemas>(
+    directDirectory,
+    'client.consumer.schemas.ts',
+  );
   const document = fixture();
   document.components.schemas.MapBase = present(
     document.components.schemas.CountedMap,
@@ -196,7 +208,12 @@ void test('bounded maps retain their bounds when getters change the captured mem
     directory,
     'client.consumer.schemas.ts',
   );
-  for (const table of [modules.requestSchemas, modules.responseSchemas]) {
+  for (const table of [
+    directModules.requestSchemas,
+    directModules.responseSchemas,
+    modules.requestSchemas,
+    modules.responseSchemas,
+  ]) {
     const validator = present(table.CountedMap);
     for (const removed of [undefined, 'a', 'b']) {
       let reads = 0;

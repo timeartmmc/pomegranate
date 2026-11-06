@@ -9,6 +9,9 @@ import { stringify } from 'yaml';
 import { compile, ContractError, runProject } from '../dist/index.js';
 import { identifier } from '../dist/code.js';
 import { schemaRenderer } from '../dist/emit-schema.js';
+import { renderTypes } from '../dist/emit-types.js';
+import { schemaNode, constraintRecord } from '../dist/schema-node.js';
+import type { Descriptor, Schema, Standalone } from '../dist/model.js';
 import { parseYaml } from '../dist/yaml.js';
 import { fileSnapshot, fixture, temporary } from './helpers.ts';
 import { queryFixture } from './query-fixture.ts';
@@ -17,18 +20,94 @@ import { record } from './assertions.ts';
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 
+void test('type-module budgets count real expanded references before output, including encoded long component names', () => {
+  for (const length of [256, 4096]) {
+    const name = '_'.repeat(length);
+    const reference = schemaNode({
+      kind: 'ref',
+      name,
+      location: 'synthetic.$ref',
+      constraints: constraintRecord(),
+    });
+    const schemas: Record<string, Schema> = {
+      [name]: schemaNode({ kind: 'string' }),
+      Wide: schemaNode({
+        kind: 'object',
+        properties: new Map(
+          Array.from({ length: 4096 }, (_, index) => [
+            `field${index}`,
+            reference,
+          ]),
+        ),
+        required: [],
+      }),
+    };
+    const table = new Map(Object.entries(schemas));
+    const schemaOrder = [name, 'Wide'];
+    const descriptor: Descriptor = {
+      policy: {
+        version: 3,
+        auth: new Map(),
+        fields: new Map(),
+        required: [],
+        surfaces: [],
+      },
+      schemas: { request: table, response: table },
+      schemaOrder,
+      operations: [],
+    };
+    const roots: Standalone[] = [
+      {
+        name: 'wide',
+        direction: 'request',
+        schema: schemas.Wide!,
+        schemaOrder,
+      },
+    ];
+    let outputs = 0;
+    const render = () =>
+      renderTypes(descriptor, [], roots, (_name, source) => {
+        outputs++;
+        assert.ok(
+          Buffer.byteLength(source) <= 32 * 1024 * 1024,
+          'oversized type module reached output',
+        );
+      });
+    if (length === 4096) {
+      assert.throws(
+        render,
+        (error) =>
+          error instanceof ContractError &&
+          /generated source exceeds the 32 MiB limit/.test(error.message),
+      );
+      assert.equal(outputs, 0);
+    } else {
+      render();
+      assert.equal(outputs, 1);
+    }
+  }
+});
+
 void test('declaration budgets count UTF-8 bytes across drained schema chunks', () => {
   const renderer = schemaRenderer(
-    { request: {}, response: {} },
+    { request: new Map(), response: new Map() },
     () => identifier('unused'),
     () => 'unknown',
   );
   const chunk = `//${'é'.repeat(512 * 1024 - 1)}`;
   assert.equal(Buffer.byteLength(chunk), 1024 * 1024);
-  for (let index = 0; index < 32; index++) {
+  for (let index = 0; index < 31; index++) {
     renderer.push(chunk);
     renderer.takeDeclarations();
   }
+  // The final multibyte character occupies two bytes. Finish one byte below
+  // the limit, then accept the exact limit before rejecting its first excess.
+  renderer.push(chunk.slice(0, -1));
+  renderer.takeDeclarations();
+  renderer.push('x');
+  renderer.takeDeclarations();
+  renderer.push('x');
+  renderer.takeDeclarations();
   // renderComponents drains declarations after every schema. Draining must not
   // reset the budget while the caller retains those module fragments.
   assert.throws(
@@ -37,6 +116,42 @@ void test('declaration budgets count UTF-8 bytes across drained schema chunks', 
       error instanceof ContractError &&
       /generated source exceeds the 32 MiB limit/.test(error.message),
   );
+});
+
+void test('input byte limits accept valid JSON one byte below and at the boundary and reject one byte above', async (t) => {
+  const root = await temporary(t);
+  const input = join(root, 'openapi.json');
+  const config = join(root, 'pom.json');
+  const output = join(root, 'generated');
+  const source = JSON.stringify(fixture());
+  await writeFile(input, source);
+  await writeFile(
+    config,
+    JSON.stringify({
+      version: 2,
+      openapi: './openapi.json',
+      output: './generated',
+      clients: ['consumer'],
+    }),
+  );
+  await runProject(config);
+  const before = await fileSnapshot(output);
+  const maximum = 32 * 1024 * 1024;
+  for (const size of [maximum - 1, maximum, maximum + 1]) {
+    const padded = source + ' '.repeat(size - Buffer.byteLength(source));
+    assert.equal(Buffer.byteLength(padded), size);
+    await writeFile(input, padded);
+    if (size <= maximum) {
+      assert.equal((await runProject(config, { check: true })).clean, true);
+    } else {
+      await assert.rejects(runProject(config, { check: true }), {
+        name: 'ContractError',
+        location: input,
+        message: `${input}: input exceeds the 32 MiB file limit`,
+      });
+    }
+    assert.deepEqual(await fileSnapshot(output), before);
+  }
 });
 
 void test('shared policy metadata is budgeted before joining operation declarations', async () => {

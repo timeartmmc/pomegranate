@@ -32,7 +32,7 @@ export function validatePagination(
 ): void {
   if (operation.method !== 'GET' || operation.body.kind !== 'none')
     fail(location, 'infinite queries require a bodyless GET operation');
-  const offset = 'offset' in binding;
+  const offset = binding.kind === 'offset';
   const requestSchemas = descriptor.schemas.request;
   const responseSchemas = descriptor.schemas.response;
   const parameter = operation.parameters.find(
@@ -58,7 +58,7 @@ export function validatePagination(
           `${location}.offset`,
           'offset schema must accept the initial value 0',
         );
-      schema = requestSchemas[schema.name]!;
+      schema = requestSchemas.get(schema.name)!;
     }
     if (
       schema.kind !== 'integer' ||
@@ -103,9 +103,7 @@ export function validatePagination(
       );
     // Any declared representation can arrive. Pagination accessors must be valid
     // for all of them before a query can cache or traverse a successful page.
-    for (const [contentType, representation] of Object.entries(
-      response.body.content,
-    )) {
+    for (const [contentType, representation] of response.body.content) {
       const path = `${responsePath}.content.${contentType}`;
       if (representation.kind !== 'json')
         fail(path, 'every infinite-query success must have a JSON object body');
@@ -123,14 +121,25 @@ export function validatePagination(
             binding.total,
           ]
         : [binding.items, binding.nextCursor];
-      for (const name of fields)
+      for (const name of fields) {
+        if (!body.properties.has(name)) {
+          const hint =
+            name.includes('.') || name.includes('[')
+              ? '; nested paths are not supported in this version'
+              : '';
+          fail(
+            path,
+            `pagination field ${JSON.stringify(name)} must name an existing top-level response property${hint}`,
+          );
+        }
         if (!body.required.includes(name))
           fail(
             path,
             `pagination field ${JSON.stringify(name)} must be required`,
           );
+      }
       const items = resolveSchema(
-        body.properties[binding.items]!,
+        body.properties.get(binding.items)!,
         responseSchemas,
       );
       if (items.kind !== 'array')
@@ -142,7 +151,7 @@ export function validatePagination(
           binding.total,
         ])
           if (
-            resolveSchema(body.properties[name]!, responseSchemas).kind !==
+            resolveSchema(body.properties.get(name)!, responseSchemas).kind !==
             'integer'
           )
             fail(
@@ -152,7 +161,10 @@ export function validatePagination(
         continue;
       }
       if (
-        !nullableString(body.properties[binding.nextCursor]!, responseSchemas)
+        !nullableString(
+          body.properties.get(binding.nextCursor)!,
+          responseSchemas,
+        )
       )
         fail(
           `${path}.${binding.nextCursor}`,

@@ -1,6 +1,58 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeSchema, validateSchema } from '../dist/schemas.js';
+import { schemaType, typeSymbol } from '../dist/schema-types.js';
+import { schemaRenderer } from '../dist/emit-schema.js';
+import { identifier } from '../dist/code.js';
+
+void test('wide required objects retain their contract with linear membership reads during type and parser emission', () => {
+  const size = 4_000;
+  const names = Array.from({ length: size }, (_, index) => `field${index}`);
+  const schema = normalizeSchema(
+    {
+      type: 'object',
+      properties: Object.fromEntries(
+        names.map((name) => [name, { type: 'string' }]),
+      ),
+      required: names,
+    },
+    'wide',
+  );
+  assert.ok(schema.kind === 'object');
+  let reads = 0;
+  const required = new Proxy(schema.required, {
+    get(target, key, receiver): unknown {
+      if (
+        typeof key === 'string' &&
+        key !== 'length' &&
+        Object.hasOwn(target, key)
+      )
+        reads++;
+      return Reflect.get(target, key, receiver) as unknown;
+    },
+  });
+  const indexed = { ...schema, required };
+  assert.equal(schemaType(indexed, 'request'), schemaType(schema, 'request'));
+  const renderer = schemaRenderer(
+    { request: new Map([['Wide', indexed]]), response: new Map() },
+    identifier,
+    typeSymbol,
+  );
+  renderer.define(
+    indexed,
+    'request',
+    'wide',
+    'wide',
+    'parse_Wide',
+    'Wide',
+    false,
+  );
+  assert.ok(
+    reads <= 2 * size,
+    `required membership must stay linear; observed ${reads} reads`,
+  );
+  assert.deepEqual([...required], schema.required);
+});
 
 void test('large enums retain order and reject late and SameValueZero duplicates', () => {
   const values = Array.from({ length: 80_000 }, (_, index) => `value${index}`);
@@ -20,7 +72,7 @@ void test('large enums retain order and reject late and SameValueZero duplicates
 
 void test('discriminator coverage reads mapping values a bounded number of times', () => {
   const size = 512;
-  const schemas = Object.fromEntries(
+  const schemas = new Map(
     Array.from({ length: size }, (_, index) => [
       `Branch${index}`,
       normalizeSchema(
@@ -35,13 +87,13 @@ void test('discriminator coverage reads mapping values a bounded number of times
   );
   const normalized = normalizeSchema(
     {
-      oneOf: Object.keys(schemas).map((name) => ({
+      oneOf: [...schemas.keys()].map((name) => ({
         $ref: `#/components/schemas/${name}`,
       })),
       discriminator: {
         propertyName: 'kind',
         mapping: Object.fromEntries(
-          Object.keys(schemas).map((name, index) => [
+          [...schemas.keys()].map((name, index) => [
             `kind${index}`,
             `#/components/schemas/${name}`,
           ]),
@@ -51,21 +103,29 @@ void test('discriminator coverage reads mapping values a bounded number of times
     'selection',
   );
   assert.ok(normalized.kind === 'union' && normalized.discriminator);
-  let reads = 0;
-  const mapping = new Proxy(normalized.discriminator.mapping, {
-    get(target, key, receiver): unknown {
-      if (typeof key === 'string' && Object.hasOwn(target, key)) reads++;
-      return Reflect.get(target, key, receiver) as unknown;
-    },
-  });
+  class CountedMapping extends Map<string, string> {
+    reads = 0;
+    override get(name: string) {
+      this.reads++;
+      return super.get(name);
+    }
+    override *values() {
+      for (const value of super.values()) {
+        this.reads++;
+        yield value;
+      }
+      return undefined;
+    }
+  }
+  const mapping = new CountedMapping(normalized.discriminator.mapping);
   const selection = {
     ...normalized,
     discriminator: { ...normalized.discriminator, mapping },
   };
   validateSchema(selection, schemas, 'selection');
   assert.ok(
-    reads <= 3 * size,
-    `mapping traversal must stay linear; observed ${reads} reads`,
+    mapping.reads <= 3 * size,
+    `mapping traversal must stay linear; observed ${mapping.reads} reads`,
   );
   assert.throws(
     () =>
@@ -74,7 +134,7 @@ void test('discriminator coverage reads mapping values a bounded number of times
           ...selection,
           discriminator: {
             ...selection.discriminator,
-            mapping: { ...mapping, kind0: 'Branch1' },
+            mapping: new Map(mapping).set('kind0', 'Branch1'),
           },
         },
         schemas,

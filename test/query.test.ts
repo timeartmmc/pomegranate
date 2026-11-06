@@ -141,19 +141,43 @@ void test('query generation is opt-in, deterministic, and isolated by client', a
 });
 
 void test('invalid query selections receive explicit diagnostics', async () => {
-  for (const [queries, message] of [
-    [null, /queries.*expected an object/],
-    [[], /queries.*expected an object/],
-    [{ consumer: [] }, /nonempty array/],
-    [{ consumer: [7] }, /nonempty array/],
-    [{ consumer: ['readItem', 'readItem'] }, /duplicate query operation/],
-    [{ missing: ['readItem'] }, /selected client/],
-    [{ staff: ['readOutcome'] }, /belong to this client/],
-    [{ consumer: ['missing'] }, /belong to this client/],
+  for (const [queries, location, message] of [
+    [null, 'queries', /expected an object/],
+    [[], 'queries', /expected an object/],
+    [
+      { consumer: [] },
+      'queries.consumer',
+      /expected a nonempty array of operation identifiers/,
+    ],
+    [
+      { consumer: [7] },
+      'queries.consumer',
+      /expected a nonempty array of operation identifiers/,
+    ],
+    [
+      { consumer: ['readItem', 'readItem'] },
+      'queries.consumer',
+      /duplicate query operation/,
+    ],
+    [
+      { missing: ['readItem'] },
+      'queries.missing',
+      /queries must name a selected client/,
+    ],
+    [
+      { staff: ['readOutcome'] },
+      'queries.staff.readOutcome',
+      /query operation must belong to this client/,
+    ],
+    [
+      { consumer: ['missing'] },
+      'queries.consumer.missing',
+      /unknown operationId "missing"/,
+    ],
   ] as const) {
     await assert.rejects(
       invalidOptions(compile, queryFixture(), { ...querySelection, queries }),
-      message,
+      { name: 'ContractError', location, message },
     );
   }
   const document = queryFixture();
@@ -173,14 +197,22 @@ void test('invalid query selections receive explicit diagnostics', async () => {
   });
   await assert.rejects(
     compile(document, { ...querySelection, queries: { consumer: ['write'] } }),
-    /only bodyless GET and HEAD/,
+    {
+      name: 'ContractError',
+      location: 'queries.consumer.write',
+      message: /only bodyless GET and HEAD/,
+    },
   );
   Object.assign(document.paths['/outcome'].get.responses, {
     default: { description: 'Unsupported' },
   });
   await assert.rejects(
     compile(document, { ...querySelection, queries: { consumer: ['health'] } }),
-    /status|response/,
+    {
+      name: 'ContractError',
+      location: 'paths./outcome.get.responses.default',
+      message: /only exact numeric final HTTP statuses 200–599 are supported/,
+    },
   );
 });
 
@@ -534,7 +566,7 @@ void test('options capture immutable request and context snapshots without retai
     await client.fetchQuery(options);
     assert.equal(seen?.url, '/items/original?tags=first');
     assert.equal(seen?.headers['X-View'], 'small');
-    assert.deepEqual(seenContext, { locale: 'en', session: 'one' });
+    assert.deepEqual({ ...seenContext }, { locale: 'en', session: 'one' });
     assert.ok(Object.isFrozen(seenContext));
     assert.equal(JSON.stringify(options.queryKey), snapshot);
     assert.ok(Object.isFrozen(options));
@@ -1053,7 +1085,11 @@ void test('query outputs participate in read-only drift checks and safe stale-fi
     configFile,
     JSON.stringify({ ...config, queries: { consumer: ['missing'] } }),
   );
-  await assert.rejects(runProject(configFile), /belong to this client/);
+  await assert.rejects(runProject(configFile), {
+    name: 'ContractError',
+    location: 'queries.consumer.missing',
+    message: /unknown operationId "missing"/,
+  });
   assert.deepEqual(await fileSnapshot(output), previous);
   await writeFile(configFile, JSON.stringify({ ...config, queries: {} }));
   assert.equal((await runProject(configFile, { check: true })).clean, false);

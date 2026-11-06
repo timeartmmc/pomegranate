@@ -1,32 +1,44 @@
-import { data, identifier, literal, object, propertyKey } from './code.js';
+import {
+  data,
+  identifier,
+  jsonSource,
+  literal,
+  object,
+  propertyKey,
+} from './code.js';
 import type { Expression } from './code.js';
 import { fail } from './diagnostics.js';
 import type {
   Client,
+  ConstraintInput,
   Constraints,
+  SchemaTable,
   Direction,
   DirectionalSchemas,
   Schema,
   SchemaFormat,
 } from './model.js';
+import { hasConstraints, constraintRecord } from './schema-node.js';
 import { hasUnicodeProperty, intersectConstraints } from './scalar-rules.js';
 import { parseSymbol, schemaType } from './schema-types.js';
+import { isRequired } from './required-index.js';
+import { stringFormatHelpers } from './formats.js';
+import { schemaBranchLocation } from './schemas.js';
 import { sourceBudget } from './source-budget.js';
-import type { StringFormat } from './runtime.js';
 
 // Follow references to the first non-reference component. Constraint sets are
 // applied from the terminal component outwards, preserving sibling-rule order.
 function aliasChain(
   value: Extract<Schema, { kind: 'ref' }>,
-  schemas: Readonly<Record<string, Schema>>,
+  schemas: SchemaTable,
 ): { terminal: string; sets: Constraints[] } {
   const sets: Constraints[] = [value.constraints];
   let terminal = value.name;
-  let target = schemas[terminal]!;
+  let target = schemas.get(terminal)!;
   while (target.kind === 'ref') {
     sets.push(target.constraints);
     terminal = target.name;
-    target = schemas[terminal]!;
+    target = schemas.get(terminal)!;
   }
   return { terminal, sets: sets.reverse() };
 }
@@ -35,7 +47,7 @@ function aliasChain(
 // suffixes without crossing a constrained alias or caching mutable input documents.
 // Normalization has already diagnosed missing targets and reference cycles.
 export function parserIdentities(
-  schemas: Readonly<Record<string, Schema>>,
+  schemas: SchemaTable,
 ): (name: string) => string {
   const cache = new Map<string, string>();
   return (name) => {
@@ -47,9 +59,8 @@ export function parserIdentities(
         target = known;
         break;
       }
-      const schema = schemas[target]!;
-      if (schema.kind !== 'ref' || Object.keys(schema.constraints).length > 0)
-        break;
+      const schema = schemas.get(target)!;
+      if (schema.kind !== 'ref' || hasConstraints(schema.constraints)) break;
       path.push(target);
       target = schema.name;
     }
@@ -66,17 +77,6 @@ export type ObjectField = Readonly<{
 }>;
 
 const stringRules = ['minLength', 'maxLength', 'pattern'] as const;
-const formatHelpers = {
-  int64: 'int64StringFormat',
-  byte: 'byteFormat',
-  date: 'dateFormat',
-  'date-time': 'dateTimeFormat',
-  uuid: 'uuidFormat',
-  email: 'emailFormat',
-  uri: 'uriFormat',
-  ipv4: 'ipv4Format',
-  ipv6: 'ipv6Format',
-} satisfies Record<StringFormat, keyof typeof import('./runtime.js')>;
 const numberRules = [
   'float',
   'minimum',
@@ -89,7 +89,7 @@ const arrayRules = ['minItems', 'maxItems'] as const;
 const objectRules = ['minProperties', 'maxProperties'] as const;
 
 function rules(
-  limits: Constraints,
+  limits: ConstraintInput,
   keys: readonly (keyof Constraints)[],
   extra: readonly (readonly [string, Expression])[] = [],
 ): Expression | undefined {
@@ -199,11 +199,11 @@ export function schemaRenderer(
       }
       pending.push({ value: current, name });
       terminal = current.name;
-      current = schemas[direction][terminal]!;
+      current = schemas[direction].get(terminal)!;
       name = parseSymbol(terminal, direction);
       known = cache.get(current);
     }
-    const kind = schemas[direction][known.terminal]!.kind;
+    const kind = schemas[direction].get(known.terminal)!.kind;
     const keys = kind === 'string' ? stringRules : numberRules;
     for (const entry of pending.reverse()) {
       const own =
@@ -284,8 +284,8 @@ export function schemaRenderer(
       );
     };
     // Bound TypeScript's failure-condition flow graph while retaining a checked
-    // return for every field. Parse every chunk before testing failures so a
-    // wide invalid object still reports all sibling issues in source order.
+    // return for every field. Preserve sibling issues in source order until
+    // the shared issue budget stops further chunks.
     if (fields.length > 128) {
       helpers.add('invalid');
       const body = [
@@ -297,9 +297,7 @@ export function schemaRenderer(
       for (let start = 0; start < fields.length; start += 64) {
         const group = fields.slice(start, start + 64);
         const parser = `${name}_fields${start / 64}`;
-        const picked = group
-          .map((entry) => JSON.stringify(entry.name))
-          .join(' | ');
+        const picked = group.map((entry) => jsonSource(entry.name)).join(' | ');
         objectParser(parser, `Pick<${type}, ${picked}>`, group, false);
         const value = `group${start / 64}`;
         values.push(value);
@@ -330,7 +328,7 @@ export function schemaRenderer(
     const failures = fields.map((entry, index) => {
       const helper = use(entry.required ? 'field' : 'optionalField');
       body.push(
-        `const v${index} = ${helper.source}(source, ${JSON.stringify(entry.name)}, ${entry.parse.source}, issues);`,
+        `const v${index} = ${helper.source}(source, ${jsonSource(entry.name)}, ${entry.parse.source}, issues);`,
       );
       return `v${index} === invalid`;
     });
@@ -364,7 +362,7 @@ export function schemaRenderer(
     location: string,
     scope: string,
   ): Expression {
-    if (value.kind === 'ref' && Object.keys(value.constraints).length === 0)
+    if (value.kind === 'ref' && !hasConstraints(value.constraints))
       return component(value.name, direction);
     if (value.kind === 'binary') {
       if (!target)
@@ -402,7 +400,7 @@ export function schemaRenderer(
   }
 
   function stringFormat(format: SchemaFormat): Expression {
-    if (typeof format === 'string') return use(formatHelpers[format]);
+    if (typeof format === 'string') return use(stringFormatHelpers[format]);
     const known = registeredFormats.get(format.name);
     if (known) return known;
     const definition = object([
@@ -465,11 +463,11 @@ export function schemaRenderer(
           fail(location, 'binary schema requires a multipart client target');
         return call(target === 'browser' ? 'browserFile' : 'nativeFile');
       case 'ref': {
-        if (Object.keys(value.constraints).length === 0) return;
+        if (!hasConstraints(value.constraints)) return;
         const refinement = scalarRefinement(value, direction, name);
         if (refinement.rules !== null)
           return call(
-            schemas[direction][refinement.terminal]!.kind === 'string'
+            schemas[direction].get(refinement.terminal)!.kind === 'string'
               ? 'refineText'
               : 'refineNumber',
             reference(refinement.terminal, direction).source,
@@ -481,25 +479,25 @@ export function schemaRenderer(
         // Flatten aliases before delegation. Rebuilding a terminal container's
         // children here would expand shared bounded-reference graphs into trees.
         const { terminal, sets } = aliasChain(value, schemas[direction]);
-        const terminalSchema = schemas[direction][terminal]!;
+        const terminalSchema = schemas[direction].get(terminal)!;
         const base = reference(terminal, direction).source;
         if (terminalSchema.kind === 'object' || terminalSchema.kind === 'map') {
           const merged = sets.reduce<Constraints>(
             intersectConstraints,
-            terminalSchema,
+            constraintRecord(terminalSchema),
           );
           const limits = rules(merged, objectRules)!;
           return call(
             'refineObject',
             base,
             constant(`rules_${name}`, limits.source, 'ObjectRules'),
-            JSON.stringify(terminalSchema.kind === 'map' ? 'map' : direction),
+            jsonSource(terminalSchema.kind === 'map' ? 'map' : direction),
           );
         }
         if (terminalSchema.kind === 'array') {
           const merged = sets.reduce<Constraints>(
             intersectConstraints,
-            terminalSchema,
+            constraintRecord(terminalSchema),
           );
           const limits = rules(merged, arrayRules)!;
           // The canonical parser owns its item parser and observes length once.
@@ -530,17 +528,17 @@ export function schemaRenderer(
           const cases = constant(
             `cases_${name}`,
             object(
-              Object.keys(mapping)
+              [...mapping.keys()]
                 .sort()
-                .map((tag) => [tag, component(mapping[tag]!, direction)]),
+                .map((tag) => [tag, component(mapping.get(tag)!, direction)]),
             ).source,
           );
           return returns(
-            `${use('taggedUnion').source}<${type}>(input, issues, ${JSON.stringify(propertyName)}, ${cases})`,
+            `${use('taggedUnion').source}<${type}>(input, issues, ${jsonSource(propertyName)}, ${cases})`,
           );
         }
         const [left, right, ...rest] = value.branches.map((branch, index) =>
-          child(branch, `${location}.anyOf[${index}]`),
+          child(branch, schemaBranchLocation(value, location, index)),
         );
         if (!left || !right || rest.length > 0)
           fail(location, 'expected a two-branch union');
@@ -552,9 +550,9 @@ export function schemaRenderer(
         return objectParser(
           name,
           type,
-          Object.entries(value.properties).map(([field, schema]) => ({
+          [...value.properties].map(([field, schema]) => ({
             name: field,
-            required: value.required.includes(field),
+            required: isRequired(value.required, field),
             parse: child(schema, `${location}.properties.${field}`),
           })),
           direction === 'request',
@@ -620,8 +618,9 @@ export function schemaRenderer(
     // Membership completes those checks. Only Unicode-property patterns remain
     // deferred: the consuming engine can classify characters differently.
     // Reference siblings still apply their separate refinements.
+    // This JSON is runtime message text; only the outer string is source-escaped.
     const expected = (value.literals ?? []).map((item) => JSON.stringify(item));
-    const message = JSON.stringify(
+    const message = jsonSource(
       `expected ${expected.length === 1 ? expected[0] : `one of ${expected.join(', ')}`}`,
     );
     const deferredRules: (readonly [string, Expression])[] = [];
@@ -646,7 +645,7 @@ export function schemaRenderer(
     const body = [
       // Switch narrowing keeps large enums checked without a long flow chain.
       'switch (input) {',
-      ...(value.literals ?? []).map((item) => `case ${JSON.stringify(item)}:`),
+      ...(value.literals ?? []).map((item) => `case ${jsonSource(item)}:`),
       ...(patternCheck ? [patternCheck] : []),
       'return input;',
       `default: return ${use('report').source}(issues, ${message}, true);`,

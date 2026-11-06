@@ -32,7 +32,8 @@ void test('empty schemas accept every JSON type through aliases, containers and 
     document.openapi = version;
     if (version.startsWith('3.0.'))
       Object.assign(document.components.schemas, {
-        Nullable: { nullable: true },
+        // Unconstrained JSON already accepts null without a nullable flag.
+        Nullable: {},
       });
     const before = structuredClone(document);
     const root = await generatedTestWorkspace(

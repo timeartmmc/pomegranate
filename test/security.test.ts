@@ -104,24 +104,33 @@ void test('bearer schemes are interpreted by semantics, not their component name
     security: [{ 'Completely.Different-Auth_1': [] }],
   });
   const descriptor = buildDescriptor(document);
-  assert.equal(operation(descriptor, 'prepareWidget').policy.auth, 'session');
+  assert.equal(
+    operation(descriptor, 'prepareWidget').policy.get('auth'),
+    'session',
+  );
   assert.deepEqual(operation(descriptor, 'prepareWidget').security, {
     transport: 'bearer',
     scheme: 'Completely.Different-Auth_1',
   });
   assert.equal(
-    operation(descriptor, 'getStaffReport').policy.auth,
+    operation(descriptor, 'getStaffReport').policy.get('auth'),
     'partnerStaff',
   );
   assert.deepEqual(operation(descriptor, 'getStaffReport').security, {
     transport: 'bearer',
     scheme: 'Completely.Different-Auth_1',
   });
-  assert.equal(operation(descriptor, 'checkHealth').policy.auth, 'public');
+  assert.equal(
+    operation(descriptor, 'checkHealth').policy.get('auth'),
+    'public',
+  );
   assert.deepEqual(operation(descriptor, 'checkHealth').security, {
     transport: 'none',
   });
-  assert.equal(operation(descriptor, 'widgetOptions').policy.auth, 'public');
+  assert.equal(
+    operation(descriptor, 'widgetOptions').policy.get('auth'),
+    'public',
+  );
   assert.deepEqual(operation(descriptor, 'widgetOptions').security, {
     transport: 'none',
   });
