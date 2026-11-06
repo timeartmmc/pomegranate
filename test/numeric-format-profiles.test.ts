@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
-import { compile } from '../dist/index.js';
+import { compile, ContractError } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
 import { commandError } from './assertions.ts';
 import {
@@ -193,6 +193,31 @@ void test('numeric format references preserve string constraints and finite-floa
     assert.equal(bounded.schema.parse(value), value);
   for (const value of [-2, 1, 1e40])
     assert.equal(bounded.schema.safeParse(value).success, false);
+});
+
+void test('unknown numeric formats diagnose supported numeric formats before selection', async () => {
+  for (const modern of [true, false])
+    for (const nullable of [false, true])
+      for (const [type, detail] of [
+        [
+          'number',
+          'unsupported numeric format; number schemas support float or double',
+        ],
+        ['integer', 'unsupported integer format; expected int32 or int64'],
+      ] as const) {
+        const document = fixture(modern);
+        document.components.schemas.Unused = {
+          type: modern && nullable ? [type, 'null'] : type,
+          ...(!modern && nullable ? { nullable: true } : {}),
+          format: 'currency',
+        };
+        await assert.rejects(compile(document, selection), (error) => {
+          assert.ok(error instanceof ContractError);
+          assert.equal(error.location, 'components.schemas.Unused.format');
+          assert.equal(error.message, `${error.location}: ${detail}`);
+          return true;
+        });
+      }
 });
 
 void test('numeric profiles reject invalid literals, impossible intervals, wrong types and built-in overrides before selection', async () => {

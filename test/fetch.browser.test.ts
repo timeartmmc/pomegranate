@@ -60,6 +60,7 @@ void test('generated browser code preserves declared request and response fields
         response.writeHead(202, {
           'Content-Type': 'application/json',
           'X-Request-ID': 'browser-response',
+          'X-Powered-By': 'Express \t',
           'Set-Cookie': 'synthetic=1; HttpOnly; SameSite=Lax',
         });
         response.end(
@@ -126,6 +127,7 @@ void test('generated browser code preserves declared request and response fields
   assert.equal(result.cookie, null);
   assert.equal(result.parsed.kind, 'success');
   assert.equal(result.parsed.status, 202);
+  assert.equal(result.parsed.headers['x-powered-by'], 'Express');
   assert.equal(
     result.parsed.validatedHeaders['x-request-id'],
     'browser-response',

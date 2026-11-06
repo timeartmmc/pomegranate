@@ -75,7 +75,7 @@ void test('Chromium preserves selected request bytes and dispatches every declar
           assert.ok(typeof media === 'string');
           const replies: Readonly<Record<string, string>> = {
             'application/json': '{"code":"ok"}',
-            'application/vnd.alpha+json': 'true',
+            'application/a+json': 'true',
             'application/vnd.zeta+json': '2',
             'text/plain': 'text',
           };
@@ -180,7 +180,7 @@ void test('Chromium preserves selected request bytes and dispatches every declar
     const representations = [];
     for (const media of [
       'application/json',
-      'application/vnd.alpha+json',
+      'application/a+json',
       'application/vnd.zeta+json',
       'text/plain',
     ])

@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compile } from '../dist/index.js';
 import { runtimeInput } from './assertions.ts';
-import { generatedFixture, temporary } from './helpers.ts';
+import { generatedFixture, preparation, temporary } from './helpers.ts';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const options = () => ({
@@ -29,13 +29,93 @@ void test('generated protocol invariants hold across the complete byte and statu
     process.platform === 'win32' ? 'junction' : 'dir',
   );
   await writeFile(join(root, 'package.json'), '{"type":"module"}');
-  const files = await compile(generatedFixture(), { clients: ['consumer'] });
+  const document = generatedFixture();
+  Object.assign(preparation(document).responses, {
+    300: {
+      description: 'Multiple choices',
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/Problem' },
+        },
+      },
+    },
+  });
+  const files = await compile(document, { clients: ['consumer'] });
   for (const [name, source] of Object.entries(files))
     await writeFile(join(root, name), source);
   const { operations, RequestValidationError } = (await import(
     pathToFileURL(join(root, 'client.consumer.ts')).href
   )) as typeof import('./.generated/runtime/client.consumer.ts');
   const operation = operations.prepareWidget;
+
+  await t.test(
+    'merged request headers require plain records and retain null-prototype fields',
+    () => {
+      const request = operation.build(options());
+      for (const value of [
+        null,
+        undefined,
+        [],
+        new Map(),
+        new Headers(),
+        new Date(),
+        'headers',
+        1,
+      ])
+        assert.throws(() => runtimeInput(request.validateHeaders, value), {
+          name: 'TypeError',
+          message: 'request headers must be a plain record',
+        });
+      const value = Object.assign(Object.create(null) as object, {
+        'Idempotency-Key': 'attempt',
+        Authorization: 'Bearer token',
+      });
+      assert.deepEqual(
+        { ...runtimeInput(request.validateHeaders, value) },
+        {
+          'idempotency-key': 'attempt',
+          authorization: 'Bearer token',
+        },
+      );
+    },
+  );
+
+  await t.test(
+    'response headers normalize only boundary spaces and tabs before schema validation',
+    () => {
+      for (const [raw, expected] of [
+        ['value', 'value'],
+        [' value', 'value'],
+        ['value ', 'value'],
+        ['\tvalue', 'value'],
+        ['value\t', 'value'],
+        [' \tleft\tmiddle\u00e9\t ', 'left\tmiddle\u00e9'],
+        ['', ''],
+        [' \t \t', ''],
+        ['\u00a0value\u00a0', '\u00a0value\u00a0'],
+      ] as const) {
+        const evidence = {
+          ...headers(),
+          'Content-Type': '\t application/json \t',
+          'X-Request-ID': ' \trequest\t ',
+          'X-Key': raw,
+          'X-Powered-By': raw,
+        };
+        const result = operation.parseResponse({
+          status: 202,
+          headers: evidence,
+          body: JSON.stringify(pending),
+        });
+        assert.equal(result.kind, 'success');
+        assert.equal(result.headers['x-key'], expected);
+        assert.equal(result.headers['x-powered-by'], expected);
+        assert.equal(result.headers['content-type'], 'application/json');
+        assert.equal(result.validatedHeaders['x-key'], expected);
+        assert.equal(result.validatedHeaders['x-request-id'], 'request');
+        assert.equal(evidence['X-Key'], raw);
+      }
+    },
+  );
 
   await t.test(
     'malformed raw evidence cannot become successful typed protocol data',
@@ -221,6 +301,7 @@ void test('generated protocol invariants hold across the complete byte and statu
       const bodies: Record<number, unknown> = {
         200: { state: 'refused', reason: 'unavailable' },
         202: pending,
+        300: { code: 'redirect', detail: 'choose-another-resource' },
         303: { code: 'redirect', detail: 'see-other' },
         400: { code: 'invalid', detail: 'invalid input' },
         409: { code: 'conflict', retryable: false },
@@ -261,6 +342,7 @@ void test('generated protocol invariants hold across the complete byte and statu
       assert.equal(Reflect.set(first, 'url', '/changed'), false);
       assert.equal(Reflect.set(first.policy, 'retry', 'changed'), false);
       assert.equal(Reflect.set(first.security, 'transport', 'none'), false);
+      assert.equal(Reflect.set(first.security, 'scheme', 'Changed'), false);
       assert.equal(
         Reflect.set(first.headers, 'Idempotency-Key', 'changed'),
         false,

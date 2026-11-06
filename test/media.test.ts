@@ -150,16 +150,23 @@ void test('response media dispatch calls only the declared parser and fails befo
     { 'Content-Type': 'application/json; charset' },
     { 'Content-Type': 'application/json, text/plain' },
     { 'Content-Type': 'application/json', 'content-type': 'application/json' },
+    {
+      'Content-Type': 'application/json; note="first',
+      'content-type': 'last"',
+    },
+    { 'Content-Type': 'application/json\r' },
   ]) {
-    const result = operation.parseResponse({ status: 200, headers, body: '{' });
-    assert.equal(result.kind, 'protocol');
-    if (result.kind === 'protocol')
-      assert.equal(
-        result.issues.some((issue) => issue.part === 'body'),
-        false,
-      );
-    assert.equal(Object.hasOwn(result, 'data'), false);
-    assert.equal(Object.hasOwn(result, 'contentType'), false);
+    for (const body of ['{', '"json"']) {
+      const result = operation.parseResponse({ status: 200, headers, body });
+      assert.equal(result.kind, 'protocol');
+      if (result.kind === 'protocol')
+        assert.equal(
+          result.issues.some((issue) => issue.part === 'body'),
+          false,
+        );
+      assert.equal(Object.hasOwn(result, 'data'), false);
+      assert.equal(Object.hasOwn(result, 'contentType'), false);
+    }
   }
   assert.deepEqual(calls, { json: 1, vendor: 1, text: 1 });
   assert.equal(
@@ -171,6 +178,36 @@ void test('response media dispatch calls only the declared parser and fails befo
     'protocol',
   );
   assert.deepEqual(calls, { json: 1, vendor: 2, text: 1 });
+});
+
+void test('mixed-case request and response media declarations produce the same generated behavior', async (t) => {
+  const document = mediaFixture();
+  for (const item of Object.values(document.paths))
+    for (const operation of Object.values(item)) {
+      if ('requestBody' in operation) {
+        const body = record(operation.requestBody);
+        body.content = Object.fromEntries(
+          Object.entries(record(body.content)).map(([name, value]) => [
+            name.toUpperCase(),
+            value,
+          ]),
+        );
+      }
+      for (const response of Object.values(operation.responses)) {
+        const value = record(response);
+        if (Object.hasOwn(value, 'content'))
+          value.content = Object.fromEntries(
+            Object.entries(record(value.content)).map(([name, media]) => [
+              name.toUpperCase(),
+              media,
+            ]),
+          );
+      }
+    }
+  const files = await compile(document, mediaSelection);
+  assert.deepEqual(files, await compile(mediaFixture(), mediaSelection));
+  const root = await generatedTestWorkspace(t, files);
+  verifyMedia(await importGenerated<MediaClient>(root, 'client.consumer.ts'));
 });
 
 void test('generated media validators preserve exact representations, text data and consumer types', async (t) => {
@@ -232,7 +269,7 @@ void test('generated media validators preserve exact representations, text data 
     import { parsePreferred } from './declarations/consumer.js';
     const result=parsePreferred({status:200,headers:{},body:''});
     if(result.kind!=='protocol' && result.status===200) {
-      if(result.contentType==='application/vnd.alpha+json') {
+      if(result.contentType==='application/a+json') {
         const flag:true=result.data;
         // @ts-expect-error Published MIME narrowing excludes other JSON representations.
         void result.data.code;
@@ -302,7 +339,7 @@ void test('raw and scoped execution preserve response representations in envelop
   );
   const cases = [
     ['application/json', '{"code":"ok"}', { code: 'ok' }],
-    ['application/vnd.alpha+json', 'true', true],
+    ['application/a+json', 'true', true],
     ['application/vnd.zeta+json', '2', 2],
     ['text/plain', '{"ok":true}', '{"ok":true}'],
     ['text/plain', '', ''],
@@ -410,6 +447,8 @@ void test('nonpreferred representations and unsupported media still validate bef
     ['x-example/other', { type: 'string' }],
     ['application/K+json', { type: 'string' }],
     ['application/*+json', { type: 'string' }],
+    ['application/+json', { type: 'string' }],
+    ['text/+json', { type: 'string' }],
     ['application/json; charset=utf-8', { type: 'string' }],
   ] as const) {
     const input = mediaFixture();

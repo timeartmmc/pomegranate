@@ -1561,7 +1561,7 @@ try {
     import {parsePreferred} from './media-declarations/consumer.js';
     const result=parsePreferred({status:200,headers:{},body:''});
     if(result.kind!=='protocol' && result.status===200) {
-      if(result.contentType==='application/vnd.alpha+json') {
+      if(result.contentType==='application/a+json') {
         const flag:true=result.data;
         // @ts-expect-error Published media discrimination excludes other JSON payloads.
         void result.data.code;
@@ -1601,7 +1601,7 @@ try {
       try {
         for(const [contentType,body,data] of [
           ['application/json','{"code":"ok"}',{code:'ok'}],
-          ['application/vnd.alpha+json','true',true],
+          ['application/a+json','true',true],
           ['application/vnd.zeta+json','2',2],
           ['text/plain','{"ok":true}','{"ok":true}'],
         ]) {
@@ -1889,7 +1889,10 @@ try {
     assert.equal(Object.hasOwn(requestSchemas,'StaffReport'),false);
     assert.equal(Object.hasOwn(responseSchemas,'StaffPeriod'),true);
     assert.equal(staff.getStaffReport.build().policy.auth, 'partnerStaff');
-  assert.deepEqual(staff.getStaffReport.build().security, { transport: 'bearer', scheme: 'WidgetSession' });
+  assert.deepEqual(staff.getStaffReport.build().security, {
+    transport: 'bearer',
+    scheme: 'WidgetSession',
+  });
     assert.equal(operations.checkHealth.build().policy.auth, 'public');
   assert.deepEqual(operations.checkHealth.build().security, { transport: 'none' });
     assert.throws(() => operations.prepareWidget.build({}), RequestValidationError);

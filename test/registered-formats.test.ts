@@ -155,6 +155,70 @@ const scalarSelection = {
   },
 } as const;
 
+void test('effective string length limits guard base and sibling patterns across reference chains', async (t) => {
+  const pattern = '(?<referenceLengthProbe>a|😀)+$';
+  // oxlint-disable-next-line typescript/unbound-method -- Invoke the saved intrinsic with each original RegExp receiver below.
+  const original = RegExp.prototype.test;
+  let calls = 0;
+  t.mock.method(
+    RegExp.prototype,
+    'test',
+    function (this: RegExp, value: string) {
+      if (this.source.includes('referenceLengthProbe')) {
+        calls++;
+        assert.ok(
+          Array.from(value).length <= 2,
+          'oversized reference input reached a regex',
+        );
+      }
+      return original.call(this, value);
+    },
+  );
+  for (const bound of ['base', 'middle', 'outer']) {
+    const input = scalarDocument({
+      $ref: '#/components/schemas/Middle',
+      pattern,
+      ...(bound === 'outer' ? { maxLength: 2 } : {}),
+    });
+    Object.assign(input.components.schemas, {
+      Base: {
+        type: 'string',
+        pattern,
+        format: 'probe',
+        ...(bound === 'base' ? { maxLength: 2 } : {}),
+      },
+      Middle: {
+        $ref: '#/components/schemas/Base',
+        ...(bound === 'middle' ? { maxLength: 2 } : {}),
+      },
+    });
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(input, {
+        ...scalarSelection,
+        formats: { probe: { type: 'string', pattern } },
+      }),
+    );
+    const { schema } = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.value.ts',
+    );
+    const before = calls;
+    for (const value of ['aaa', '😀😀😀', 'a'.repeat(100_000)]) {
+      const result = schema.safeParse(value);
+      assert.equal(result.success, false);
+      if (!result.success)
+        assert.deepEqual(result.error.issues, [
+          { path: [], message: 'string is too long' },
+        ]);
+    }
+    assert.equal(calls, before);
+    assert.equal(schema.parse('a😀'), 'a😀');
+    assert.ok(calls > before);
+    assert.equal(schema.safeParse('!').success, false);
+  }
+});
+
 void test('simultaneous compilations keep same-name format registries isolated', async (t) => {
   const input = scalarDocument({ type: 'string', format: 'local' });
   const sources = await Promise.all(

@@ -329,6 +329,21 @@ export function verifySchemas(
       `${name}: ${JSON.stringify(value)}`,
     );
   };
+  const invalidMap = Object.fromEntries(
+    Array.from({ length: 1_000 }, (_, index) => [`entry${index}`, false]),
+  );
+  assert.throws(
+    () => runtimeInput(operations.checkShapeMap.build, { body: invalidMap }),
+    (error) => {
+      assert.ok(error instanceof RequestValidationError);
+      assert.equal(error.issues.length, 101);
+      assert.ok(error.message.length <= 8_192);
+      return true;
+    },
+  );
+  const bounded = response('ShapeMap', invalidMap);
+  assert.equal(bounded.kind, 'protocol');
+  if (bounded.kind === 'protocol') assert.equal(bounded.issues.length, 101);
   for (const { name, samples } of nullableTypeCases)
     for (const [value, accepted] of samples) check(name, value, accepted);
   // Equal value types retain independent constraints and exact property/literal
@@ -910,4 +925,15 @@ export function verifyStandalone(
     input.safeParse({ required: false, extra: true }).success,
     false,
   );
+  const unknown = input.safeParse({
+    required: false,
+    ...Object.fromEntries(
+      Array.from({ length: 1_000 }, (_, index) => [`extra${index}`, true]),
+    ),
+  });
+  assert.equal(unknown.success, false);
+  if (!unknown.success) {
+    assert.equal(unknown.error.issues.length, 1);
+    assert.ok(unknown.error.issues[0]!.message.length <= 1_024);
+  }
 }

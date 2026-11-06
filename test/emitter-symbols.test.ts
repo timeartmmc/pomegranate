@@ -8,8 +8,98 @@ import test from 'node:test';
 import { compile } from '../dist/index.js';
 import { json, present, record } from './assertions.ts';
 import { symbolFixture, verifySymbols } from './symbol-fixture.ts';
+import {
+  generatedTestWorkspace,
+  importGenerated,
+} from './generated-workspace.ts';
+import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+
+void test('generated literals escape bidi controls and line separators while preserving their data', async (t) => {
+  const controls =
+    '\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069';
+  const key = `field${controls}`;
+  const value = `left${controls}right\\u2028`;
+  const id = `read${controls}`;
+  const payload = { [key]: value };
+  const files = await compile(
+    {
+      openapi: '3.1.2',
+      info: { title: 'Synthetic literal escaping', version: '1' },
+      'x-pom-policy': {
+        version: 3,
+        fields: { [key]: { type: 'string', enum: [value] } },
+        required: [key],
+      },
+      components: {
+        schemas: {
+          Payload: {
+            type: 'object',
+            properties: { [key]: { type: 'string', enum: [value] } },
+            required: [key],
+          },
+        },
+      },
+      paths: {
+        '/value': {
+          get: {
+            operationId: id,
+            'x-pom': payload,
+            responses: {
+              200: {
+                description: 'Synthetic response',
+                content: {
+                  'application/json': {
+                    schema: { $ref: '#/components/schemas/Payload' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      clients: ['consumer'],
+      surfaces: { consumer: [id] },
+      executionClients: ['consumer'],
+      queries: { consumer: [id] },
+      standalone: {
+        payload: { schema: '#/components/schemas/Payload', usage: 'request' },
+      },
+    },
+  );
+  for (const [name, source] of Object.entries(files))
+    assert.doesNotMatch(source, /[\p{Bidi_Control}\u2028\u2029]/u, name);
+  const root = await generatedTestWorkspace(t, files);
+  const { schema } = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.payload.ts',
+  );
+  assert.deepEqual(schema.parse(payload), payload);
+  const rejected = schema.safeParse({ [key]: 'wrong' });
+  assert.equal(rejected.success, false);
+  if (!rejected.success)
+    assert.deepEqual(rejected.error.issues, [
+      { path: [key], message: `expected ${JSON.stringify(value)}` },
+    ]);
+  const client = await importGenerated<RuntimeClient>(
+    root,
+    'client.consumer.ts',
+  );
+  const operation = present(client.operations[id]);
+  const request = operation.build();
+  assert.equal(request.operationId, id);
+  assert.deepEqual(request.policy, payload);
+  const response = request.parseResponse({
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  assert.equal(response.kind, 'success');
+  if (response.kind === 'success') assert.deepEqual(response.data, payload);
+});
 
 void test('operation IDs cannot collide with private validator scopes or escape sequences', async (t) => {
   const cache = join(repo, 'node_modules/.cache');

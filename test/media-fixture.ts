@@ -35,7 +35,8 @@ const representations = () =>
     'application/vnd.zeta+json': { type: 'integer', enum: [2] },
     'text/plain': { type: 'string', enum: ['text'] },
     'application/json': ref('Envelope'),
-    'application/vnd.alpha+json': { type: 'boolean', enum: [true] },
+    // Sorts before application/json, independently testing its request preference.
+    'application/a+json': { type: 'boolean', enum: [true] },
   });
 const suffixes = () =>
   entries({
@@ -257,7 +258,7 @@ export function verifyMedia(client: MediaClient): void {
       );
   }
   for (const [name, contentType, body, data] of [
-    ['preferred', 'application/vnd.alpha+json', 'true', true],
+    ['preferred', 'application/a+json', 'true', true],
     ['preferred', 'application/vnd.zeta+json', '2', 2],
     ['preferred', 'text/plain', 'text', 'text'],
     ['sorted', 'application/vnd.zeta+json', '2', 2],
@@ -471,7 +472,7 @@ export function inspectPreferred() {
       // @ts-expect-error MIME narrowing excludes the text representation.
       const text:string=data;
       void [code,text];
-    } else if(contentType==='application/vnd.alpha+json') {
+    } else if(contentType==='application/a+json') {
       const flag:true=data; void flag;
     } else if(contentType==='application/vnd.zeta+json') {
       const count:2=data; void count;
