@@ -936,10 +936,14 @@ from them still need the annotations required by that TypeScript option.
 Generated `schema-types.<digest>.ts` modules share component type identities across
 standalone validators and clients, including identical request and response
 shapes. Modules contain only types reachable by every output that uses them;
-browser and native upload types remain distinct. Compatible directional shapes
-use shared covariant type families so optional directional fields retain
-request/response assignability through the supported schema depth. Keep these type-only modules
+browser and native upload types remain distinct. Keep these type-only modules
 with the complete generated output set, including when publishing declarations.
+
+Distinct request and response shapes use ordinary named types. TypeScript can
+exceed its structural comparison limits when assigning between very deep
+directional types, even when each type compiles and its validators support the
+schema. The limit depends on the type shapes and TypeScript version; the schema
+depth limit does not guarantee request/response assignability at that depth.
 
 ## Programmatic compiler API
 

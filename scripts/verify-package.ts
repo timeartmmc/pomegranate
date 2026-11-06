@@ -34,6 +34,11 @@ import {
   directionalTypeIdentityFixture,
   directionalTypeIdentitySelection,
 } from '../test/directional-type-identity-fixture.ts';
+import {
+  typeCompositionFixture,
+  typeCompositionSelection,
+  verifyTypeComposition,
+} from '../test/type-composition-fixture.ts';
 import { annotateDocument } from '../test/metadata-fixture.ts';
 import {
   multipartFixture,
@@ -262,6 +267,7 @@ try {
     'media-fixture.ts',
     'registered-formats-fixture.ts',
     'numeric-format-profiles-fixture.ts',
+    'type-composition-fixture.ts',
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
     'symbol-fixture.ts',
@@ -1468,6 +1474,24 @@ try {
   // Generate through the installed package before exercising wide inferred
   // exports with minimum peers and the TypeScript 5.7 compiler line.
   await run(binary, ['generate', '--config', join(consumer, 'wide-pom.json')]);
+  const compositionRoot = join(consumer, 'type-composition');
+  await mkdir(compositionRoot);
+  await writeFile(
+    join(compositionRoot, 'openapi.json'),
+    JSON.stringify(typeCompositionFixture()),
+  );
+  const compositionConfig = join(compositionRoot, 'pom.json');
+  await writeFile(
+    compositionConfig,
+    JSON.stringify({
+      version: 2,
+      openapi: './openapi.json',
+      output: './generated',
+      ...typeCompositionSelection,
+    }),
+  );
+  await run(binary, ['generate', '--config', compositionConfig]);
+  await run(binary, ['check', '--config', compositionConfig]);
   // Removing the actual compiler installation proves application execution does
   // not reach back into the compiler, its source checkout, or a sibling project.
   await rm(join(consumer, 'node_modules/pomegranate-compiler'), {
@@ -1503,6 +1527,10 @@ try {
   );
   await verifyWideDeclarations(
     consumer,
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+  );
+  await verifyTypeComposition(
+    compositionRoot,
     join(consumer, 'node_modules/typescript/bin/tsc'),
   );
   await writeFile(

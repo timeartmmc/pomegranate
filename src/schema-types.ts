@@ -21,7 +21,6 @@ export function schemaType(
   direction: Direction,
   target?: Client['target'],
   reference: (name: string, direction: Direction) => string = typeSymbol,
-  propertyType?: (name: string) => string | undefined,
 ): string {
   const child = (value: Schema): string =>
     schemaType(value, direction, target, reference);
@@ -30,17 +29,22 @@ export function schemaType(
       return "import('./runtime.ts').JsonValue";
     case 'ref':
       return reference(schema.name, direction);
-    case 'object':
+    case 'object': {
       // TypeScript's {} includes non-null primitives. Match the empty-object
       // parser so named types cannot admit values the validator rejects.
       if (Object.keys(schema.properties).length === 0)
         return 'Record<string, never>';
-      return `{${Object.entries(schema.properties)
-        .map(([name, value]) => {
+      const properties = Object.entries(schema.properties).map(
+        ([name, value]) => {
           const required = schema.required.includes(name);
-          return `${propertyKey(name)}${required ? '' : '?'}: ${propertyType?.(name) ?? child(value)}${required ? '' : ' | undefined'};`;
-        })
-        .join('\n')}}`;
+          return `${propertyKey(name)}${required ? '' : '?'}: ${child(value)}${required ? '' : ' | undefined'};`;
+        },
+      );
+      // Explicit forbidden keys also reject structural assignments and spreads.
+      for (const name of schema.forbidden ?? [])
+        properties.push(`${propertyKey(name)}?: never;`);
+      return `{${properties.join('\n')}}`;
+    }
     case 'array':
       return `Array<${child(schema.items)}>`;
     case 'map':

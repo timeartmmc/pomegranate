@@ -9,8 +9,6 @@ import type {
 } from './model.js';
 import { schemaType, typeSymbol } from './schema-types.js';
 import { byteBudget, sourceBudget } from './source-budget.js';
-import { boundType, familySource, typeFamily } from './type-families.js';
-import type { TypeFamily, TypeNode } from './type-families.js';
 
 type Variant = {
   name: string;
@@ -18,11 +16,17 @@ type Variant = {
   target: Client['target'];
   owners: Set<string>;
 };
+type TypeNode = Variant & {
+  id: number;
+  symbol: string;
+  file: string | undefined;
+};
 
 // Identical schemas emitted independently can exceed TypeScript's structural
 // comparison limit when a standalone value enters a client, even though each
 // module typechecks. Share actual type identities, without brands or generic
-// recursion shortcuts that can hide incompatible deep fields.
+// argument expansion across the dependency graph. Distinct directional shapes
+// remain ordinary named types subject to TypeScript's comparison limits.
 export function renderTypes(
   descriptor: Descriptor,
   clients: readonly Client[],
@@ -111,7 +115,7 @@ export function renderTypes(
 
   const nodes = new Map<string, TypeNode>();
   const canonical: TypeNode[] = [];
-  const account = sourceBudget();
+  const accountShapes = sourceBudget();
   const node = (
     name: string,
     direction: Direction,
@@ -136,13 +140,13 @@ export function renderTypes(
       );
       let shared = shapes.get(shape);
       if (!shared) {
-        account(shape, `components.schemas.${name}`);
+        accountShapes(shape, `components.schemas.${name}`);
         shared = {
           ...variant,
-          schema: descriptor.schemas[variant.direction][name]!,
           owners: new Set(),
           id: canonical.length,
           symbol: typeSymbol(name, variant.direction),
+          file: undefined,
         };
         canonical.push(shared);
         shapes.set(shape, shared);
@@ -151,22 +155,8 @@ export function renderTypes(
       nodes.set(key(name, variant.direction, variant.target), shared);
     }
   }
-  const families: TypeFamily[] = [];
-  for (const name of descriptor.schemaOrder) {
-    const members = [
-      ...new Set(
-        (byName.get(name) ?? []).map((variant) =>
-          node(name, variant.direction, variant.target),
-        ),
-      ),
-    ];
-    const family = typeFamily(members, (child, parent) =>
-      node(child, parent.direction, parent.target),
-    );
-    if (family) families.push(family);
-  }
-  const groups = new Map<string, (TypeNode | TypeFamily)[]>();
-  for (const entry of [...canonical, ...families]) {
+  const groups = new Map<string, TypeNode[]>();
+  for (const entry of canonical) {
     const owners = JSON.stringify([...entry.owners].sort());
     // Membership grouping keeps files small in number while preserving each
     // output's exact schema closure. Dependency owner sets only grow, so distinct
@@ -177,18 +167,15 @@ export function renderTypes(
     members.push(entry);
     groups.set(owners, members);
   }
-  const reference = (entry: { file?: string; symbol: string }) =>
+  const reference = (entry: TypeNode) =>
     `import('./${entry.file!}').${entry.symbol}`;
   const accountDeclarations = byteBudget();
   for (const members of groups.values()) {
     const file = members[0]!.file!;
-    const local = (entry: { file?: string; symbol: string }) =>
+    const local = (entry: TypeNode) =>
       entry.file === file ? entry.symbol : reference(entry);
     const declarations = members.map((entry, index) => {
-      const location =
-        'name' in entry
-          ? `components.schemas.${entry.name}`
-          : 'generated type family';
+      const location = `components.schemas.${entry.name}`;
       let accounted = 0;
       const accountPart = (source: string) => {
         const bytes = Buffer.byteLength(source);
@@ -202,20 +189,18 @@ export function renderTypes(
         );
         return source;
       };
-      if (!('schema' in entry)) return admit(familySource(entry, local));
-      const value =
-        boundType(entry, local, accountPart) ??
-        schemaType(
-          descriptor.schemas[entry.direction][entry.name]!,
-          entry.direction,
-          entry.target,
-          (child, direction) => {
-            const dependency = node(child, direction, entry.target);
-            return dependency.file === file
-              ? dependency.symbol
-              : reference(dependency);
-          },
-        );
+      const value = schemaType(
+        descriptor.schemas[entry.direction][entry.name]!,
+        entry.direction,
+        entry.target,
+        (child, direction) => {
+          const source = local(node(child, direction, entry.target));
+          // Preserve incremental reference accounting before schemaType joins
+          // long names and import paths into a declaration.
+          accountPart(source);
+          return source;
+        },
+      );
       return admit(`export type ${entry.symbol} = ${value};`);
     });
     addOutput(file, declarations.join('\n'));
