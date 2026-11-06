@@ -26,21 +26,27 @@ import { stringFormatHelpers } from './formats.js';
 import { schemaBranchLocation } from './schemas.js';
 import { sourceBudget } from './source-budget.js';
 
-// Follow references to the first non-reference component. Constraint sets are
-// applied from the terminal component outwards, preserving sibling-rule order.
-function aliasChain(
+// Bounds are data, so sharing them by schema identity does not share emitted
+// constants. Each parser still owns its own constant and directional behavior.
+function containerConstraints(
   value: Extract<Schema, { kind: 'ref' }>,
   schemas: SchemaTable,
-): { terminal: string; sets: Constraints[] } {
-  const sets: Constraints[] = [value.constraints];
-  let terminal = value.name;
-  let target = schemas.get(terminal)!;
-  while (target.kind === 'ref') {
-    sets.push(target.constraints);
-    terminal = target.name;
-    target = schemas.get(terminal)!;
+  cache: WeakMap<Schema, Constraints>,
+  base: Constraints,
+): Constraints {
+  const pending: Extract<Schema, { kind: 'ref' }>[] = [];
+  let current: Schema = value;
+  while (current.kind === 'ref' && !cache.has(current)) {
+    pending.push(current);
+    current = schemas.get(current.name)!;
   }
-  return { terminal, sets: sets.reverse() };
+  let limits = cache.get(current) ?? base;
+  for (let index = pending.length - 1; index >= 0; index--) {
+    const reference = pending[index]!;
+    limits = intersectConstraints(limits, reference.constraints);
+    cache.set(reference, limits);
+  }
+  return limits;
 }
 
 // Resolve pure links once per normalized schema table. Path compression shares
@@ -114,6 +120,10 @@ export function schemaRenderer(
   const identities = {
     request: parserIdentities(schemas.request),
     response: parserIdentities(schemas.response),
+  };
+  const containerBounds: Record<Direction, WeakMap<Schema, Constraints>> = {
+    request: new WeakMap(),
+    response: new WeakMap(),
   };
   const helpers = new Set<string>();
   const typeImports = new Set<string>();
@@ -479,12 +489,14 @@ export function schemaRenderer(
           );
         // Flatten aliases before delegation. Rebuilding a terminal container's
         // children here would expand shared bounded-reference graphs into trees.
-        const { terminal, sets } = aliasChain(value, schemas[direction]);
+        const terminal = refinement.terminal;
         const terminalSchema = schemas[direction].get(terminal)!;
         const base = reference(terminal, direction).source;
         if (terminalSchema.kind === 'object' || terminalSchema.kind === 'map') {
-          const merged = sets.reduce<Constraints>(
-            intersectConstraints,
+          const merged = containerConstraints(
+            value,
+            schemas[direction],
+            containerBounds[direction],
             constraintRecord(terminalSchema),
           );
           const limits = rules(merged, objectRules)!;
@@ -496,8 +508,10 @@ export function schemaRenderer(
           );
         }
         if (terminalSchema.kind === 'array') {
-          const merged = sets.reduce<Constraints>(
-            intersectConstraints,
+          const merged = containerConstraints(
+            value,
+            schemas[direction],
+            containerBounds[direction],
             constraintRecord(terminalSchema),
           );
           const limits = rules(merged, arrayRules)!;

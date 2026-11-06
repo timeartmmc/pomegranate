@@ -977,10 +977,14 @@ function validateReferenceConstraints(
   for (const reference of chain.reverse()) {
     const limits = intersectConstraints(rules.limits, reference.constraints);
     assertScalarRules(resolved.kind, limits, undefined, location);
-    const violation = literalViolation(reference.constraints);
-    const literals = rules.literals?.filter(
-      (item) => violation(item) === undefined,
-    );
+    // Literal sets are immutable. Pure references and constraints that retain
+    // every member must not multiply the same wide enum in the validation cache.
+    let literals = rules.literals;
+    if (literals !== undefined && hasConstraints(reference.constraints)) {
+      const violation = literalViolation(reference.constraints);
+      const narrowed = literals.filter((item) => violation(item) === undefined);
+      if (narrowed.length !== literals.length) literals = narrowed;
+    }
     if (literals?.length === 0)
       fail(location, 'reference constraints admit no literal value');
     rules = { limits, literals };
