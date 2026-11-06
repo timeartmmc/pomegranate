@@ -265,6 +265,21 @@ function holds(source: object, key: string): boolean {
   return !Object.hasOwn(Object.prototype, key);
 }
 
+// Public configuration and response evidence retain structural class fields.
+// Capture one value, excluding defaults supplied solely by Object.prototype.
+export function structuralField<T extends object, K extends keyof T & string>(
+  source: T,
+  key: K,
+): T[K] | undefined {
+  if (
+    source === null ||
+    (typeof source !== 'object' && typeof source !== 'function')
+  )
+    return undefined;
+  const value = Reflect.get(source, key) as T[K];
+  return present(source, key, value) ? value : undefined;
+}
+
 // Read once. A value that was read proves presence, so validation and output
 // use that one value even if its accessor then removes the key; an undefined
 // read still tests membership.
@@ -715,13 +730,31 @@ export type StringFormat = keyof typeof formats;
 
 type PatternFormat = Readonly<{ pattern: string; message: string }>;
 
-export type StringRules = Readonly<{
-  format?: StringFormatRule | PatternFormat;
-  minLength?: number;
-  maxLength?: number;
-  pattern?: string;
-}>;
+export type StringRules = Partial<StringSettings>;
+
 type Check<T> = (value: T, issues: Issues) => void;
+
+// Only static declarations cross this boundary; application values retain their
+// structural field policy. Normalizers materialize every fixed internal slot.
+function ownFields<T extends object>(source: T): T {
+  return Object.assign(Object.create(null) as T, source);
+}
+
+type StringSettings = Readonly<{
+  format: StringFormatRule | PatternFormat | undefined;
+  minLength: number | undefined;
+  maxLength: number | undefined;
+  pattern: string | undefined;
+}>;
+type NumberSettings = Readonly<{
+  integer: true | undefined;
+  float: true | undefined;
+  minimum: number | undefined;
+  maximum: number | undefined;
+  exclusiveMinimum: number | undefined;
+  exclusiveMaximum: number | undefined;
+  multipleOf: number | undefined;
+}>;
 
 const stringCache = new WeakMap<StringRules, Check<string>>();
 // Generated fields share one private descriptor per registered format.
@@ -749,7 +782,14 @@ function isPatternFormat(
 function stringChecks(rules: StringRules): Check<string> {
   const known = stringCache.get(rules);
   if (known) return known;
-  const { format, minLength, maxLength, pattern } = rules;
+  const source = ownFields(rules);
+  const settings: StringSettings = {
+    format: source.format,
+    minLength: source.minLength,
+    maxLength: source.maxLength,
+    pattern: source.pattern,
+  };
+  const { format, minLength, maxLength, pattern } = settings;
   let matches: ((value: string) => boolean) | undefined;
   // Registered formats remain static data in generated modules. Compile their
   // expressions on first use, independently of the schema's own pattern.
@@ -803,20 +843,22 @@ export function text(
   return issues.length === start ? input : invalid;
 }
 
-export type NumberRules = Readonly<{
-  integer?: true;
-  float?: true;
-  minimum?: number;
-  maximum?: number;
-  exclusiveMinimum?: number;
-  exclusiveMaximum?: number;
-  multipleOf?: number;
-}>;
+export type NumberRules = Partial<NumberSettings>;
 
 const numberCache = new WeakMap<NumberRules, Check<number>>();
 function numberChecks(rules: NumberRules): Check<number> {
   const known = numberCache.get(rules);
   if (known) return known;
+  const source = ownFields(rules);
+  const settings: NumberSettings = {
+    integer: source.integer,
+    float: source.float,
+    minimum: source.minimum,
+    maximum: source.maximum,
+    exclusiveMinimum: source.exclusiveMinimum,
+    exclusiveMaximum: source.exclusiveMaximum,
+    multipleOf: source.multipleOf,
+  };
   const {
     integer,
     float,
@@ -824,9 +866,9 @@ function numberChecks(rules: NumberRules): Check<number> {
     maximum,
     exclusiveMinimum,
     exclusiveMaximum,
-  } = rules;
-  const multiple =
-    rules.multipleOf === undefined ? undefined : multipleOf(rules.multipleOf);
+    multipleOf: step,
+  } = settings;
+  const multiple = step === undefined ? undefined : multipleOf(step);
   // Integer checks add no implicit safe-integer range.
   const check: Check<number> = (value, issues) => {
     if (integer && !Number.isInteger(value)) {
@@ -962,11 +1004,41 @@ export function refineNumber<T extends number>(
   return issues.length === start ? value : invalid;
 }
 
-export type ArrayRules = Readonly<{ minItems?: number; maxItems?: number }>;
-export type ObjectRules = Readonly<{
-  minProperties?: number;
-  maxProperties?: number;
+export type ArrayRules = Partial<ArraySettings>;
+export type ObjectRules = Partial<ObjectSettings>;
+
+type ArraySettings = Readonly<{
+  minItems: number | undefined;
+  maxItems: number | undefined;
 }>;
+type ObjectSettings = Readonly<{
+  minProperties: number | undefined;
+  maxProperties: number | undefined;
+}>;
+const arraySettingsCache = new WeakMap<ArrayRules, ArraySettings>();
+const objectSettingsCache = new WeakMap<ObjectRules, ObjectSettings>();
+function arraySettings(input: ArrayRules): ArraySettings {
+  const known = arraySettingsCache.get(input);
+  if (known) return known;
+  const source = ownFields(input);
+  const settings: ArraySettings = {
+    minItems: source.minItems,
+    maxItems: source.maxItems,
+  };
+  arraySettingsCache.set(input, settings);
+  return settings;
+}
+function objectSettings(input: ObjectRules): ObjectSettings {
+  const known = objectSettingsCache.get(input);
+  if (known) return known;
+  const source = ownFields(input);
+  const settings: ObjectSettings = {
+    minProperties: source.minProperties,
+    maxProperties: source.maxProperties,
+  };
+  objectSettingsCache.set(input, settings);
+  return settings;
+}
 
 export function propertyCount(
   source: object,
@@ -989,18 +1061,19 @@ function propertyBounds(
   issues: Issues,
   rules: ObjectRules,
 ): boolean {
-  if (rules.maxProperties !== undefined && count > rules.maxProperties) {
+  const { maxProperties, minProperties } = objectSettings(rules);
+  if (maxProperties !== undefined && count > maxProperties) {
     report(
       issues,
-      `expected at most ${rules.maxProperties} ${rules.maxProperties === 1 ? 'property' : 'properties'}`,
+      `expected at most ${maxProperties} ${maxProperties === 1 ? 'property' : 'properties'}`,
       false,
     );
     return true;
   }
-  if (rules.minProperties !== undefined && count < rules.minProperties) {
+  if (minProperties !== undefined && count < minProperties) {
     report(
       issues,
-      `expected at least ${rules.minProperties} ${rules.minProperties === 1 ? 'property' : 'properties'}`,
+      `expected at least ${minProperties} ${minProperties === 1 ? 'property' : 'properties'}`,
       false,
     );
     return true;
@@ -1036,10 +1109,13 @@ export function list<T>(
   const length = arrayLength(input);
   if (length === undefined)
     return report(issues, 'expected a valid array length', true);
-  if (rules?.maxItems !== undefined && length > rules.maxItems)
-    return report(issues, `expected at most ${rules.maxItems} items`, false);
-  if (rules?.minItems !== undefined && length < rules.minItems)
-    return report(issues, `expected at least ${rules.minItems} items`, false);
+  if (rules) {
+    const { maxItems, minItems } = arraySettings(rules);
+    if (maxItems !== undefined && length > maxItems)
+      return report(issues, `expected at most ${maxItems} items`, false);
+    if (minItems !== undefined && length < minItems)
+      return report(issues, `expected at least ${minItems} items`, false);
+  }
   const start = issues.length;
   const output: T[] = [];
   for (let index = 0; index < length; index++) {
@@ -1218,12 +1294,16 @@ const invalidJson = Symbol('invalid JSON');
 function cloneJson(input: unknown): JsonValue | typeof invalidJson {
   const result: Record<string, JsonValue> = {};
   type Frame = {
-    source?: object;
+    source: object | undefined;
     target: Record<string, JsonValue> | JsonValue[];
     entries: Iterator<readonly [string | number, unknown]>;
   };
   const stack: Frame[] = [
-    { target: result, entries: [['value', input] as const].values() },
+    {
+      source: undefined,
+      target: result,
+      entries: [['value', input] as const].values(),
+    },
   ];
   const pending = new Set<object>();
   // Validate and copy iteratively: valid JSON can exceed the JS call stack.
@@ -1495,6 +1575,26 @@ type Definition<
   O extends RequestParts | undefined,
   R extends Responses,
   B extends BodyKind,
+> = Omit<
+  OperationSettings<O, R, B>,
+  'contentType' | 'multipart' | 'parameters'
+> &
+  Readonly<{
+    contentType?: string;
+    multipart?: readonly MultipartField[];
+    parameters: readonly Parameter[];
+  }>;
+
+type SerializedParameter = Readonly<{
+  name: string;
+  in: Parameter['in'];
+  required: boolean;
+  explode: boolean;
+}>;
+type OperationSettings<
+  O extends RequestParts | undefined,
+  R extends Responses,
+  B extends BodyKind,
 > = Readonly<{
   operationId: string;
   method: string;
@@ -1502,15 +1602,47 @@ type Definition<
   security: Security;
   policy: Policy;
   bodyKind: B;
-  contentType?: string;
-  multipart?: readonly MultipartField[];
-  parameters: readonly Parameter[];
+  contentType: string;
+  multipart: readonly MultipartField[];
+  parameters: readonly SerializedParameter[];
   options: Parse<O>;
   headers: Readonly<
     Record<string, { schema: Parse<string | null>; required: boolean }>
   >;
   responses: R;
 }>;
+
+function operationSettings<
+  O extends RequestParts | undefined,
+  R extends Responses,
+  B extends BodyKind,
+>(input: Definition<O, R, B>): OperationSettings<O, R, B> {
+  const source = ownFields(input);
+  return {
+    operationId: source.operationId,
+    method: source.method,
+    path: source.path,
+    security: source.security,
+    policy: source.policy,
+    bodyKind: source.bodyKind,
+    contentType:
+      source.contentType ??
+      (source.bodyKind === 'text' ? 'text/plain' : 'application/json'),
+    multipart: source.multipart ?? [],
+    parameters: source.parameters.map((input) => {
+      const parameter = ownFields(input);
+      return {
+        name: parameter.name,
+        in: parameter.in,
+        required: parameter.required,
+        explode: parameter.explode !== false,
+      };
+    }),
+    options: source.options,
+    headers: source.headers,
+    responses: source.responses,
+  };
+}
 
 function frozenHeaders(headers: Record<string, string>): HeaderContext {
   return Object.freeze(headers);
@@ -1589,7 +1721,7 @@ function trimHeaderWhitespace(value: string): string {
   return value.slice(start, end);
 }
 
-function observedHeaders(input: HeaderContext) {
+function observedHeaders(input: unknown) {
   if (!plainRecord(input))
     throw new TypeError('response headers must be a plain record');
   const context: Record<string, string> = dictionary<string>();
@@ -1678,7 +1810,9 @@ function responseParser<R extends Responses>(
     // JavaScript executors can bypass the declared evidence types. Snapshot
     // fields once and reject coercion before lookup or JSON parsing can turn a
     // malformed adapter result into successful, incorrectly typed protocol data.
-    const { status, body, headers: rawHeaders } = observed;
+    const status = structuralField(observed, 'status');
+    const body = structuralField(observed, 'body');
+    const rawHeaders = structuralField(observed, 'headers');
     if (typeof status !== 'number')
       throw new TypeError('response status must be a number');
     if (typeof body !== 'string')
@@ -1826,7 +1960,7 @@ function validateMultipart(
 function serializeParameters(
   operationId: string,
   template: string,
-  parameters: readonly Parameter[],
+  parameters: readonly SerializedParameter[],
   options: RequestParts,
 ): { url: string; headers: HeaderContext } {
   let path = template;
@@ -1982,14 +2116,13 @@ export function defineOperation<
   const O extends RequestParts | undefined,
   const R extends Responses,
   const B extends BodyKind,
->(definition: Definition<O, R, B>): Operation<O, R, PreparedBodyKind<O, B>> {
+>(input: Definition<O, R, B>): Operation<O, R, PreparedBodyKind<O, B>> {
+  const definition = operationSettings(input);
   const security = Object.freeze({ ...definition.security });
   const policy = Object.freeze({ ...definition.policy });
-  const requestContentType =
-    definition.contentType ??
-    (definition.bodyKind === 'text' ? 'text/plain' : 'application/json');
+  const requestContentType = definition.contentType;
   const multipart = Object.freeze(
-    (definition.multipart ?? []).map((field) => Object.freeze({ ...field })),
+    definition.multipart.map((field) => Object.freeze({ ...field })),
   );
   const parseResponse = responseParser(
     definition.operationId,

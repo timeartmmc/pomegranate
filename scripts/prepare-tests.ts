@@ -31,7 +31,11 @@ import {
 const fixtures: [string, unknown, CompileOptions][] = [
   ['native', nativeFixture(), { clients: ['consumer'] }],
   ['example', fixture(), { clients: ['consumer', 'staff'] }],
-  ['runtime', generatedFixture(), { clients: ['consumer', 'staff'] }],
+  [
+    'runtime',
+    generatedFixture(),
+    { clients: ['consumer', 'staff'], executionClients: ['consumer'] },
+  ],
   [
     'schema',
     schemaFixture(),

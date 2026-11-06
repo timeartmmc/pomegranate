@@ -52,6 +52,74 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+void test('omitted call and query arguments never inherit input, context or signal from Object.prototype', async () => {
+  const signals: AbortSignal[] = [];
+  const config: Parameters<typeof module.createClient>[0] = {
+    namespace: 'own-arguments',
+    execute: async (_request, execution) => {
+      signals.push(execution.signal);
+      assert.deepEqual({ ...execution.context }, {});
+      return { status: 204, headers: {}, body: '' };
+    },
+  };
+  const client = module.createClient(config);
+  const families = queries.createQueries(config);
+  const signal = new AbortController().signal;
+  const aborted = new AbortController();
+  aborted.abort(new Error('inherited signal must not cancel a call'));
+  const values = {
+    context: { inherited: true },
+    input: { path: { id: 'inherited' } },
+    signal: aborted.signal,
+  };
+  const before = Object.entries(values).map(
+    ([name]) =>
+      [name, Object.getOwnPropertyDescriptor(Object.prototype, name)] as const,
+  );
+  try {
+    for (const [name, value] of Object.entries(values))
+      Object.defineProperty(Object.prototype, name, {
+        value,
+        configurable: true,
+        writable: true,
+      });
+    await assert.rejects(
+      runtimeInput(client.health.call, { input: {}, signal }),
+      TypeError,
+    );
+    assert.throws(
+      () =>
+        runtimeInput(families.readItem.options, {
+          input: { path: { id: 'own' } },
+        }),
+      TypeError,
+    );
+    await client.health.call({ context: {}, input: {} });
+    await client.health.call({ context: {}, signal });
+    assert.equal(signals.length, 2);
+    assert.notEqual(signals[0], aborted.signal);
+    assert.equal(signals[0]?.aborted, false);
+    assert.equal(signals[1], signal);
+    await assert.rejects(
+      runtimeInput(client.readItem.call, { context: {}, signal }),
+      module.RequestValidationError,
+    );
+    for (const family of [families.readItem, families.readItem.body()])
+      assert.throws(
+        () => runtimeInput(family.options, { context: {} }),
+        module.RequestValidationError,
+      );
+    const options = families.health.options({ context: {} });
+    assert.deepEqual(options.queryKey[4], []);
+    assert.equal(signals.length, 2);
+  } finally {
+    for (const [name, descriptor] of before) {
+      if (descriptor) Object.defineProperty(Object.prototype, name, descriptor);
+      else Reflect.deleteProperty(Object.prototype, name);
+    }
+  }
+});
+
 void test('direct calls preserve dynamic map names and scoped operation identifiers', async () => {
   const source =
     '{"__proto__":{"constructor":null},"constructor":null,"prototype":"value"}';

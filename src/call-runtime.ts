@@ -29,8 +29,10 @@ import type {
 } from './runtime.ts';
 import {
   contextEntries,
+  contextRecord,
   dataRecord,
   executeRequest,
+  executionConfig,
   operationErrorGuard,
   prepareExecution,
 } from './execution-runtime.ts';
@@ -95,14 +97,12 @@ export function defineCall<Input, const R extends Responses>(
       operationId: string;
     }>,
 ): OperationCall<Input, R> {
-  const {
-    operation,
-    namespace,
-    execute,
-    client,
-    operationId,
-    mapCancellation,
-  } = config;
+  const own = Object.assign(Object.create(null) as typeof config, config);
+  const { operation, client, operationId } = own;
+  const { namespace, execute, mapCancellation } = executionConfig(
+    own,
+    'client',
+  );
   const scope: ErrorScope<R> = { operation, namespace, client, operationId };
   return Object.freeze({
     isError: operationErrorGuard<R>(scope),
@@ -111,10 +111,8 @@ export function defineCall<Input, const R extends Responses>(
       for (const name of Object.keys(fields))
         if (name !== 'context' && name !== 'input' && name !== 'signal')
           throw new TypeError(`unknown call argument ${name}`);
-      const context = Object.freeze(
-        Object.fromEntries(
-          contextEntries(fields['context'], 'execution context'),
-        ),
+      const context = contextRecord(
+        contextEntries(fields['context'], 'execution context'),
       );
       const signal = callSignal(fields['signal']);
       // Build synchronously before yielding: the parser snapshots JSON and native file

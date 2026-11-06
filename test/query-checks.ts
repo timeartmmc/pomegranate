@@ -19,10 +19,13 @@ export async function verifyQueries(
       assert.equal(signal.aborted, false);
       assert.ok(Object.isFrozen(context));
       if (request.operationId === 'readItem')
-        assert.deepEqual(context, {
-          locale: 'en',
-          session: 'synthetic-session-1',
-        });
+        assert.deepEqual(
+          { ...context },
+          {
+            locale: 'en',
+            session: 'synthetic-session-1',
+          },
+        );
       request.validateHeaders({ ...request.headers, 'X-Language': 'en' });
       if (request.operationId === 'health')
         return { status: 204, headers: {}, body: '' };

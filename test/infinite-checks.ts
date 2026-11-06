@@ -48,7 +48,7 @@ export const infiniteChecks = {
         namespace: 'infinite',
         execute: async (request, { context, signal }) => {
           urls.push(request.url);
-          assert.deepEqual(context, { session: 'original', variant: 0 });
+          assert.deepEqual({ ...context }, { session: 'original', variant: 0 });
           assert.ok(Object.isFrozen(context));
           assert.equal(signal.aborted, false);
           return response(

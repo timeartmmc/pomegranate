@@ -31,6 +31,7 @@ import type {
   ProtocolResult,
   Responses,
 } from './runtime.ts';
+import { structuralField } from './runtime.ts';
 
 export type ExecutionContext = Readonly<
   Record<string, string | number | boolean | null>
@@ -88,7 +89,7 @@ export type CancellationMapper = (
 export type ClientConfig = Readonly<{
   namespace: string;
   execute: Executor;
-  mapCancellation?: CancellationMapper;
+  mapCancellation?: CancellationMapper | undefined;
 }>;
 
 export type Success<R extends Responses> = DeclaredResponse<R> &
@@ -183,7 +184,7 @@ function throwIfAborted(signal: AbortSignal, aborted: boolean): void {
 function cancellationReason(signal: AbortSignal): unknown {
   // Native polyfills may lack throwIfAborted and reason. Keep a defined
   // cancellation reason verbatim and supply a portable error only if absent.
-  const reason: unknown = 'reason' in signal ? signal.reason : undefined;
+  const reason: unknown = structuralField(signal, 'reason');
   if (reason !== undefined) return reason;
   const error = new Error('The operation was aborted');
   error.name = 'AbortError';
@@ -269,19 +270,19 @@ export function dataRecord(
       Object.getPrototypeOf(value) !== null)
   )
     throw new TypeError(`${location} must be a plain record`);
-  return Object.fromEntries(
-    Reflect.ownKeys(value).map((name) => {
-      const descriptor = Object.getOwnPropertyDescriptor(value, name)!;
-      if (
-        typeof name !== 'string' ||
-        !descriptor.enumerable ||
-        !Object.hasOwn(descriptor, 'value')
-      )
-        throw new TypeError(`${location} must contain enumerable data fields`);
-      const item: unknown = descriptor.value;
-      return [name, item];
-    }),
-  );
+  // Missing argument fields must stay absent when Object.prototype has data.
+  const fields = Object.create(null) as Record<string, unknown>;
+  for (const name of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name)!;
+    if (
+      typeof name !== 'string' ||
+      !descriptor.enumerable ||
+      !Object.hasOwn(descriptor, 'value')
+    )
+      throw new TypeError(`${location} must contain enumerable data fields`);
+    fields[name] = descriptor.value;
+  }
+  return fields;
 }
 
 export function contextEntries(
@@ -310,6 +311,17 @@ export function contextEntries(
         return Object.freeze([name, value === 0 ? 0 : value] as const);
       }),
   );
+}
+
+export function contextRecord(entries: ContextEntries): ExecutionContext {
+  // The executor must observe exactly the own values represented by its key,
+  // including when Object.prototype changes after the snapshot was captured.
+  const context = Object.create(null) as Record<
+    string,
+    ExecutionContext[string]
+  >;
+  for (const [name, value] of entries) context[name] = value;
+  return Object.freeze(context);
 }
 
 // Only generated, validated JSON and issue paths enter this copier. A frame per
@@ -515,15 +527,19 @@ export function executionConfig<Execute extends (...args: never[]) => unknown>(
   config: Readonly<{
     namespace: string;
     execute: Execute;
-    mapCancellation?: CancellationMapper;
+    mapCancellation?: CancellationMapper | undefined;
   }>,
   label = 'execution',
 ): {
   namespace: string;
   execute: Execute;
-  mapCancellation?: CancellationMapper;
+  mapCancellation: CancellationMapper | undefined;
 } {
-  const { namespace, execute, mapCancellation } = config;
+  // Classes and custom prototypes can declare settings. Only Object.prototype
+  // is excluded; unrelated getters are not part of this fixed configuration.
+  const namespace = structuralField(config, 'namespace');
+  const execute = structuralField(config, 'execute');
+  const mapCancellation = structuralField(config, 'mapCancellation');
   if (typeof namespace !== 'string' || namespace.length === 0)
     throw new TypeError(`${label} namespace must be a nonempty string`);
   if (typeof execute !== 'function')
@@ -533,6 +549,8 @@ export function executionConfig<Execute extends (...args: never[]) => unknown>(
   return {
     namespace,
     execute,
-    ...(mapCancellation ? { mapCancellation } : {}),
+    // Internal configuration owns absent slots too: a later prototype change
+    // cannot introduce behavior between normalization and factory construction.
+    mapCancellation,
   };
 }

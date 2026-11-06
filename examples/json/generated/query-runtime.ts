@@ -45,6 +45,7 @@ import { shareQueryData } from './query-sharing.ts';
 
 import {
   contextEntries,
+  contextRecord,
   dataRecord,
   executionConfig,
   executeRequest,
@@ -86,7 +87,7 @@ export type QueryExecutor<P = PreparedRequest['policy']> = <
 export type QueryConfig = Readonly<{
   namespace: string;
   execute: QueryExecutor;
-  mapCancellation?: CancellationMapper;
+  mapCancellation?: CancellationMapper | undefined;
 }>;
 
 type Arguments<Input> = InputArguments<Input>;
@@ -202,9 +203,31 @@ type FactoryConfig = Readonly<{
   client: string;
   // The emitter supplies identity without building a request with fake inputs.
   operationId: string;
-  mapCancellation?: CancellationMapper;
+  mapCancellation?: CancellationMapper | undefined;
   bodyCache?: boolean;
 }>;
+
+type NormalizedFactoryConfig = Readonly<{
+  execute: QueryExecutor;
+  namespace: string;
+  client: string;
+  operationId: string;
+  mapCancellation: CancellationMapper | undefined;
+  bodyCache: boolean;
+}>;
+
+// Only public constructors accept omitted settings. Keep a private snapshot with
+// every slot present through lazy body factories and asynchronous page callbacks.
+function factoryConfig<Config extends FactoryConfig>(
+  config: Config,
+): Config & NormalizedFactoryConfig {
+  const own = Object.assign(Object.create(null) as Config, config);
+  return Object.assign(own, executionConfig(own, 'query'), {
+    client: own.client,
+    operationId: own.operationId,
+    bodyCache: own.bodyCache ?? false,
+  });
+}
 
 interface ScopedOperationFilter<Prefix extends string> {
   readonly queryKey: readonly [Prefix, string, string, string];
@@ -220,7 +243,7 @@ function queryArguments(args: unknown) {
   return {
     input: fields['input'],
     context,
-    executionContext: Object.freeze(Object.fromEntries(context)),
+    executionContext: contextRecord(context),
   };
 }
 
@@ -312,7 +335,7 @@ function responseBody<R extends Responses, M extends CacheRepresentation>(
 
 type PreparedQuery<R extends Responses> = Readonly<{
   request: PreparedRequest<R, 'none'>;
-  responseIssues?: (page: Success<R>) => readonly ProtocolIssue[];
+  responseIssues: ((page: Success<R>) => readonly ProtocolIssue[]) | undefined;
 }>;
 
 export interface OperationInvalidationFilter {
@@ -448,7 +471,7 @@ export function defineQuery<Input, const R extends Responses>(
       };
     }>,
 ): QueryFactory<Input, R> {
-  return queryFactory(config, 'envelope');
+  return queryFactory(factoryConfig(config), 'envelope');
 }
 
 function queryFactory<
@@ -456,7 +479,7 @@ function queryFactory<
   R extends Responses,
   M extends CacheRepresentation,
 >(
-  config: FactoryConfig &
+  config: NormalizedFactoryConfig &
     Readonly<{
       operation: {
         build: (input: Input) => PreparedRequest<R, 'none'>;
@@ -465,7 +488,15 @@ function queryFactory<
     }>,
   representation: M,
 ): QueryFactory<Input, R, M> {
-  const { operation, execute, namespace, client, operationId } = config;
+  const {
+    operation,
+    execute,
+    namespace,
+    client,
+    operationId,
+    mapCancellation,
+    bodyCache,
+  } = config;
   const scope: ErrorScope<R> = { operation, namespace, client, operationId };
   const prefix = cachePrefixes.ordinary[representation];
   let bodyFactory: QueryFactory<Input, R, 'body'> | undefined;
@@ -515,12 +546,12 @@ function queryFactory<
           ? skipToken
           : createQueryFunction(
               queryKey,
-              () => ({ request }),
+              () => ({ request, responseIssues: undefined }),
               execute,
               executionContext,
               scope,
               representation,
-              config.mapCancellation,
+              mapCancellation,
             ),
     });
   }
@@ -532,7 +563,7 @@ function queryFactory<
       operationInvalidationFilter(namespace, client, operationId, scope),
     isError: operationErrorGuard<R>(scope),
     body: (() => {
-      if (!config.bodyCache)
+      if (!bodyCache)
         throw new TypeError(
           `${operationId} has a bodyless success; use an envelope query`,
         );
@@ -668,18 +699,23 @@ export function defineInfiniteQuery<
       items: (page: Body<R>) => Items;
     }>,
 ): InfiniteQueryFactory<O, R, Items[number]> {
+  const normalized = factoryConfig(config);
   return infiniteFactory<O, R, Items, string, 'envelope'>(
     {
-      ...config,
-      parameter: config.cursor,
+      ...normalized,
+      operation: normalized.operation,
+      input: normalized.input,
+      items: normalized.items,
+      parameter: normalized.cursor,
       profile: 'cursor',
       initialPageParam: null,
+      responseIssues: undefined,
       parsePageParam: (value) => {
         if (value !== null && typeof value !== 'string')
           throw new TypeError('page cursor must be a string or null');
         return value;
       },
-      nextPageParam: (page) => config.nextCursor(page) ?? undefined,
+      nextPageParam: (page) => normalized.nextCursor(page) ?? undefined,
     },
     'envelope',
   );
@@ -740,10 +776,20 @@ export function defineOffsetQuery<
       page: (page: Body<R>) => OffsetPage<Items>;
     }>,
 ): InfiniteQueryFactory<O, R, Items[number], number> {
+  const normalized = factoryConfig(config);
+  const fields = Object.assign(
+    Object.create(null) as OffsetFields,
+    normalized.fields,
+  );
+  for (const name of ['offset', 'limit', 'total', 'items'] as const)
+    if (typeof fields[name] !== 'string')
+      throw new TypeError(`offset query field ${name} must be a string`);
   return infiniteFactory<O, R, Items, number, 'envelope'>(
     {
-      ...config,
-      parameter: config.offset,
+      ...normalized,
+      operation: normalized.operation,
+      input: normalized.input,
+      parameter: normalized.offset,
       profile: 'offset',
       initialPageParam: 0,
       parsePageParam: (value) => {
@@ -755,15 +801,15 @@ export function defineOffsetQuery<
           throw new TypeError('page offset must be a nonnegative safe integer');
         return value === 0 ? 0 : value;
       },
-      items: (page) => config.page(page).items,
+      items: (page) => normalized.page(page).items,
       responseIssues: (page, offset) =>
-        offsetIssues(config.page(page), offset, config.fields),
+        offsetIssues(normalized.page(page), offset, fields),
       nextPageParam: (page, offset) => {
-        const data = config.page(page);
+        const data = normalized.page(page);
         // Optimistic cache edits can temporarily invalidate server metadata.
         // Stop paging until a valid refetch; throwing here breaks Query Core's
         // observer updates. Incoming responses still fail through responseIssues.
-        const issues = offsetIssues(data, offset, config.fields);
+        const issues = offsetIssues(data, offset, fields);
         if (issues.length) return undefined;
         const next = data.offset + data.items.length;
         return data.items.length > 0 && next < data.total ? next : undefined;
@@ -780,7 +826,7 @@ function infiniteFactory<
   P extends Pagination,
   M extends CacheRepresentation,
 >(
-  config: FactoryConfig &
+  config: NormalizedFactoryConfig &
     Readonly<{
       operation: {
         build: (input: never) => PreparedRequest<R, 'none'>;
@@ -796,16 +842,19 @@ function infiniteFactory<
         parameter: PageParameter<P>,
       ) => Exclude<PageParameter<P>, null> | undefined;
       items: (page: Body<R>) => Items;
-      responseIssues?: (
-        page: Body<R>,
-        parameter: PageParameter<P>,
-      ) => readonly ProtocolIssue[];
+      responseIssues:
+        | ((
+            page: Body<R>,
+            parameter: PageParameter<P>,
+          ) => readonly ProtocolIssue[])
+        | undefined;
     }>,
   representation: M,
 ): InfiniteQueryFactory<O, R, Items[number], P, M> {
   let bodyFactory:
     | InfiniteQueryFactory<O, R, Items[number], P, 'body'>
     | undefined;
+  const { mapCancellation, bodyCache } = config;
   const prefix = cachePrefixes[config.profile][
     representation
   ] as InfinitePrefix<P, M>;
@@ -834,12 +883,9 @@ function infiniteFactory<
     });
     return {
       request,
-      ...(responseIssues
-        ? {
-            responseIssues: (page: Success<R>) =>
-              responseIssues(page.data, value),
-          }
-        : {}),
+      responseIssues: responseIssues
+        ? (page: Success<R>) => responseIssues(page.data, value)
+        : undefined,
     };
   }
   function prepare(args: Arguments<O> | SkippedArguments) {
@@ -906,7 +952,7 @@ function infiniteFactory<
               executionContext,
               scope,
               representation,
-              config.mapCancellation,
+              mapCancellation,
             ),
       getNextPageParam: (
         lastPage: QueryValue<R, M>,
@@ -956,7 +1002,7 @@ function infiniteFactory<
         return items;
       },
       body: (() => {
-        if (!config.bodyCache)
+        if (!bodyCache)
           throw new TypeError(
             `${config.operationId} has a bodyless success; use an envelope query`,
           );

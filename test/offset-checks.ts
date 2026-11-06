@@ -162,7 +162,7 @@ export const offsetChecks = {
       const queries = module.createInfiniteQueries({
         namespace: 'offset-pages',
         execute: async (request, { context }) => {
-          assert.deepEqual(context, { session: 'one' });
+          assert.deepEqual({ ...context }, { session: 'one' });
           assert.equal(Object.isFrozen(context), true);
           request.validateHeaders({ 'X-Language': 'en' });
           seen.push(request.url);

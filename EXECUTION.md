@@ -72,13 +72,15 @@ It can return raw
 record, and body text, or an inspection handle from `validateResponse`. It may reject
 with an application error. Raw executors can ignore the callback.
 
-The application resolves the API origin, credentials and declared policy labels,
+The application resolves the API origin, credentials for `request.security.scheme`
+on bearer requests, and declared policy labels,
 validates merged headers with `request.validateHeaders`, serializes the prepared
 body and forwards the signal to its transport. JSON and text requests expose
-`request.contentType` for the transport's Content-Type header; send text bodies
-directly and serialize JSON bodies with `JSON.stringify`. POM invokes this
-executor once; the executor owns recovery, retries, deadlines, locale and session
-fencing. One executor can serve direct calls, ordinary queries, and both infinite
+`request.contentType` for the transport's Content-Type header. For text, append a
+charset consistent with the encoded bytes, such as `text/plain; charset=utf-8`,
+and send the body directly. Serialize JSON bodies with `JSON.stringify`.
+POM invokes this executor once; the executor owns recovery, retries, deadlines,
+locale and session fencing. One executor can serve direct calls, ordinary queries, and both infinite
 query profiles without casts. `QueryExecutor` accepts only bodyless requests and is
 sufficient for query-only integrations. For adapters shared across generated
 documents with different policy vocabularies, declare the supported
@@ -109,9 +111,12 @@ completed response and the handle it returns.
 
 Context is always required, including for writes and bodyless calls. Use nonsecret
 finite JSON scalars for every response-changing session revision, tenant, locale
-or transport value. Records must contain enumerable own data properties.
+or transport value. Arguments and context must contain enumerable own data
+properties; omitted arguments never inherit values from `Object.prototype`.
 Names are sorted and numeric `-0` becomes
 `0`, including in the frozen executor snapshot. Never put credentials in context.
+Executor context snapshots have a null prototype: absent keys stay absent even
+if `Object.prototype` changes after capture. Use `Object.hasOwn` to check keys.
 The executor must use the snapshot for session and locale checks rather than
 rereading mutable application state.
 

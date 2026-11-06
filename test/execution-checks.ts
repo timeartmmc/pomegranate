@@ -36,6 +36,74 @@ async function rejected(promise: Promise<unknown>): Promise<unknown> {
 
 export const executionChecks = {
   ...integrationChecks,
+  'calls and queries expose the declared bearer scheme to their executor':
+    async (module, queries) => {
+      const seen: string[] = [];
+      const config = {
+        namespace: 'bearer-identity',
+        execute: async (request: Parameters<Executor>[0]) => {
+          assert.equal(request.security.transport, 'bearer');
+          if (request.security.transport === 'bearer')
+            seen.push(request.security.scheme);
+          assert.ok(Object.isFrozen(request.security));
+          return json(200, { id: 'item', label: 'Synthetic' });
+        },
+      };
+      await module.createClient(config).readItem.call(item());
+      const cache = new QueryClient({
+        defaultOptions: { queries: { gcTime: Infinity, retry: false } },
+      });
+      try {
+        await cache.fetchQuery(
+          queries.createQueries(config).readItem.options(item()),
+        );
+        assert.deepEqual(seen, ['Session', 'Session']);
+      } finally {
+        cache.clear();
+      }
+    },
+  'executor contexts contain only their own captured values for calls and queries':
+    async (module, queries) => {
+      let calls = 0;
+      const execute: Executor = async (_request, { context }) => {
+        calls++;
+        assert.equal(context['inheritedContextValue'], undefined);
+        assert.equal(context['own'], 'explicit');
+        assert.equal(Object.isFrozen(context), true);
+        return { status: 204, headers: {}, body: '' };
+      };
+      const config = { namespace: 'own-context', execute };
+      const client = module.createClient(config);
+      const options = queries
+        .createQueries(config)
+        .health.options({ context: { own: 'explicit' } });
+      const cache = new QueryClient({
+        defaultOptions: { queries: { gcTime: Infinity, retry: false } },
+      });
+      const before = Object.getOwnPropertyDescriptor(
+        Object.prototype,
+        'inheritedContextValue',
+      );
+      try {
+        Object.defineProperty(Object.prototype, 'inheritedContextValue', {
+          value: 'polluted',
+          configurable: true,
+        });
+        await client.health.call({ context: { own: 'explicit' } });
+        await cache.fetchQuery(options);
+        assert.equal(calls, 2);
+        assert.deepEqual(options.queryKey[4], [['own', 'explicit']]);
+      } finally {
+        cache.clear();
+        if (before)
+          Object.defineProperty(
+            Object.prototype,
+            'inheritedContextValue',
+            before,
+          );
+        else Reflect.deleteProperty(Object.prototype, 'inheritedContextValue');
+      }
+    },
   'optional JSON bodies preserve absence and null through raw and scoped execution':
     async (module) => {
       for (const scoped of [false, true]) {
@@ -208,7 +276,10 @@ export const executionChecks = {
         label: 'Synthetic',
         values: ['one'],
       });
-      assert.deepEqual(contexts[0]?.context, { locale: 'en', revision: 'one' });
+      assert.deepEqual(
+        { ...contexts[0]?.context },
+        { locale: 'en', revision: 'one' },
+      );
       for (const execution of contexts) {
         assert.ok(Object.isFrozen(execution));
         assert.ok(Object.isFrozen(execution.context));
@@ -366,7 +437,7 @@ export const executionChecks = {
       );
       assert.equal(requests[0]?.headers['X-View'], 'original');
       assert.deepEqual(
-        executions.map((execution) => execution.context),
+        executions.map((execution) => ({ ...execution.context })),
         [{ locale: 'en', revision: 'one' }, { revision: 'two' }],
       );
       assert.notEqual(executions[0]?.signal, executions[1]?.signal);
