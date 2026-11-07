@@ -566,6 +566,10 @@ diagnostic before the parser can exhaust its ordinary stack budget.
 Generated code uses its runtime's regular expression engine; Unicode character
 classification can change between runtime Unicode versions. Browser and native
 engines must support the pattern features used by their contracts.
+If an engine throws `RangeError` while matching a schema pattern or registered
+format, that rule fails through the normal validation issue path. Other errors
+propagate. This does not bound regex execution time; use `maxLength` to reject
+oversized input before matching, or `format: "byte"` for standard base64.
 
 Inline scalar `enum` members and `const` values must satisfy applicable bounds,
 formats, `multipleOf`, and patterns without Unicode property escapes during

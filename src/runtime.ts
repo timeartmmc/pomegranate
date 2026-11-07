@@ -402,14 +402,22 @@ function codePoints(value: string): number {
 
 export function patternTest(pattern: string): (value: string) => boolean {
   const expression = new RegExp(pattern, 'u');
-  return (value) => expression.test(value);
+  return (value) => {
+    try {
+      return expression.test(value);
+    } catch (error) {
+      // Engines can exhaust their regexp stack on otherwise valid large input.
+      // Fail this rule through the normal issue path; unrelated errors propagate.
+      if (error instanceof RangeError) return false;
+      throw error;
+    }
+  };
 }
 
 export function formatPattern(pattern: string): (value: string) => boolean {
   // Formats match the complete value. Grouping preserves alternatives and
   // backreferences; without multiline mode, $ requires the end of input.
-  const expression = new RegExp(`^(?:${pattern})$`, 'u');
-  return (value) => expression.test(value);
+  return patternTest(`^(?:${pattern})$`);
 }
 
 function decimal(value: number): readonly [bigint, number] {
