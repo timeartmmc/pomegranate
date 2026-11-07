@@ -137,6 +137,10 @@ import {
   consumerModesFixture,
   verifyConsumerModes,
 } from '../test/consumer-modes.ts';
+import {
+  aliasDeclarationFixture,
+  verifyAliasDeclarations,
+} from '../test/alias-declarations.ts';
 
 import {
   verifyWideDeclarations,
@@ -1488,6 +1492,30 @@ try {
     join(consumer, 'consumer-modes-generated'),
     join(consumer, 'node_modules/typescript/bin/tsc'),
     'pomegranate-compiler',
+  );
+  const aliasTypes = aliasDeclarationFixture();
+  await mkdir(join(consumer, 'alias-types'));
+  await writeFile(
+    join(consumer, 'alias-types-openapi.json'),
+    JSON.stringify(aliasTypes.document),
+  );
+  await writeFile(
+    join(consumer, 'alias-types-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './alias-types-openapi.json',
+      output: './alias-types/source',
+      ...aliasTypes.options,
+    }),
+  );
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'alias-types-pom.json'),
+  ]);
+  await verifyAliasDeclarations(
+    join(consumer, 'alias-types'),
+    join(consumer, 'node_modules/typescript/bin/tsc'),
   );
   for (const name of (await readdir(join(consumer, 'generated'))).filter(
     (name) => name.endsWith('.ts'),

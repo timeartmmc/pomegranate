@@ -128,11 +128,21 @@ export function renderTypes(
   for (const name of descriptor.schemaOrder) {
     const shapes = new Map<string, TypeNode>();
     for (const variant of byName.get(name) ?? []) {
+      const schema = descriptor.schemas[variant.direction].get(name)!;
+      if (schema.kind === 'ref') {
+        // Reference siblings constrain values without changing their TS type.
+        // Reuse the target now: consumers skipping declaration checking must
+        // not recursively resolve thousands of aliases before reaching it.
+        const target = node(schema.name, variant.direction, variant.target);
+        for (const owner of variant.owners) target.owners.add(owner);
+        nodes.set(key(name, variant.direction, variant.target), target);
+        continue;
+      }
       // Dependencies precede their users. Canonical child identities make this
       // an exact type-shape comparison, including directional field projection
       // and browser/native file types, without expanding reference graphs.
       const shape = schemaType(
-        descriptor.schemas[variant.direction].get(name)!,
+        schema,
         variant.direction,
         variant.target,
         (child, direction) =>
