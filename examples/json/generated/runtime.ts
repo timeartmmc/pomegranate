@@ -27,9 +27,9 @@ export type { Policy } from './policy-types.ts';
 
 // Generated validators are ordinary functions over unknown input. A parser
 // returns a fresh value of its declared type, or `invalid` after recording at
-// least one issue in the caller's sink. Generated return expressions are
-// checked against named contract types, so no schema-library inference or
-// assertion establishes a validated type.
+// least one issue in the caller's sink. Contract types remain independent of
+// validator inference. Constructor metadata is checked against those explicit
+// types; fixed-object and literal constructors connect validation to typed output.
 export const invalid: unique symbol = Symbol('pom.invalid');
 export type Invalid = typeof invalid;
 // An optional field distinguishes an absent key from an explicit undefined.
@@ -329,9 +329,8 @@ export function optionalField<T>(
   return result;
 }
 
-// Generated modules declare key lists and rule objects as plain data and call
-// these helpers from function bodies. Derived sets and compiled checks are
-// cached by identity, so module initialisation runs no validator constructors.
+// Generated constructors capture private key lists and rule objects. Derived
+// sets and compiled checks are cached by identity on first validation.
 const keySets = new WeakMap<readonly string[], ReadonlySet<string>>();
 export const noKeys: readonly string[] = [];
 export function unknownKeys(
@@ -1283,6 +1282,184 @@ export function taggedUnion<T>(
   return report(issues, 'expected a declared discriminator tag', true, [
     propertyName,
   ]);
+}
+
+// Independent T specifies every key, exact requiredness and parser output type.
+// A false slot denotes a directionally forbidden optional-never property.
+// Without strictNullChecks, Exclude<null, undefined> erases null too. Restore
+// nullable members, and use Required to identify optional-never separately.
+type FieldValue<T> = Exclude<T, undefined> | Extract<T, null>;
+export type FieldTable<T extends object> = {
+  readonly [K in keyof T]-?: [FieldValue<Required<T>[K]>] extends [never]
+    ? false
+    : {} extends Pick<T, K>
+      ? readonly [Parse<FieldValue<T[K]>>]
+      : Parse<FieldValue<T[K]>>;
+};
+
+// The emitter supplies finite own-property literals with an explicit independent
+// T, never application metadata. Tables and child parsers are compiler-owned and
+// remain unmodified. The mapped type requires every key and exact requiredness;
+// it does not prove parser semantics or own-property presence for arbitrary JS.
+// After the checks below, the result has each required value, optional values
+// or explicit undefined, and no forbidden value. The one assertion connects
+// this construction loop to T; generated callers contain no T assertion.
+export function fixedObject<T extends object>(
+  fields: FieldTable<T>,
+  strict: boolean,
+  rules?: ObjectRules,
+): Parse<T> {
+  let slots:
+    | readonly { name: string; required: boolean; parse: Parse<unknown> }[]
+    | undefined;
+  let template: Readonly<Record<string, undefined>> | undefined;
+  let known: readonly string[] = [];
+  let forbidden: readonly string[] = [];
+  return (input: unknown, issues: Issues): T | Invalid => {
+    const source = objectValue(input, issues);
+    if (source === invalid) return invalid;
+    if (!strict && rules && propertyCount(source, issues, rules))
+      return invalid;
+    if (!slots) {
+      const ordered: {
+          name: string;
+          required: boolean;
+          parse: Parse<unknown>;
+        }[] = [],
+        all: string[] = [],
+        blocked: string[] = [];
+      for (const name in fields)
+        if (Object.hasOwn(fields, name)) {
+          all.push(name);
+          const slot = fields[name];
+          if (slot === false) blocked.push(name);
+          else if (typeof slot === 'function')
+            ordered.push({ name, required: true, parse: slot });
+          else ordered.push({ name, required: false, parse: slot[0] });
+        }
+      slots = ordered;
+      // This private template holds only undefined, never parsed caller data.
+      // All-required results keep every own slot; optional tables avoid deletes.
+      if (ordered.every(({ required }) => required))
+        template = Object.fromEntries(
+          ordered.map(({ name }): [string, undefined] => [name, undefined]),
+        );
+      known = all;
+      forbidden = blocked;
+    }
+    const start = issues.length;
+    const output: Record<string, unknown> = template ? { ...template } : {};
+    let failed = false;
+    for (const { name, required, parse } of slots) {
+      const value = required
+        ? field(source, name, parse, issues)
+        : optionalField(source, name, parse, issues);
+      failed ||= value === invalid;
+      if (value !== absent) {
+        // Template slots are writable own data. Otherwise guard each write:
+        // input getters may add prototype setters after this parser was cached.
+        if (template || !(name in Object.prototype)) output[name] = value;
+        else {
+          // A null prototype keeps inherited get/set data out of the descriptor.
+          const descriptor: PropertyDescriptor & { __proto__: null } = {
+            __proto__: null,
+            value,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          };
+          Object.defineProperty(output, name, descriptor);
+        }
+      }
+    }
+    if (strict) {
+      const blocked = forbiddenKeys(source, forbidden, issues);
+      const extra = unknownKeys(source, known, issues);
+      failed ||= blocked || extra;
+    }
+    if (failed || issues.length !== start) return invalid;
+    if (strict && rules && propertyCount(output, issues, rules, true))
+      return invalid;
+    return output as T;
+  };
+}
+
+export type ArrayParse<T> = (
+  input: unknown,
+  issues: Issues,
+  rules?: ArrayRules,
+) => T[] | Invalid;
+export function arrayParser<T>(
+  item: Parse<T>,
+  defaults?: ArrayRules,
+): ArrayParse<T> {
+  return (input, issues, rules = defaults) => list(input, issues, item, rules);
+}
+export function mapParser<T>(
+  value: Parse<T>,
+  rules?: ObjectRules,
+): Parse<Record<string, T>> {
+  return (input, issues) => map(input, issues, value, rules);
+}
+export function unionParser<T>(left: Parse<T>, right: Parse<T>): Parse<T> {
+  return (input, issues) => union(input, issues, left, right);
+}
+export function taggedParser<T>(
+  name: string,
+  cases: Readonly<Record<string, Parse<T>>>,
+): Parse<T> {
+  return (input, issues) => taggedUnion(input, issues, name, cases);
+}
+export function textParser(rules: StringRules): Parse<string> {
+  return (input, issues) => text(input, issues, rules);
+}
+export function numberParser(rules: NumberRules): Parse<number> {
+  return (input, issues) => numeric(input, issues, rules);
+}
+export function refinedText<T extends string>(
+  base: Parse<T>,
+  rules: RuleChain<StringRules>,
+  maximum?: number,
+): Parse<T> {
+  return (input, issues) => refineText(input, issues, base, rules, maximum);
+}
+export function refinedNumber<T extends number>(
+  base: Parse<T>,
+  rules: RuleChain<NumberRules>,
+): Parse<T> {
+  return (input, issues) => refineNumber(input, issues, base, rules);
+}
+export function refinedObject<T extends object>(
+  base: Parse<T>,
+  rules: ObjectRules,
+  direction: 'map' | 'request' | 'response',
+): Parse<T> {
+  return (input, issues) => refineObject(input, issues, base, rules, direction);
+}
+export function boundedArray<T>(
+  base: ArrayParse<T>,
+  rules: ArrayRules,
+): Parse<T[]> {
+  return (input, issues) => base(input, issues, rules);
+}
+// Generated Parse<Contract> annotations check the inferred literal union against
+// an independent contract; the normalizer/emitter own completeness and
+// constraints. These immutable private arrays contain finite JSON scalar
+// literals. Set membership checks their values; returning the input preserves
+// -0. Unicode-property checks remain deferred to
+// the consuming engine. This is the literal constructor's sole assertion.
+// NoInfer keeps the public contract out of metadata inference. Contextualizing
+// every member against a large explicit union makes TS 5.7 checks superlinear.
+export function memberParser<
+  const V extends readonly (string | number | boolean | null)[],
+>(values: V, message: string, rules?: StringRules): Parse<NoInfer<V[number]>> {
+  let members: Set<unknown> | undefined;
+  return (input, issues) => {
+    members ??= new Set<unknown>(values);
+    if (!members.has(input)) return report(issues, message, true);
+    if (rules && text(input, issues, rules) === invalid) return invalid;
+    return input as V[number];
+  };
 }
 
 export type JsonValue =

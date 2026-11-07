@@ -60,9 +60,13 @@ runtime code is independent of surface membership. Surfaces govern generated
 imports; servers remain responsible for authorization.
 
 Keep contract types independent of validator inference. Generated named parsers
-must have checked return bodies and report invalid values through the shared
-issue sink. An invalid return or recorded issue must fail at every public and
-protocol boundary. Use shared scalar and container rules so constrained
+declare independent output types, checked against return bodies or typed
+constructor tables. Fixed-object construction and literal membership use narrow
+assertions in the shared runtime; keep their proof obligations beside the code.
+The emitter remains responsible for complete tables and correct constraints.
+Parsers report invalid values through the shared issue sink. An invalid return
+or recorded issue must fail at every public and protocol boundary.
+Use shared scalar and container rules so constrained
 references, standalone roots, and operation schemas retain one interpretation.
 Keep non-obvious implementation rationale beside the owning code.
 

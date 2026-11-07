@@ -75,10 +75,13 @@ void test('equal shapes retain component-local type names across directions and 
     const extract = (text: string) => {
       const begin = text.indexOf(start);
       const parser = text.indexOf(
-        `export function parse_Beta_${direction}`,
+        `export const parse_Beta_${direction}:`,
         begin,
       );
-      return text.slice(begin, text.indexOf('\n}\n', parser) + 3);
+      assert.ok(begin >= 0 && parser > begin);
+      const end = text.indexOf(';\n', parser);
+      assert.ok(end > parser);
+      return text.slice(begin, end + 1);
     };
     assert.equal(extract(expanded), extract(source));
   }

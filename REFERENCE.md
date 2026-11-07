@@ -977,6 +977,10 @@ need Query Core. Deployed applications do not need the compiler.
 Generated modules support `isolatedDeclarations`. Application exports inferred
 from them still need the annotations required by that TypeScript option.
 
+Generated parsers declare independent contract types and reuse local scalar and
+container constructors. Object field tables check field types and requiredness
+against those types. Large or order-sensitive objects use explicit parser bodies.
+
 Generated `schema-types.<digest>.ts` modules share component type identities across
 standalone validators and clients, including identical request and response
 shapes. Modules contain only types reachable by every output that uses them;

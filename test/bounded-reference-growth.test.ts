@@ -86,7 +86,7 @@ function size(files: Readonly<Record<string, string>>) {
     .join('\n');
   return {
     bytes: Buffer.byteLength(source),
-    functions: source.match(/\bfunction\s/g)?.length ?? 0,
+    parsers: source.match(/\b(?:function|const)\s+parse_/g)?.length ?? 0,
   };
 }
 
@@ -97,8 +97,8 @@ for (const kind of ['object', 'map', 'array'] as const) {
     // The source graph doubles in size. Rebuilding every shared descendant
     // instead makes emission exponential; stop here before the deeper probe.
     assert.ok(
-      practical.functions < shallow.functions * 4,
-      `${kind} parser growth: ${shallow.functions} -> ${practical.functions}`,
+      shallow.parsers > 0 && practical.parsers < shallow.parsers * 4,
+      `${kind} parser growth: ${shallow.parsers} -> ${practical.parsers}`,
     );
     assert.ok(
       practical.bytes < shallow.bytes * 4,
@@ -106,7 +106,7 @@ for (const kind of ['object', 'map', 'array'] as const) {
     );
     const files = await generate(kind, 18);
     const deep = size(files);
-    assert.ok(deep.functions < practical.functions * 3);
+    assert.ok(deep.parsers < practical.parsers * 3);
     assert.ok(deep.bytes < practical.bytes * 3);
 
     const root = await generatedTestWorkspace(t, files);

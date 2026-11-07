@@ -1,4 +1,5 @@
 import {
+  array,
   data,
   identifier,
   jsonSource,
@@ -23,7 +24,13 @@ import { hasUnicodeProperty, intersectConstraints } from './scalar-rules.js';
 import { parseSymbol, schemaType } from './schema-types.js';
 import { isRequired } from './required-index.js';
 import { stringFormatHelpers } from './formats.js';
-import { schemaBranchLocation } from './schemas.js';
+import {
+  arrayConstraints as arrayRules,
+  numberConstraints,
+  objectConstraints as objectRules,
+  schemaBranchLocation,
+  stringConstraints as stringRules,
+} from './schemas.js';
 import { sourceBudget } from './source-budget.js';
 
 // Bounds are data, so sharing them by schema identity does not share emitted
@@ -82,17 +89,8 @@ export type ObjectField = Readonly<{
   parse: Expression;
 }>;
 
-const stringRules = ['minLength', 'maxLength', 'pattern'] as const;
-const numberRules = [
-  'float',
-  'minimum',
-  'maximum',
-  'exclusiveMinimum',
-  'exclusiveMaximum',
-  'multipleOf',
-] as const;
-const arrayRules = ['minItems', 'maxItems'] as const;
-const objectRules = ['minProperties', 'maxProperties'] as const;
+// float is an internal format rule, never an accepted schema keyword.
+const numberRules = ['float', ...numberConstraints] as const;
 
 function rules(
   limits: ConstraintInput,
@@ -107,10 +105,10 @@ function rules(
   return entries.length ? object(entries) : undefined;
 }
 
-// Every generated parser is a flat named function over unknown input, with a
-// checked contract return. Rule/key data stays static; scalar and container
-// semantics stay in the shared runtime. Named child references bound both
-// expression nesting and inference depth as schemas grow.
+// Contract types stay independent of constructor metadata. Explicit Parse<T>
+// bindings check each constructor against its contract and keep child graphs
+// named, bounding expression and inference depth. Ordered and large objects
+// retain checked return bodies when a keyed constructor would change behavior.
 export function schemaRenderer(
   schemas: DirectionalSchemas,
   reference: (name: string, direction: Direction) => Expression,
@@ -129,6 +127,9 @@ export function schemaRenderer(
   const typeImports = new Set<string>();
   const declarations: string[] = [];
   const parts = new Map<string, number>();
+  // Share only private scalar leaves within this module, across declaration
+  // drains. References and containers retain their own binding/usage semantics.
+  const scalarParts = new Map<string, Expression>();
   // Validated names identify one format per output module. Retain these
   // identities across declaration drains so later components share them.
   const registeredFormats = new Map<string, Expression>();
@@ -162,10 +163,31 @@ export function schemaRenderer(
     }`;
   }
 
-  // Module-level data constants (rule objects, key lists, tagged cases) contain
-  // only literals and function names. Executable references stay inside
-  // function declarations, where TypeScript's control-flow analysis is bounded
-  // by the function instead of walking the whole generated module.
+  function parserBinding(
+    name: string,
+    type: string,
+    initializer: string,
+    exported: boolean,
+    location: string,
+    arrayType = false,
+  ): void {
+    typeImports.add(arrayType ? 'ArrayParse' : 'Parse');
+    const annotation = arrayType
+      ? `ArrayParse<(${type})[number]>`
+      : `Parse<${type}>`;
+    append(
+      // Bound TypeScript's control-flow walk at a function body. Referencing
+      // earlier parsers in module-level constructors makes checking quadratic.
+      // The factory still constructs and caches each parser exactly once.
+      `function make_${name}(): ${annotation} { return ${initializer}; }
+      ${exported ? 'export ' : ''}const ${name}: ${annotation} = /* @__PURE__ */ make_${name}();`,
+      location,
+    );
+  }
+
+  // Module-level rules and case tables contain only literals and named parser
+  // references. Explicit parser annotations bound inference; constructors only
+  // capture this private static data and defer validation until parsing.
   function constant(name: string, value: string, type?: string): string {
     if (type && /^\w+$/.test(type)) typeImports.add(type);
     append(
@@ -284,6 +306,7 @@ export function schemaRenderer(
     exported = false,
     forbidden: readonly string[] = [],
     limits?: Expression,
+    unrolled = false,
   ): void {
     const sizeCheck = (body: string[]) => {
       if (!limits) return;
@@ -309,7 +332,16 @@ export function schemaRenderer(
         const group = fields.slice(start, start + 64);
         const parser = `${name}_fields${start / 64}`;
         const picked = group.map((entry) => jsonSource(entry.name)).join(' | ');
-        objectParser(parser, `Pick<${type}, ${picked}>`, group, false);
+        objectParser(
+          parser,
+          `Pick<${type}, ${picked}>`,
+          group,
+          false,
+          false,
+          [],
+          undefined,
+          true,
+        );
         const value = `group${start / 64}`;
         values.push(value);
         body.push(`const ${value} = ${parser}(source, issues);`);
@@ -326,6 +358,37 @@ export function schemaRenderer(
       } else body.push(`return ${output};`);
       append(
         functionDeclaration(name, type, body, exported),
+        `generated parser ${name}`,
+      );
+      return;
+    }
+    // A keyed table enumerates integer-like names in JS own-key order.
+    // Parameter groups instead preserve the declared OpenAPI sequence, so use
+    // the original body whenever those orders differ. Empty projected objects
+    // and all chunks retain the original representation as well.
+    const order = Object.keys(
+      Object.fromEntries(fields.map((entry) => [entry.name, true])),
+    );
+    if (
+      !unrolled &&
+      fields.length > 0 &&
+      fields.every((entry, index) => entry.name === order[index])
+    ) {
+      const table = object([
+        ...fields.map((entry): readonly [string, Expression] => [
+          entry.name,
+          entry.required ? entry.parse : array([entry.parse]),
+        ]),
+        ...forbidden.map((name): readonly [string, Expression] => [
+          name,
+          literal(false),
+        ]),
+      ]);
+      parserBinding(
+        name,
+        type,
+        `${use('fixedObject').source}<${type}>(${table.source}, ${strict}${limits ? `, ${limits.source}` : ''})`,
+        exported,
         `generated parser ${name}`,
       );
       return;
@@ -365,8 +428,8 @@ export function schemaRenderer(
   }
 
   // Return a Parse function name for a child schema. Unconstrained references,
-  // binary targets and plain scalars use existing functions; everything else
-  // gets a flat function declaration `${scope}_partN` with an inline type.
+  // binary targets, JSON and plain scalars use existing functions. Other scalar
+  // leaves share checked functions; containers keep their flat named bindings.
   function part(
     value: Schema,
     direction: Direction,
@@ -375,6 +438,7 @@ export function schemaRenderer(
   ): Expression {
     if (value.kind === 'ref' && !hasConstraints(value.constraints))
       return component(value.name, direction);
+    if (value.kind === 'json') return use('jsonValue');
     if (value.kind === 'binary') {
       if (!target)
         fail(location, 'binary schema requires a multipart client target');
@@ -395,19 +459,35 @@ export function schemaRenderer(
             ? 'integerValue'
             : 'numberValue',
       );
-    const index = parts.get(scope) ?? 0;
-    parts.set(scope, index + 1);
-    const name = `${scope}_part${index}`;
-    define(
-      value,
-      direction,
-      location,
-      scope,
-      name,
-      schemaType(value, direction, target, typeReference),
-      false,
-    );
-    return identifier(name);
+    const type = schemaType(value, direction, target, typeReference);
+    // The complete normalized leaf and its declared return type preserve every
+    // rule, format and literal order. Full keys avoid hash collisions; access
+    // flags remain in the key conservatively even though projection ran first.
+    const key =
+      value.kind === 'string' ||
+      value.kind === 'number' ||
+      value.kind === 'integer' ||
+      value.kind === 'boolean'
+        ? JSON.stringify([type, value])
+        : undefined;
+    if (key !== undefined) {
+      const known = scalarParts.get(key);
+      if (known) return known;
+    }
+    let name: string;
+    if (key !== undefined) {
+      // A shared name must not repeat its first owner's potentially long ID at
+      // every use. Scalar bindings stay short and local to this output module.
+      name = `scalar_part${scalarParts.size}`;
+    } else {
+      const index = parts.get(scope) ?? 0;
+      parts.set(scope, index + 1);
+      name = `${scope}_part${index}`;
+    }
+    define(value, direction, location, scope, name, type, false);
+    const result = identifier(name);
+    if (key !== undefined) scalarParts.set(key, result);
+    return result;
   }
 
   function stringFormat(format: SchemaFormat): Expression {
@@ -456,36 +536,36 @@ export function schemaRenderer(
   ): void {
     const child = (schema: Schema, path: string) =>
       part(schema, direction, path, scope);
-    const returns = (expression: string): void => {
-      append(
-        functionDeclaration(name, type, [`return ${expression};`], exported),
-        location,
-      );
-    };
-    const call = (helper: string, ...args: string[]) =>
-      returns(
-        `${use(helper).source}(${['input', 'issues', ...args].join(', ')})`,
-      );
+    const binding = (initializer: string): void =>
+      parserBinding(name, type, initializer, exported, location);
+    const direct = (helper: string): void => binding(use(helper).source);
+    const construct = (
+      helper: string,
+      args: readonly string[],
+      generic = type,
+    ): void => binding(`${use(helper).source}<${generic}>(${args.join(', ')})`);
     switch (value.kind) {
       case 'json':
-        return call('jsonValue');
+        return direct('jsonValue');
       case 'binary':
         if (!target)
           fail(location, 'binary schema requires a multipart client target');
-        return call(target === 'browser' ? 'browserFile' : 'nativeFile');
+        return direct(target === 'browser' ? 'browserFile' : 'nativeFile');
       case 'ref': {
         if (!hasConstraints(value.constraints)) return;
         const refinement = scalarRefinement(value, direction, name);
         if (refinement.rules !== null)
-          return call(
+          return construct(
             schemas[direction].get(refinement.terminal)!.kind === 'string'
-              ? 'refineText'
-              : 'refineNumber',
-            reference(refinement.terminal, direction).source,
-            refinement.rules,
-            ...(refinement.maxLength === undefined
-              ? []
-              : [literal(refinement.maxLength).source]),
+              ? 'refinedText'
+              : 'refinedNumber',
+            [
+              reference(refinement.terminal, direction).source,
+              refinement.rules,
+              ...(refinement.maxLength === undefined
+                ? []
+                : [literal(refinement.maxLength).source]),
+            ],
           );
         // Flatten aliases before delegation. Rebuilding a terminal container's
         // children here would expand shared bounded-reference graphs into trees.
@@ -500,12 +580,11 @@ export function schemaRenderer(
             constraintRecord(terminalSchema),
           );
           const limits = rules(merged, objectRules)!;
-          return call(
-            'refineObject',
+          return construct('refinedObject', [
             base,
             constant(`rules_${name}`, limits.source, 'ObjectRules'),
             jsonSource(terminalSchema.kind === 'map' ? 'map' : direction),
-          );
+          ]);
         }
         if (terminalSchema.kind === 'array') {
           const merged = containerConstraints(
@@ -517,8 +596,10 @@ export function schemaRenderer(
           const limits = rules(merged, arrayRules)!;
           // The canonical parser owns its item parser and observes length once.
           // Supply the full intersection so all bounds run before any item read.
-          return returns(
-            `${base}(input, issues, ${constant(`rules_${name}`, limits.source, 'ArrayRules')})`,
+          return construct(
+            'boundedArray',
+            [base, constant(`rules_${name}`, limits.source, 'ArrayRules')],
+            `(${type})[number]`,
           );
         }
         return;
@@ -529,13 +610,16 @@ export function schemaRenderer(
             ? use('jsonValue').source
             : child(value.values, `${location}.additionalProperties`).source;
         const limits = rules(value, objectRules);
-        return limits
-          ? call(
-              'map',
-              values,
-              constant(`rules_${name}`, limits.source, 'ObjectRules'),
-            )
-          : call('map', values);
+        return construct(
+          'mapParser',
+          [
+            values,
+            ...(limits
+              ? [constant(`rules_${name}`, limits.source, 'ObjectRules')]
+              : []),
+          ],
+          `(${type})[string]`,
+        );
       }
       case 'union': {
         if (value.discriminator) {
@@ -548,18 +632,14 @@ export function schemaRenderer(
                 .map((tag) => [tag, component(mapping.get(tag)!, direction)]),
             ).source,
           );
-          return returns(
-            `${use('taggedUnion').source}<${type}>(input, issues, ${jsonSource(propertyName)}, ${cases})`,
-          );
+          return construct('taggedParser', [jsonSource(propertyName), cases]);
         }
         const [left, right, ...rest] = value.branches.map((branch, index) =>
           child(branch, schemaBranchLocation(value, location, index)),
         );
         if (!left || !right || rest.length > 0)
           fail(location, 'expected a two-branch union');
-        return returns(
-          `${use('union').source}<${type}>(input, issues, ${left.source}, ${right.source})`,
-        );
+        return construct('unionParser', [left.source, right.source]);
       }
       case 'object':
         return objectParser(
@@ -581,27 +661,22 @@ export function schemaRenderer(
         const defaults = limits
           ? constant(`rules_${name}`, limits.source, 'ArrayRules')
           : undefined;
-        typeImports.add('ArrayRules');
-        // An optional internal override lets constrained references reuse this
-        // item's graph. Generated callers always pass the full bound intersection.
-        append(
-          functionDeclaration(
-            name,
-            type,
-            [`return ${use('list').source}(input, issues, ${items}, rules);`],
-            exported,
-            defaults
-              ? `, rules: ArrayRules = ${defaults}`
-              : ', rules?: ArrayRules',
-          ),
+        // The optional third argument still carries the complete intersection
+        // from constrained aliases, before the item graph observes the input.
+        parserBinding(
+          name,
+          type,
+          `${use('arrayParser').source}<(${type})[number]>(${items}${defaults ? `, ${defaults}` : ''})`,
+          exported,
           location,
+          true,
         );
         return;
       }
       case 'boolean':
       case 'null':
         if (!value.literals || value.kind === 'null')
-          return call(value.kind === 'null' ? 'nullValue' : 'booleanValue');
+          return direct(value.kind === 'null' ? 'nullValue' : 'booleanValue');
         break;
       case 'integer':
       case 'number':
@@ -609,26 +684,26 @@ export function schemaRenderer(
         if (!value.literals) {
           const limits = scalarRules(value);
           if (!limits)
-            return call(
+            return direct(
               value.kind === 'string'
                 ? 'stringValue'
                 : value.kind === 'integer'
                   ? 'integerValue'
                   : 'numberValue',
             );
-          return call(
-            value.kind === 'string' ? 'text' : 'numeric',
-            constant(
+          return binding(
+            `${use(value.kind === 'string' ? 'textParser' : 'numberParser').source}(${constant(
               `rules_${name}`,
               limits.source,
               value.kind === 'string' ? 'StringRules' : 'NumberRules',
-            ),
+            )})`,
           );
         }
         break;
     }
-    // Literal outputs come from TypeScript narrowing of the input itself, so
-    // the declared literal type is checked and -0 keeps its sign.
+    // Literal arrays are checked against independent T. The runtime membership
+    // kernel returns the input itself, preserving -0; use an array argument so
+    // large supported enums do not become variadic calls.
     // Normalization proves each inline literal's engine-independent scalar rules.
     // Membership completes those checks. Only Unicode-property patterns remain
     // deferred: the consuming engine can classify characters differently.
@@ -649,24 +724,19 @@ export function schemaRenderer(
       )
         deferredRules.push(['format', stringFormat(value.format)]);
     }
-    const patternCheck =
+    const deferred =
       deferredRules.length > 0
-        ? `if (${use('text').source}(input, issues, ${constant(
-            `rules_${name}`,
-            object(deferredRules).source,
-            'StringRules',
-          )}) === ${use('invalid').source}) return invalid;`
+        ? constant(`rules_${name}`, object(deferredRules).source, 'StringRules')
         : undefined;
-    const body = [
-      // Switch narrowing keeps large enums checked without a long flow chain.
-      'switch (input) {',
-      ...(value.literals ?? []).map((item) => `case ${jsonSource(item)}:`),
-      ...(patternCheck ? [patternCheck] : []),
-      'return input;',
-      `default: return ${use('report').source}(issues, ${message}, true);`,
-      '}',
+    // Infer only the literal metadata, then check Parse<metadata union> against
+    // the independent annotation in parserBinding. Explicit <T> here would
+    // contextualize every array member against a potentially huge union.
+    const members = [
+      array((value.literals ?? []).map(literal)).source,
+      message,
+      ...(deferred ? [deferred] : []),
     ];
-    append(functionDeclaration(name, type, body, exported), location);
+    binding(`${use('memberParser').source}(${members.join(', ')})`);
   }
 
   return {

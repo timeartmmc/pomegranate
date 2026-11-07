@@ -200,27 +200,27 @@ export async function verifyWideDeclarations(
   );
   const originalSource = await readFile(parserFile, 'utf8');
   const literalStart = originalSource.indexOf(
-    'export function parse_LargeLiteral_request(',
+    'export const parse_LargeLiteral_request:',
   );
   assert.ok(literalStart >= 0);
-  const literalReturn = originalSource.indexOf('return input;', literalStart);
-  assert.ok(literalReturn >= 0);
+  const literalMember = originalSource.indexOf("'v0'", literalStart);
+  assert.ok(literalMember >= 0);
   const corruptions = [
     originalSource.replace(
-      'return { id: v0, label: v1 };',
-      'return { id: 123, label: v1 };',
+      '{ id: stringValue, label: stringValue }',
+      '{ id: integerValue, label: stringValue }',
     ),
     originalSource.replace('field0: v0,', 'field0: 123,'),
-    originalSource.slice(0, literalReturn) +
-      'return "undeclared";' +
-      originalSource.slice(literalReturn + 'return input;'.length),
+    originalSource.slice(0, literalMember) +
+      "'undeclared'" +
+      originalSource.slice(literalMember + "'v0'".length),
   ];
   try {
     for (const corrupted of corruptions) {
       assert.notEqual(
         corrupted,
         originalSource,
-        'negative control must change a parser return',
+        'negative control must change a parser output or constructor table',
       );
       await writeFile(parserFile, corrupted);
       await assert.rejects(checkParsers(), (error: unknown) => {

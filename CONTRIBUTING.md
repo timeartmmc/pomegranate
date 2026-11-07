@@ -73,7 +73,8 @@ Check the affected boundaries together:
 - Input and contract interpretation: JSON/YAML equivalence, malformed input,
   security inheritance, validation before selection, and transitive projection.
 - Validation: scalar and container rules, references, constraints, defaults,
-  structural limits, exact types, useful issues, and checked parser returns.
+  structural limits, exact types, useful issues, and independently typed parser
+  outputs.
   The schema oracle compares supported cases with Ajv2020, a development dependency.
 - Output: deterministic complete rendering, read-only drift, protected inputs,
   aliases and symlinks, conflicts, stale cleanup, and interrupted generation.
@@ -115,6 +116,10 @@ binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Us
 `node scripts/benchmark-query-sharing.ts` for sharing comparisons. Timings are
 local evidence, never machine-dependent CI thresholds. Include the source
 revision, toolchain versions and exact command scope when reporting results.
+Use `node scripts/benchmark-typecheck.ts [baseline-ref] [path-to-tsc]` for
+600-, 1,200-, and 3,000-component contracts with distinct parser graphs. Rebuild
+first; the optional compiler path lets the same fixture measure each supported
+TypeScript line.
 
 Application adoption needs its own parity/integration checks and declared time
 and memory budgets. Measure generated/retained bundle size, typecheck, parsing,

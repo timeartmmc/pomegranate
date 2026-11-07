@@ -488,6 +488,75 @@ void test('Object.prototype never fills or invalidates an omitted optional field
   }
 });
 
+void test('parsed objects own their fields when a getter installs prototype setters', () => {
+  for (const registry of [schemas.requestSchemas, schemas.responseSchemas]) {
+    for (const name of ['TaggedText', 'TaggedCount'] as const) {
+      const property = 'value';
+      const previous = ['get', property].map(
+        (key) =>
+          [
+            key,
+            Object.getOwnPropertyDescriptor(Object.prototype, key),
+          ] as const,
+      );
+      let writes = 0;
+      const poison = () => {
+        Object.defineProperty(Object.prototype, property, {
+          configurable: true,
+          set() {
+            writes++;
+          },
+        });
+        Object.defineProperty(Object.prototype, 'get', {
+          configurable: true,
+          value: () => undefined,
+        });
+      };
+      const input =
+        name === 'TaggedText'
+          ? {
+              get hint() {
+                poison();
+                return 'own';
+              },
+              kind: 'text',
+              value: 'ok',
+            }
+          : {
+              get kind() {
+                poison();
+                return 'count';
+              },
+              value: 1,
+            };
+      let output: unknown;
+      try {
+        output = registry[name].parse(input);
+      } finally {
+        for (const [key] of previous)
+          Reflect.deleteProperty(Object.prototype, key);
+        for (const [key, descriptor] of [...previous].reverse())
+          if (descriptor)
+            Object.defineProperty(Object.prototype, key, descriptor);
+      }
+      assert.equal(writes, 0);
+      assert.deepEqual(
+        output,
+        name === 'TaggedText'
+          ? { hint: 'own', kind: 'text', value: 'ok' }
+          : { kind: 'count', value: 1 },
+      );
+      assert.equal(Object.getPrototypeOf(output), Object.prototype);
+      assert.deepEqual(Object.getOwnPropertyDescriptor(output, property), {
+        value: name === 'TaggedText' ? 'ok' : 1,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
+});
+
 void test('Object.prototype never supplies fields, tags or unknown request keys', () => {
   const text = { kind: 'text', value: 'ok' };
   // Simulate prototype pollution by another library; removed in finally.

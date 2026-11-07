@@ -5,20 +5,16 @@ import type {
   Issues,
   NumberRules,
   Operation,
+  Parse,
   StringRules,
 } from './runtime.ts';
 import {
-  absent,
   booleanValue,
   defineOperation,
   emptyOptions,
-  field,
-  invalid,
-  numeric,
-  objectValue,
-  optionalField,
-  text,
-  unknownKeys,
+  fixedObject,
+  numberParser,
+  textParser,
 } from './runtime.ts';
 
 import {
@@ -37,254 +33,125 @@ function operation_checkHealth_options(
 ): Record<string, never> | undefined | Invalid {
   return input === undefined ? undefined : emptyOptions(input, issues);
 }
-const keys_operation_getWidget_options_path = ['widgetId'];
-function operation_getWidget_options_path(
-  input: unknown,
-  issues: Issues,
-): { widgetId: schemas.RequestTypes['WidgetId'] } | Invalid {
-  const source = objectValue(input, issues);
-  if (source === invalid) return invalid;
-  const v0 = field(source, 'widgetId', parse_WidgetId_request, issues);
-  const extra = unknownKeys(
-    source,
-    keys_operation_getWidget_options_path,
-    issues,
+function make_operation_getWidget_options_path(): Parse<{
+  widgetId: schemas.RequestTypes['WidgetId'];
+}> {
+  return fixedObject<{ widgetId: schemas.RequestTypes['WidgetId'] }>(
+    { widgetId: parse_WidgetId_request },
+    true,
   );
-  if (v0 === invalid || extra) return invalid;
-  return { widgetId: v0 };
 }
-const rules_operation_getWidget_options_query_0_part0: NumberRules = {
+const operation_getWidget_options_path: Parse<{
+  widgetId: schemas.RequestTypes['WidgetId'];
+}> = /* @__PURE__ */ make_operation_getWidget_options_path();
+const rules_scalar_part0: NumberRules = {
   integer: true,
   minimum: 1,
   maximum: 10,
 };
-function operation_getWidget_options_query_0_part0(
-  input: unknown,
-  issues: Issues,
-): number | Invalid {
-  return numeric(
-    input,
-    issues,
-    rules_operation_getWidget_options_query_0_part0,
+function make_scalar_part0(): Parse<number> {
+  return numberParser(rules_scalar_part0);
+}
+const scalar_part0: Parse<number> = /* @__PURE__ */ make_scalar_part0();
+function make_operation_getWidget_options_query(): Parse<{
+  limit?: number | undefined;
+}> {
+  return fixedObject<{ limit?: number | undefined }>(
+    { limit: [scalar_part0] },
+    true,
   );
 }
-const keys_operation_getWidget_options_query = ['limit'];
-function operation_getWidget_options_query(
-  input: unknown,
-  issues: Issues,
-): { limit?: number | undefined } | Invalid {
-  const source = objectValue(input, issues);
-  if (source === invalid) return invalid;
-  const v0 = optionalField(
-    source,
-    'limit',
-    operation_getWidget_options_query_0_part0,
-    issues,
-  );
-  const extra = unknownKeys(
-    source,
-    keys_operation_getWidget_options_query,
-    issues,
-  );
-  if (v0 === invalid || extra) return invalid;
-  return { ...(v0 === absent ? {} : { limit: v0 }) };
-}
-const keys_operation_getWidget_options = ['path', 'query'];
-function operation_getWidget_options(
-  input: unknown,
-  issues: Issues,
-):
-  | {
-      path: { widgetId: schemas.RequestTypes['WidgetId'] };
-      query?: { limit?: number | undefined } | undefined;
-    }
-  | Invalid {
-  const source = objectValue(input, issues);
-  if (source === invalid) return invalid;
-  const v0 = field(source, 'path', operation_getWidget_options_path, issues);
-  const v1 = optionalField(
-    source,
-    'query',
-    operation_getWidget_options_query,
-    issues,
-  );
-  const extra = unknownKeys(source, keys_operation_getWidget_options, issues);
-  if (v0 === invalid || v1 === invalid || extra) return invalid;
-  return { path: v0, ...(v1 === absent ? {} : { query: v1 }) };
-}
-const rules_operation_prepareWidget_header_0_part0: StringRules = {
-  minLength: 1,
-  maxLength: 80,
-};
-function operation_prepareWidget_header_0_part0(
-  input: unknown,
-  issues: Issues,
-): string | Invalid {
-  return text(input, issues, rules_operation_prepareWidget_header_0_part0);
-}
-const keys_operation_prepareWidget_options_path = ['widgetId'];
-function operation_prepareWidget_options_path(
-  input: unknown,
-  issues: Issues,
-): { widgetId: schemas.RequestTypes['WidgetId'] } | Invalid {
-  const source = objectValue(input, issues);
-  if (source === invalid) return invalid;
-  const v0 = field(source, 'widgetId', parse_WidgetId_request, issues);
-  const extra = unknownKeys(
-    source,
-    keys_operation_prepareWidget_options_path,
-    issues,
-  );
-  if (v0 === invalid || extra) return invalid;
-  return { widgetId: v0 };
-}
-const keys_operation_prepareWidget_options_query = ['dryRun'];
-function operation_prepareWidget_options_query(
-  input: unknown,
-  issues: Issues,
-): { dryRun?: boolean | undefined } | Invalid {
-  const source = objectValue(input, issues);
-  if (source === invalid) return invalid;
-  const v0 = optionalField(source, 'dryRun', booleanValue, issues);
-  const extra = unknownKeys(
-    source,
-    keys_operation_prepareWidget_options_query,
-    issues,
-  );
-  if (v0 === invalid || extra) return invalid;
-  return { ...(v0 === absent ? {} : { dryRun: v0 }) };
-}
-const keys_operation_prepareWidget_options_header = ['Idempotency-Key'];
-function operation_prepareWidget_options_header(
-  input: unknown,
-  issues: Issues,
-): { 'Idempotency-Key': string } | Invalid {
-  const source = objectValue(input, issues);
-  if (source === invalid) return invalid;
-  const v0 = field(
-    source,
-    'Idempotency-Key',
-    operation_prepareWidget_header_0_part0,
-    issues,
-  );
-  const extra = unknownKeys(
-    source,
-    keys_operation_prepareWidget_options_header,
-    issues,
-  );
-  if (v0 === invalid || extra) return invalid;
-  return { 'Idempotency-Key': v0 };
-}
-const keys_operation_prepareWidget_options = [
-  'path',
-  'query',
-  'headers',
-  'body',
-];
-function operation_prepareWidget_options(
-  input: unknown,
-  issues: Issues,
-):
-  | {
-      path: { widgetId: schemas.RequestTypes['WidgetId'] };
-      query?: { dryRun?: boolean | undefined } | undefined;
-      headers: { 'Idempotency-Key': string };
-      body: schemas.RequestTypes['PreparationInput'];
-    }
-  | Invalid {
-  const source = objectValue(input, issues);
-  if (source === invalid) return invalid;
-  const v0 = field(
-    source,
-    'path',
-    operation_prepareWidget_options_path,
-    issues,
-  );
-  const v1 = optionalField(
-    source,
-    'query',
-    operation_prepareWidget_options_query,
-    issues,
-  );
-  const v2 = field(
-    source,
-    'headers',
-    operation_prepareWidget_options_header,
-    issues,
-  );
-  const v3 = field(source, 'body', parse_PreparationInput_request, issues);
-  const extra = unknownKeys(
-    source,
-    keys_operation_prepareWidget_options,
-    issues,
-  );
-  if (
-    v0 === invalid ||
-    v1 === invalid ||
-    v2 === invalid ||
-    v3 === invalid ||
-    extra
-  )
-    return invalid;
-  return {
-    path: v0,
-    ...(v1 === absent ? {} : { query: v1 }),
-    headers: v2,
-    body: v3,
-  };
-}
-const rules_operation_prepareWidget_response_200_header_0_part0: StringRules = {
-  minLength: 1,
-};
-function operation_prepareWidget_response_200_header_0_part0(
-  input: unknown,
-  issues: Issues,
-): string | Invalid {
-  return text(
-    input,
-    issues,
-    rules_operation_prepareWidget_response_200_header_0_part0,
+const operation_getWidget_options_query: Parse<{ limit?: number | undefined }> =
+  /* @__PURE__ */ make_operation_getWidget_options_query();
+function make_operation_getWidget_options(): Parse<{
+  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  query?: { limit?: number | undefined } | undefined;
+}> {
+  return fixedObject<{
+    path: { widgetId: schemas.RequestTypes['WidgetId'] };
+    query?: { limit?: number | undefined } | undefined;
+  }>(
+    {
+      path: operation_getWidget_options_path,
+      query: [operation_getWidget_options_query],
+    },
+    true,
   );
 }
-const rules_operation_prepareWidget_response_202_header_0_part0: StringRules = {
-  minLength: 1,
-};
-function operation_prepareWidget_response_202_header_0_part0(
-  input: unknown,
-  issues: Issues,
-): string | Invalid {
-  return text(
-    input,
-    issues,
-    rules_operation_prepareWidget_response_202_header_0_part0,
+const operation_getWidget_options: Parse<{
+  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  query?: { limit?: number | undefined } | undefined;
+}> = /* @__PURE__ */ make_operation_getWidget_options();
+const rules_scalar_part1: StringRules = { minLength: 1, maxLength: 80 };
+function make_scalar_part1(): Parse<string> {
+  return textParser(rules_scalar_part1);
+}
+const scalar_part1: Parse<string> = /* @__PURE__ */ make_scalar_part1();
+function make_operation_prepareWidget_options_path(): Parse<{
+  widgetId: schemas.RequestTypes['WidgetId'];
+}> {
+  return fixedObject<{ widgetId: schemas.RequestTypes['WidgetId'] }>(
+    { widgetId: parse_WidgetId_request },
+    true,
   );
 }
-const rules_operation_prepareWidget_response_409_header_0_part0: StringRules = {
-  minLength: 1,
-};
-function operation_prepareWidget_response_409_header_0_part0(
-  input: unknown,
-  issues: Issues,
-): string | Invalid {
-  return text(
-    input,
-    issues,
-    rules_operation_prepareWidget_response_409_header_0_part0,
+const operation_prepareWidget_options_path: Parse<{
+  widgetId: schemas.RequestTypes['WidgetId'];
+}> = /* @__PURE__ */ make_operation_prepareWidget_options_path();
+function make_operation_prepareWidget_options_query(): Parse<{
+  dryRun?: boolean | undefined;
+}> {
+  return fixedObject<{ dryRun?: boolean | undefined }>(
+    { dryRun: [booleanValue] },
+    true,
   );
 }
-const rules_operation_prepareWidget_response_409_header_1_part0: StringRules = {
-  minLength: 1,
-};
-function operation_prepareWidget_response_409_header_1_part0(
-  input: unknown,
-  issues: Issues,
-): string | Invalid {
-  return text(
-    input,
-    issues,
-    rules_operation_prepareWidget_response_409_header_1_part0,
+const operation_prepareWidget_options_query: Parse<{
+  dryRun?: boolean | undefined;
+}> = /* @__PURE__ */ make_operation_prepareWidget_options_query();
+function make_operation_prepareWidget_options_header(): Parse<{
+  'Idempotency-Key': string;
+}> {
+  return fixedObject<{ 'Idempotency-Key': string }>(
+    { 'Idempotency-Key': scalar_part1 },
+    true,
   );
 }
+const operation_prepareWidget_options_header: Parse<{
+  'Idempotency-Key': string;
+}> = /* @__PURE__ */ make_operation_prepareWidget_options_header();
+function make_operation_prepareWidget_options(): Parse<{
+  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  query?: { dryRun?: boolean | undefined } | undefined;
+  headers: { 'Idempotency-Key': string };
+  body: schemas.RequestTypes['PreparationInput'];
+}> {
+  return fixedObject<{
+    path: { widgetId: schemas.RequestTypes['WidgetId'] };
+    query?: { dryRun?: boolean | undefined } | undefined;
+    headers: { 'Idempotency-Key': string };
+    body: schemas.RequestTypes['PreparationInput'];
+  }>(
+    {
+      path: operation_prepareWidget_options_path,
+      query: [operation_prepareWidget_options_query],
+      headers: operation_prepareWidget_options_header,
+      body: parse_PreparationInput_request,
+    },
+    true,
+  );
+}
+const operation_prepareWidget_options: Parse<{
+  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  query?: { dryRun?: boolean | undefined } | undefined;
+  headers: { 'Idempotency-Key': string };
+  body: schemas.RequestTypes['PreparationInput'];
+}> = /* @__PURE__ */ make_operation_prepareWidget_options();
+const rules_scalar_part2: StringRules = { minLength: 1 };
+function make_scalar_part2(): Parse<string> {
+  return textParser(rules_scalar_part2);
+}
+const scalar_part2: Parse<string> = /* @__PURE__ */ make_scalar_part2();
 function operation_widgetOptions_options(
   input: unknown,
   issues: Issues,
@@ -386,7 +253,7 @@ function define_operation_prepareWidget(): Operation<
       readonly headers: {
         readonly 'x-request-id': {
           readonly required: true;
-          readonly schema: typeof operation_prepareWidget_response_200_header_0_part0;
+          readonly schema: typeof scalar_part2;
         };
       };
       readonly content: {
@@ -401,7 +268,7 @@ function define_operation_prepareWidget(): Operation<
       readonly headers: {
         readonly 'x-request-id': {
           readonly required: true;
-          readonly schema: typeof operation_prepareWidget_response_202_header_0_part0;
+          readonly schema: typeof scalar_part2;
         };
       };
       readonly content: {
@@ -426,11 +293,11 @@ function define_operation_prepareWidget(): Operation<
       readonly headers: {
         readonly 'retry-after': {
           readonly required: false;
-          readonly schema: typeof operation_prepareWidget_response_409_header_0_part0;
+          readonly schema: typeof scalar_part2;
         };
         readonly 'x-request-id': {
           readonly required: true;
-          readonly schema: typeof operation_prepareWidget_response_409_header_1_part0;
+          readonly schema: typeof scalar_part2;
         };
       };
       readonly content: {
@@ -456,21 +323,11 @@ function define_operation_prepareWidget(): Operation<
       { name: 'Idempotency-Key', in: 'header', required: true },
     ],
     options: operation_prepareWidget_options,
-    headers: {
-      'idempotency-key': {
-        required: true,
-        schema: operation_prepareWidget_header_0_part0,
-      },
-    },
+    headers: { 'idempotency-key': { required: true, schema: scalar_part1 } },
     responses: {
       200: {
         bodyKind: 'content',
-        headers: {
-          'x-request-id': {
-            required: true,
-            schema: operation_prepareWidget_response_200_header_0_part0,
-          },
-        },
+        headers: { 'x-request-id': { required: true, schema: scalar_part2 } },
         content: {
           'application/json': {
             bodyKind: 'json',
@@ -480,12 +337,7 @@ function define_operation_prepareWidget(): Operation<
       },
       202: {
         bodyKind: 'content',
-        headers: {
-          'x-request-id': {
-            required: true,
-            schema: operation_prepareWidget_response_202_header_0_part0,
-          },
-        },
+        headers: { 'x-request-id': { required: true, schema: scalar_part2 } },
         content: {
           'application/json': {
             bodyKind: 'json',
@@ -506,14 +358,8 @@ function define_operation_prepareWidget(): Operation<
       409: {
         bodyKind: 'content',
         headers: {
-          'retry-after': {
-            required: false,
-            schema: operation_prepareWidget_response_409_header_0_part0,
-          },
-          'x-request-id': {
-            required: true,
-            schema: operation_prepareWidget_response_409_header_1_part0,
-          },
+          'retry-after': { required: false, schema: scalar_part2 },
+          'x-request-id': { required: true, schema: scalar_part2 },
         },
         content: {
           'application/json': {

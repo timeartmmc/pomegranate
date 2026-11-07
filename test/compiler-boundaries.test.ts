@@ -330,7 +330,8 @@ void test('generation diagnoses excessive source before formatting or writing', 
   const base = fixture();
   const content = {
     'application/json': {
-      schema: { type: 'string', const: 'x'.repeat(16_000) },
+      // Exact option types still exceed the output limit after scalar pooling.
+      schema: { type: 'string', const: 'x'.repeat(64 * 1024) },
     },
   };
   const document = {
