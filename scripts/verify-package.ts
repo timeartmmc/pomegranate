@@ -224,6 +224,7 @@ try {
   });
   assert.ok(paths.includes('dist/cli.js'));
   assert.ok(paths.includes('dist/runtime.ts'));
+  assert.ok(paths.includes('dist/endpoint-runtime.ts'));
   assert.ok(paths.includes('dist/policy-types.ts'));
   assert.ok(paths.includes('dist/execution-runtime.ts'));
   assert.ok(paths.includes('dist/call-runtime.ts'));
@@ -1364,7 +1365,7 @@ try {
       document.openapi=version;
       assert.deepEqual(await pom.compile(document,{clients:['staff']}),files);
     }
-    assert.deepEqual(Object.keys(files).filter(name=>!name.startsWith('schema-types.')).sort(), ['client.staff.operations.ts', 'client.staff.schemas.ts', 'client.staff.ts', 'policy-types.ts', 'runtime.ts']);
+    assert.deepEqual(Object.keys(files).filter(name=>!name.startsWith('schema-types.')).sort(), ['client.staff.operations.ts', 'client.staff.schemas.ts', 'client.staff.ts', 'endpoint-runtime.ts', 'policy-types.ts', 'runtime.ts']);
     assert.doesNotMatch(Object.values(files).join(' '),/PreparationInput|client.consumer/);
     const unsafeHeader = structuredClone(document);
     unsafeHeader.paths['/api/staff/reports'].get.parameters = [{name:'__PROTO__',in:'header',required:true,schema:{type:'string',const:'must-match'}}];
@@ -1407,6 +1408,7 @@ try {
   await run(binary, ['check', '--config', join(consumer, 'pom.json')]);
   for (const path of [
     'generated/runtime.ts',
+    'generated/endpoint-runtime.ts',
     'generated/policy-types.ts',
     'multipart-generated/runtime.ts',
     'multipart-generated/runtime.browser.ts',
@@ -1439,6 +1441,7 @@ try {
       'client.staff.operations.ts',
       'client.staff.schemas.ts',
       'client.staff.ts',
+      'endpoint-runtime.ts',
       'policy-types.ts',
       'runtime.ts',
     ],

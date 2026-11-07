@@ -167,6 +167,7 @@ void test('compiles every supported method and keeps per-status responses distin
       'client.staff.operations.ts',
       'client.staff.schemas.ts',
       'client.staff.ts',
+      'endpoint-runtime.ts',
       'policy-types.ts',
       'runtime.ts',
     ],

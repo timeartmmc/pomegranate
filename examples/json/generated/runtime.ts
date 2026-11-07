@@ -750,7 +750,7 @@ type Check<T> = (value: T, issues: Issues) => void;
 
 // Only static declarations cross this boundary; application values retain their
 // structural field policy. Normalizers materialize every fixed internal slot.
-function ownFields<T extends object>(source: T): T {
+export function ownFields<T extends object>(source: T): T {
   return Object.assign(Object.create(null) as T, source);
 }
 
@@ -1607,13 +1607,32 @@ export type ProtocolFailure = Readonly<{
   issues: readonly ProtocolIssue[];
 }>;
 
-type HeaderSpec = Readonly<{ schema: Parse<string>; required: boolean }>;
+// Generated annotations name these records instead of repeating every field.
+// Keep parser and requiredness types exact: response-table metadata also crosses
+// inferred application declarations, beyond the public protocol-result union.
+export type ResponseHeader<
+  P extends Parse<string>,
+  Required extends boolean = false,
+> = Readonly<{ required: Required; schema: P }>;
+export type ResponseMedia<
+  P extends Parse<unknown>,
+  Kind extends 'json' | 'text' = 'json',
+> = Readonly<{ bodyKind: Kind; schema: P }>;
+type HeaderSpec = ResponseHeader<Parse<string>, boolean>;
 type ResponseContent = Readonly<
-  Record<
-    string,
-    Readonly<{ bodyKind: 'json' | 'text'; schema: Parse<unknown> }>
-  >
+  Record<string, ResponseMedia<Parse<unknown>, 'json' | 'text'>>
 >;
+export type ContentResponse<
+  Content extends ResponseContent,
+  Headers extends Readonly<Record<string, HeaderSpec>> = {},
+> = Readonly<{
+  bodyKind: 'content';
+  headers: Headers;
+  content: Content;
+}>;
+export type EmptyResponse<
+  Headers extends Readonly<Record<string, HeaderSpec>> = {},
+> = Readonly<{ bodyKind: 'none'; headers: Headers }>;
 type ResponseSpec = Readonly<{
   headers: Readonly<Record<string, HeaderSpec>>;
 }> &

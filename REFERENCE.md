@@ -1017,6 +1017,8 @@ apply to programmatic inputs.
 Shared runtime helpers are authored in POM and copied once into each output set;
 they are not customized for every operation. Generated definitions import those
 local helpers. Execution and cache helpers use the same delivery model.
+Client output includes `endpoint-runtime.ts` for shared response and operation
+constructors. Keep these helpers with the complete generated output set.
 
 Generation uses the package's pinned formatter and writes a complete set of
 modules with `.pom-manifest.json`. Exclude these files from application formatter

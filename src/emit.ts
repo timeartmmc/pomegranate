@@ -745,6 +745,11 @@ export async function render(
     outputs.set(name, source);
   };
   addOutput('runtime.ts', `${banner}${helper}`);
+  if (clients.length)
+    addOutput(
+      'endpoint-runtime.ts',
+      `${banner}${await readFile(new URL('./endpoint-runtime.ts', import.meta.url), 'utf8')}`,
+    );
   addOutput(
     'policy-types.ts',
     `${banner}${policyTemplate.replace(/export type Policy =[\s\S]*$/, () => `export type Policy = ${policyType};\n`)}`,
