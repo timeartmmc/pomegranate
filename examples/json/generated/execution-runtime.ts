@@ -295,12 +295,15 @@ export function contextEntries(
       .sort()
       .map((name) => {
         const value = context[name];
-        if (
-          value !== null &&
-          typeof value !== 'string' &&
-          typeof value !== 'boolean' &&
-          !(typeof value === 'number' && Number.isFinite(value))
+        let scalar: ExecutionContext[string];
+        if (value === null) scalar = null;
+        else if (
+          typeof value === 'string' ||
+          typeof value === 'boolean' ||
+          (typeof value === 'number' && Number.isFinite(value))
         )
+          scalar = value;
+        else
           throw new TypeError(
             `${location}.${name} must be a finite JSON scalar`,
           );
@@ -308,7 +311,7 @@ export function contextEntries(
         // TanStack hash can drop while rebuilding sorted object properties.
         // JSON hashing and hydration turn -0 into 0. Normalize the shared
         // snapshot so execute observes the same value represented by its key.
-        return Object.freeze([name, value === 0 ? 0 : value] as const);
+        return Object.freeze([name, scalar === 0 ? 0 : scalar] as const);
       }),
   );
 }

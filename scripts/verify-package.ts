@@ -133,6 +133,10 @@ import {
 } from '../test/execution-fixture.ts';
 import { verifyExecutionDeclarations } from '../test/execution-declarations.ts';
 import { verifyQueryPlatform } from '../test/query-platform-check.ts';
+import {
+  consumerModesFixture,
+  verifyConsumerModes,
+} from '../test/consumer-modes.ts';
 
 import {
   verifyWideDeclarations,
@@ -223,11 +227,21 @@ try {
     return path.slice('package/'.length);
   });
   assert.ok(paths.includes('dist/cli.js'));
-  assert.ok(paths.includes('dist/runtime.ts'));
-  assert.ok(paths.includes('dist/endpoint-runtime.ts'));
-  assert.ok(paths.includes('dist/policy-types.ts'));
-  assert.ok(paths.includes('dist/execution-runtime.ts'));
-  assert.ok(paths.includes('dist/call-runtime.ts'));
+  for (const name of [
+    'runtime',
+    'endpoint-runtime',
+    'policy-types',
+    'runtime.browser',
+    'execution-runtime',
+    'call-runtime',
+    'query-runtime',
+    'query-sharing',
+  ]) {
+    assert.ok(paths.includes(`dist/templates/${name}.ts`));
+    assert.ok(paths.includes(`dist/${name}.d.ts`));
+    assert.ok(paths.includes(`dist/${name}.js`));
+    assert.ok(!paths.includes(`dist/${name}.ts`));
+  }
   assert.ok(paths.includes('LICENSE'));
   assert.ok(paths.includes('REFERENCE.md'));
   assert.ok(!paths.includes(staleModule));
@@ -1451,6 +1465,30 @@ try {
     '-p',
     join(consumer, 'tsconfig.json'),
   ]);
+  const modes = consumerModesFixture();
+  await writeFile(
+    join(consumer, 'consumer-modes-openapi.json'),
+    JSON.stringify(modes.document),
+  );
+  await writeFile(
+    join(consumer, 'consumer-modes-pom.json'),
+    JSON.stringify({
+      version: 2,
+      openapi: './consumer-modes-openapi.json',
+      output: './consumer-modes-generated',
+      ...modes.options,
+    }),
+  );
+  await run(binary, [
+    'generate',
+    '--config',
+    join(consumer, 'consumer-modes-pom.json'),
+  ]);
+  await verifyConsumerModes(
+    join(consumer, 'consumer-modes-generated'),
+    join(consumer, 'node_modules/typescript/bin/tsc'),
+    'pomegranate-compiler',
+  );
   for (const name of (await readdir(join(consumer, 'generated'))).filter(
     (name) => name.endsWith('.ts'),
   )) {

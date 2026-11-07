@@ -108,6 +108,9 @@ check a separate consumer without the original sources. Cover reusable adapters,
 inspection types, cache APIs, wide objects and enums, and `isolatedDeclarations`
 on both supported TypeScript lines. The packed check also verifies licenses,
 allowed inventory, and clean builds.
+Check generated modules and the compiler's public declarations with `strict`
+enabled, disabled, and disabled with `noImplicitAny`. Each mode checks unused
+locals and parameters, including standalone constrained-reference chains.
 
 ## Measurements and adoption
 

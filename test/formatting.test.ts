@@ -22,7 +22,10 @@ async function brokenCompiler(t: TestContext) {
   await cp(join(repo, 'dist'), join(root, 'dist'), { recursive: true });
   // Corrupt only this isolated compiler copy. The real formatter must report a
   // parse error while the remaining client modules can still format normally.
-  await writeFile(join(root, 'dist/runtime.ts'), 'export const broken = ;\n');
+  await writeFile(
+    join(root, 'dist/templates/runtime.ts'),
+    'export const broken = ;\n',
+  );
   return import(pathToFileURL(join(root, 'dist/index.js')).href) as Promise<
     typeof import('../dist/index.js')
   >;

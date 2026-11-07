@@ -1044,6 +1044,45 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
     }`;
 }
 
+function standaloneParserNames(
+  descriptor: Descriptor,
+  selection: Standalone,
+  componentType: ReturnType<typeof renderTypes>,
+): readonly string[] {
+  const needed = new Set<string>();
+  // Refinements consume intermediate aliases' rules, but call only their
+  // terminal parser. Discover references through the renderer so this closure
+  // follows emitted calls rather than the larger source $ref graph.
+  const renderer = schemaRenderer(
+    descriptor.schemas,
+    (name, direction) => {
+      needed.add(name);
+      return identifier(parseSymbol(name, direction));
+    },
+    componentType,
+  );
+  renderer.part(
+    selection.schema,
+    selection.direction,
+    `standalone.${selection.name}`,
+    'root',
+  );
+  for (const name of needed) {
+    const parse = parseSymbol(name, selection.direction);
+    renderer.define(
+      descriptor.schemas[selection.direction].get(name)!,
+      selection.direction,
+      `components.schemas.${name}`,
+      parse,
+      parse,
+      componentType(name, selection.direction),
+      false,
+    );
+    renderer.takeDeclarations();
+  }
+  return selection.schemaOrder.filter((name) => needed.has(name));
+}
+
 function renderStandalone(
   descriptor: Descriptor,
   selection: Standalone,
@@ -1051,7 +1090,12 @@ function renderStandalone(
 ): string {
   const { renderer, declarations } = renderComponents(
     descriptor,
-    [{ direction: selection.direction, names: selection.schemaOrder }],
+    [
+      {
+        direction: selection.direction,
+        names: standaloneParserNames(descriptor, selection, componentType),
+      },
+    ],
     componentType,
   );
   const location = `standalone.${selection.name}`;
@@ -1079,11 +1123,11 @@ export async function render(
   standalone: readonly Standalone[],
 ): Promise<Readonly<Record<string, string>>> {
   const helper = await readFile(
-    new URL('./runtime.ts', import.meta.url),
+    new URL('./templates/runtime.ts', import.meta.url),
     'utf8',
   );
   const policyTemplate = await readFile(
-    new URL('./policy-types.ts', import.meta.url),
+    new URL('./templates/policy-types.ts', import.meta.url),
     'utf8',
   );
   // Requests and executor callbacks share the declaration. A build-only
@@ -1107,7 +1151,7 @@ export async function render(
   if (clients.length)
     addOutput(
       'endpoint-runtime.ts',
-      `${banner}${await readFile(new URL('./endpoint-runtime.ts', import.meta.url), 'utf8')}`,
+      `${banner}${await readFile(new URL('./templates/endpoint-runtime.ts', import.meta.url), 'utf8')}`,
     );
   addOutput(
     'policy-types.ts',
@@ -1116,7 +1160,7 @@ export async function render(
   if (clients.some((client) => client.execution))
     addOutput(
       'call-runtime.ts',
-      `${banner}${await readFile(new URL('./call-runtime.ts', import.meta.url), 'utf8')}`,
+      `${banner}${await readFile(new URL('./templates/call-runtime.ts', import.meta.url), 'utf8')}`,
     );
   if (
     clients.some(
@@ -1127,7 +1171,7 @@ export async function render(
   )
     addOutput(
       'execution-runtime.ts',
-      `${banner}${await readFile(new URL('./execution-runtime.ts', import.meta.url), 'utf8')}`,
+      `${banner}${await readFile(new URL('./templates/execution-runtime.ts', import.meta.url), 'utf8')}`,
     );
   if (
     clients.some(
@@ -1137,7 +1181,7 @@ export async function render(
     for (const name of ['query-runtime.ts', 'query-sharing.ts'])
       addOutput(
         name,
-        `${banner}${await readFile(new URL(name, import.meta.url), 'utf8')}`,
+        `${banner}${await readFile(new URL(`./templates/${name}`, import.meta.url), 'utf8')}`,
       );
   }
   if (
@@ -1151,7 +1195,7 @@ export async function render(
   )
     addOutput(
       'runtime.browser.ts',
-      `${banner}${await readFile(new URL('./runtime.browser.ts', import.meta.url), 'utf8')}`,
+      `${banner}${await readFile(new URL('./templates/runtime.browser.ts', import.meta.url), 'utf8')}`,
     );
   const componentType = renderTypes(
     descriptor,

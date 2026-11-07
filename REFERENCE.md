@@ -976,6 +976,9 @@ generated modules have no package runtime dependencies; optional query modules
 need Query Core. Deployed applications do not need the compiler.
 Generated modules support `isolatedDeclarations`. Application exports inferred
 from them still need the annotations required by that TypeScript option.
+Consumers may enable or disable `strict`, including using `noImplicitAny` with
+`strict: false`. Generated modules also support `noUnusedLocals` and
+`noUnusedParameters`. These settings do not change runtime validation.
 
 Generated parsers declare independent contract types and reuse local scalar and
 container constructors. Object field tables check field types and requiredness

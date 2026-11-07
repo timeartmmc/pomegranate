@@ -222,7 +222,7 @@ export function validator<T>(run: Parse<T>): Validator<T> {
     safeParse,
     parse: (input: unknown): T => {
       const result = safeParse(input);
-      if (result.success) return result.data;
+      if (result.success === true) return result.data;
       throw result.error;
     },
   });
