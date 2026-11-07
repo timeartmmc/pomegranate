@@ -1,4 +1,4 @@
-import { fail } from './diagnostics.js';
+import { assertNever, fail } from './diagnostics.js';
 import type {
   Direction,
   DirectionalSchemas,
@@ -52,37 +52,55 @@ export function projectSchemas(raw: SchemaTable): {
     if (known) return known;
     const child = (value: Schema): Schema => project(value, direction);
     let projected: Schema;
-    if (schema.kind === 'object') {
-      const forbidden: string[] = [];
-      const properties = new Map<string, Schema>();
-      for (const [name, value] of schema.properties) {
-        const access = schemaAccess(value, raw);
-        const excluded =
-          direction === 'request' ? access.readOnly : access.writeOnly;
-        if (excluded) {
-          if (direction === 'request') forbidden.push(name);
-          continue;
+    switch (schema.kind) {
+      case 'object': {
+        const forbidden: string[] = [];
+        const properties = new Map<string, Schema>();
+        for (const [name, value] of schema.properties) {
+          const access = schemaAccess(value, raw);
+          const excluded =
+            direction === 'request' ? access.readOnly : access.writeOnly;
+          if (excluded) {
+            if (direction === 'request') forbidden.push(name);
+            continue;
+          }
+          properties.set(name, child(value));
         }
-        properties.set(name, child(value));
+        // Preserve a fixed object's kind even when every field is excluded. Raw
+        // JSON renormalization would reinterpret an empty declaration as a map.
+        projected = {
+          ...schema,
+          properties,
+          required: schema.required.filter((name) => properties.has(name)),
+          ...(forbidden.length ? { forbidden } : {}),
+        };
+        break;
       }
-      // Preserve a fixed object's kind even when every field is excluded. Raw
-      // JSON renormalization would reinterpret an empty declaration as a map.
-      projected = {
-        ...schema,
-        properties,
-        required: schema.required.filter((name) => properties.has(name)),
-        ...(forbidden.length ? { forbidden } : {}),
-      };
-    } else if (schema.kind === 'array')
-      projected = { ...schema, items: child(schema.items) };
-    else if (schema.kind === 'map')
-      projected = {
-        ...schema,
-        values: schema.values === true ? true : child(schema.values),
-      };
-    else if (schema.kind === 'union')
-      projected = { ...schema, branches: schema.branches.map(child) };
-    else projected = { ...schema };
+      case 'array':
+        projected = { ...schema, items: child(schema.items) };
+        break;
+      case 'map':
+        projected = {
+          ...schema,
+          values: schema.values === true ? true : child(schema.values),
+        };
+        break;
+      case 'union':
+        projected = { ...schema, branches: schema.branches.map(child) };
+        break;
+      case 'json':
+      case 'binary':
+      case 'ref':
+      case 'string':
+      case 'number':
+      case 'integer':
+      case 'boolean':
+      case 'null':
+        projected = { ...schema };
+        break;
+      default:
+        assertNever(schema);
+    }
     // Distinct nodes keep reference/usage caches local to their directional
     // table; refs preserve names and resolve against that table at every use.
     cache.set(schema, projected);

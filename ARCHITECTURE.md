@@ -49,9 +49,10 @@ Validate source declarations before projecting request and response fields.
 Use those projected schema graphs for usage validation, dependency selection,
 types, parsers, and protocol bindings. Keep fixed-object identity when projection
 excludes every property.
-Bound schema-normalization work before expanding shared declarations; opaque
-annotation payloads retain their own validation. Diagnose excessive schema
-expansion with guidance to use component references.
+Bound work within schema normalization and reserve collection work before
+constructing results. Opaque annotation payloads retain their own
+validation. Diagnose excessive work with guidance to reduce or split the input
+contract, or use component references for repeated inline schemas.
 
 Client projection retains only transitive request and response dependencies.
 Client modules must not import another client's operations or schemas. Shared

@@ -1,6 +1,7 @@
 import { RegExpSyntaxError, RegExpValidator } from '@eslint-community/regexpp';
 import {
   arrayValues,
+  assertNever,
   ContractError,
   contractField,
   fail,
@@ -48,7 +49,11 @@ import {
   stringFormatHelpers,
 } from './formats.js';
 import type { StringFormat } from './runtime.js';
-import { createSchemaAdmission } from './input-limits.js';
+
+// One descriptor shares this counter across policy, component and HTTP roots.
+// Reserve literal and declaration-list entries before their allocation/loops;
+// opaque annotations retain their separate identity-aware JSON validation.
+type WorkCounter = (amount: number, location: string) => void;
 
 export type FormatRegistry = ReadonlyMap<string, RegisteredStringFormat>;
 
@@ -76,16 +81,17 @@ export function normalizeFormats(input: unknown = {}): FormatRegistry {
   );
 }
 
-const stringConstraints = ['minLength', 'maxLength', 'pattern'];
-const numberConstraints = [
+// Admission, reference checks and emission share the same source vocabulary.
+export const stringConstraints = ['minLength', 'maxLength', 'pattern'] as const;
+export const numberConstraints = [
   'minimum',
   'maximum',
   'exclusiveMinimum',
   'exclusiveMaximum',
   'multipleOf',
-];
-const arrayConstraints = ['minItems', 'maxItems'];
-const objectConstraints = ['minProperties', 'maxProperties'];
+] as const;
+export const arrayConstraints = ['minItems', 'maxItems'] as const;
+export const objectConstraints = ['minProperties', 'maxProperties'] as const;
 const constraintKeys = [
   ...stringConstraints,
   ...numberConstraints,
@@ -263,6 +269,7 @@ function literals(
   kind: string,
   location: string,
   nullable = false,
+  work?: WorkCounter,
 ): readonly Scalar[] | undefined {
   if (Object.hasOwn(value, 'const') && Object.hasOwn(value, 'enum'))
     fail(location, 'const and enum together are unsupported');
@@ -271,6 +278,7 @@ function literals(
     return undefined;
   if (!Array.isArray(raw) || raw.length === 0)
     fail(`${location}.enum`, 'expected a nonempty array');
+  work?.(raw.length, location);
   const result: Scalar[] = [];
   const seen = new Set<Scalar>();
   for (const item of arrayValues(raw)) {
@@ -289,12 +297,23 @@ function literals(
   return result;
 }
 
-export function createSchemaNormalizer(registered: FormatRegistry) {
-  const admit = createSchemaAdmission();
-  return (input: unknown, location: string): Schema => {
-    admit(input, location);
-    return normalizeSchema(input, location, 1, registered);
+// One descriptor shares this budget across every normalization root. Reserve
+// collection entries before building results; opaque annotations keep their
+// separate JSON validation instead of another schema traversal or masking pass.
+export function createSchemaNormalizer(
+  registered: FormatRegistry,
+  maximum = 1_000_000,
+) {
+  let remaining = maximum;
+  const work: WorkCounter = (amount, location) => {
+    if ((remaining -= amount) < 0)
+      fail(
+        location,
+        `schema normalization work exceeds the supported limit of ${maximum} units; reduce or split the input contract, or replace repeated inline schemas with local $ref references`,
+      );
   };
+  return (input: unknown, location: string): Schema =>
+    normalizeSchema(input, location, 1, registered, work);
 }
 
 export function normalizeSchema(
@@ -302,10 +321,12 @@ export function normalizeSchema(
   location: string,
   nesting = 1,
   registered: FormatRegistry = new Map(),
+  work?: WorkCounter,
 ): Schema {
   // Bound schema recursion before entering either JS or the native formatter.
   // Annotation values have their own iterative validation and do not add depth.
   assertInlineSchemaNesting(nesting, location);
+  work?.(1, location);
   const value = record(input, location);
   if (Object.hasOwn(value, 'format')) {
     if (typeof value.format !== 'string')
@@ -348,7 +369,7 @@ export function normalizeSchema(
   const schema = {
     // Virtual nullable branches stay access-neutral. The source annotation
     // belongs to this declaration's outer node, including nullable wrappers.
-    ...normalizeShape(value, location, nesting, registered),
+    ...normalizeShape(value, location, nesting, registered, work),
     readOnly: value.readOnly === true,
     writeOnly: value.writeOnly === true,
   };
@@ -383,6 +404,7 @@ function normalizeUnion(
   location: string,
   nesting: number,
   registered: FormatRegistry,
+  work?: WorkCounter,
 ): SchemaDraft {
   const keyword = Object.hasOwn(value, 'anyOf') ? 'anyOf' : 'oneOf';
   keys(
@@ -398,12 +420,14 @@ function normalizeUnion(
   const raw = value[keyword];
   if (!Array.isArray(raw) || raw.length < 2)
     fail(`${location}.${keyword}`, 'expected at least two union branches');
+  work?.(raw.length, location);
   const branches = Array.from(arrayValues(raw), (branch: unknown, index) =>
     normalizeSchema(
       branch,
       `${location}.${keyword}[${index}]`,
       nesting + 1,
       registered,
+      work,
     ),
   );
   if (keyword === 'anyOf') return { kind: 'union', branches };
@@ -421,12 +445,15 @@ function normalizeUnion(
     text(discriminator.propertyName, `${location}.discriminator.propertyName`),
     `${location}.discriminator.propertyName`,
   );
+  const mappingSource = record(
+    discriminator.mapping,
+    `${location}.discriminator.mapping`,
+  );
+  work?.(Object.keys(mappingSource).length, location);
   const mapping = new Map(
     Object.entries(
       Object.fromEntries(
-        Object.entries(
-          record(discriminator.mapping, `${location}.discriminator.mapping`),
-        ).map(([tag, ref]) => [
+        Object.entries(mappingSource).map(([tag, ref]) => [
           tag,
           referenceName(ref, `${location}.discriminator.mapping.${tag}`),
         ]),
@@ -445,6 +472,7 @@ function normalizeObject(
   location: string,
   nesting: number,
   registered: FormatRegistry,
+  work?: WorkCounter,
 ): SchemaDraft {
   keys(
     value,
@@ -472,10 +500,12 @@ function normalizeObject(
   );
   // Reapply ordinary record order: numeric property names enumerate first in
   // numeric order. Preserve that established ordering when moving into a Map.
+  const names = Object.keys(properties);
+  work?.(names.length, location);
   const normalized = new Map(
     Object.entries(
       Object.fromEntries(
-        Object.keys(properties)
+        names
           .sort()
           .map((name) => [
             contractField(name, `${location}.properties.${name}`),
@@ -484,12 +514,14 @@ function normalizeObject(
               `${location}.properties.${name}`,
               nesting + 1,
               registered,
+              work,
             ),
           ]),
       ),
     ),
   );
   const required = Object.hasOwn(value, 'required') ? value.required : [];
+  if (Array.isArray(required)) work?.(required.length, location);
   if (!stringArray(required))
     fail(`${location}.required`, 'expected an array of property names');
   if (new Set(required).size !== required.length)
@@ -517,6 +549,7 @@ function normalizeObject(
               `${location}.additionalProperties`,
               nesting + 1,
               registered,
+              work,
             ),
     };
   }
@@ -543,6 +576,7 @@ function normalizeScalar(
   kind: 'string' | 'number' | 'integer' | 'boolean' | 'null',
   registered: FormatRegistry,
   nullable = false,
+  work?: WorkCounter,
 ): Schema {
   const allowedConstraints =
     kind === 'string'
@@ -556,7 +590,7 @@ function normalizeScalar(
     location,
     'schema',
   );
-  const allowed = literals(value, kind, location, nullable);
+  const allowed = literals(value, kind, location, nullable, work);
   let limits = constraints(value, location);
   let format: SchemaFormat | undefined;
   // The password format is a presentation hint, not a validation assertion.
@@ -622,8 +656,10 @@ function normalizeNullableType(
   location: string,
   nesting: number,
   registered: FormatRegistry,
+  work?: WorkCounter,
 ): Schema {
   const types = value.type;
+  if (Array.isArray(types)) work?.(types.length, location);
   if (Array.isArray(types) && types.includes(null))
     fail(
       `${location}.type`,
@@ -659,7 +695,7 @@ function normalizeNullableType(
       value.format !== 'binary' &&
       !Object.hasOwn(value, 'contentMediaType'))
   ) {
-    schema = normalizeScalar(value, location, kind, registered, true);
+    schema = normalizeScalar(value, location, kind, registered, true, work);
   } else {
     // The virtual branch counts just like an explicit anyOf branch. Keep the
     // original location for diagnostics and all semantic siblings for validation.
@@ -669,6 +705,7 @@ function normalizeNullableType(
       location,
       nesting + 1,
       registered,
+      work,
     );
     schema = schemaNode({
       kind: 'union',
@@ -687,9 +724,10 @@ function normalizeShape(
   location: string,
   nesting: number,
   registered: FormatRegistry,
+  work?: WorkCounter,
 ): Schema {
   return schemaNode(
-    normalizeShapeValue(ownRecord(value), location, nesting, registered),
+    normalizeShapeValue(ownRecord(value), location, nesting, registered, work),
   );
 }
 
@@ -698,6 +736,7 @@ function normalizeShapeValue(
   location: string,
   nesting: number,
   registered: FormatRegistry,
+  work?: WorkCounter,
 ): SchemaDraft {
   if (Object.hasOwn(value, 'allOf'))
     fail(`${location}.allOf`, 'allOf is not supported in this version');
@@ -716,12 +755,12 @@ function normalizeShapeValue(
     };
   }
   if (Object.hasOwn(value, 'anyOf') || Object.hasOwn(value, 'oneOf'))
-    return normalizeUnion(value, location, nesting, registered);
+    return normalizeUnion(value, location, nesting, registered, work);
   if (Object.keys(value).every((key) => annotationKeys.includes(key)))
     return { kind: 'json' };
   const kind = value.type;
   if (Array.isArray(kind))
-    return normalizeNullableType(value, location, nesting, registered);
+    return normalizeNullableType(value, location, nesting, registered, work);
   if (
     kind === 'string' &&
     (value.format === 'binary' || Object.hasOwn(value, 'contentMediaType'))
@@ -745,7 +784,7 @@ function normalizeShapeValue(
     return { kind: 'binary' };
   }
   if (kind === 'object')
-    return normalizeObject(value, location, nesting, registered);
+    return normalizeObject(value, location, nesting, registered, work);
   if (kind === 'array') {
     keys(
       value,
@@ -760,6 +799,7 @@ function normalizeShapeValue(
         `${location}.items`,
         nesting + 1,
         registered,
+        work,
       ),
       ...bounds(value, 'minItems', 'maxItems', location, true),
     };
@@ -773,7 +813,7 @@ function normalizeShapeValue(
     kind === 'boolean' ||
     kind === 'null'
   )
-    return normalizeScalar(value, location, kind, registered);
+    return normalizeScalar(value, location, kind, registered, false, work);
   fail(
     `${location}.type`,
     'supported types are object, array, string, number, integer, boolean and null; type arrays require one supported non-null type and null; implicit types are unsupported',
@@ -783,14 +823,28 @@ function normalizeShapeValue(
 export function schemaReferences(
   schema: Schema,
 ): readonly Extract<Schema, { kind: 'ref' }>[] {
-  if (schema.kind === 'ref') return [schema];
-  if (schema.kind === 'array') return schemaReferences(schema.items);
-  if (schema.kind === 'map')
-    return schema.values === true ? [] : schemaReferences(schema.values);
-  if (schema.kind === 'union') return schema.branches.flatMap(schemaReferences);
-  if (schema.kind === 'object')
-    return [...schema.properties.values()].flatMap(schemaReferences);
-  return [];
+  switch (schema.kind) {
+    case 'ref':
+      return [schema];
+    case 'array':
+      return schemaReferences(schema.items);
+    case 'map':
+      return schema.values === true ? [] : schemaReferences(schema.values);
+    case 'union':
+      return schema.branches.flatMap(schemaReferences);
+    case 'object':
+      return [...schema.properties.values()].flatMap(schemaReferences);
+    case 'json':
+    case 'binary':
+    case 'string':
+    case 'number':
+    case 'integer':
+    case 'boolean':
+    case 'null':
+      return [];
+    default:
+      return assertNever(schema);
+  }
 }
 
 type Usage = 'component' | 'request' | 'response' | 'multipart';
@@ -843,16 +897,34 @@ function measureSchema(
   const child = (value: Schema, path: string) => {
     depth = Math.max(depth, 1 + measureSchema(value, schemas, path, depths));
   };
-  if (schema.kind === 'array') child(schema.items, `${location}.items`);
-  else if (schema.kind === 'map' && schema.values !== true)
-    child(schema.values, `${location}.additionalProperties`);
-  else if (schema.kind === 'object')
-    for (const [name, value] of schema.properties)
-      child(value, `${location}.properties.${name}`);
-  else if (schema.kind === 'union')
-    schema.branches.forEach((value, index) =>
-      child(value, schemaBranchLocation(schema, location, index)),
-    );
+  switch (schema.kind) {
+    case 'array':
+      child(schema.items, `${location}.items`);
+      break;
+    case 'map':
+      if (schema.values !== true)
+        child(schema.values, `${location}.additionalProperties`);
+      break;
+    case 'object':
+      for (const [name, value] of schema.properties)
+        child(value, `${location}.properties.${name}`);
+      break;
+    case 'union':
+      schema.branches.forEach((value, index) =>
+        child(value, schemaBranchLocation(schema, location, index)),
+      );
+      break;
+    case 'json':
+    case 'binary':
+    case 'string':
+    case 'number':
+    case 'integer':
+    case 'boolean':
+    case 'null':
+      break;
+    default:
+      assertNever(schema);
+  }
   // This is a structural runtime bound. Emitted expression depth and compiler
   // inference are handled by flat typed bindings, without semantic cost weights.
   if (depth > maximumSchemaNesting)
@@ -1027,60 +1099,79 @@ function validateUsage(
       location,
       'binary values are only supported in multipart request fields',
     );
-  if (schema.kind === 'ref') {
-    const resolved = resolveSchema(schema, schemas);
-    const allowed =
-      resolved.kind === 'string'
-        ? stringConstraints
-        : resolved.kind === 'number' || resolved.kind === 'integer'
-          ? numberConstraints
-          : resolved.kind === 'array'
-            ? arrayConstraints
-            : resolved.kind === 'object' || resolved.kind === 'map'
-              ? objectConstraints
-              : [];
-    // Alias depth is independent of data depth. Walk long chains iteratively,
-    // checking intermediate constraints in this usage context.
-    let target: Schema = schema;
-    let targetLocation = location;
-    while (target.kind === 'ref') {
-      if (target !== schema && checked.has(target)) break;
-      checked.add(target);
-      for (const name of constraintNames(target.constraints))
-        if (!allowed.includes(name))
-          fail(
-            `${targetLocation}.${name}`,
-            `constraint is unsupported on referenced ${resolved.kind}`,
-          );
-      targetLocation += ` -> components.schemas.${target.name}`;
-      target = schemas.get(target.name)!;
+  switch (schema.kind) {
+    case 'ref': {
+      const resolved = resolveSchema(schema, schemas);
+      const allowed: readonly string[] =
+        resolved.kind === 'string'
+          ? stringConstraints
+          : resolved.kind === 'number' || resolved.kind === 'integer'
+            ? numberConstraints
+            : resolved.kind === 'array'
+              ? arrayConstraints
+              : resolved.kind === 'object' || resolved.kind === 'map'
+                ? objectConstraints
+                : [];
+      // Alias depth is independent of data depth. Walk long chains iteratively,
+      // checking intermediate constraints in this usage context.
+      let target: Schema = schema;
+      let targetLocation = location;
+      while (target.kind === 'ref') {
+        if (target !== schema && checked.has(target)) break;
+        checked.add(target);
+        for (const name of constraintNames(target.constraints))
+          if (!allowed.includes(name))
+            fail(
+              `${targetLocation}.${name}`,
+              `constraint is unsupported on referenced ${resolved.kind}`,
+            );
+        targetLocation += ` -> components.schemas.${target.name}`;
+        target = schemas.get(target.name)!;
+      }
+      validateReferenceConstraints(
+        schema,
+        resolved,
+        schemas,
+        location,
+        constraintCache,
+      );
+      visit(target, targetLocation);
+      return;
     }
-    validateReferenceConstraints(
-      schema,
-      resolved,
-      schemas,
-      location,
-      constraintCache,
-    );
-    visit(target, targetLocation);
-  } else if (schema.kind === 'array') visit(schema.items, `${location}.items`);
-  else if (schema.kind === 'map' && schema.values !== true)
-    visit(schema.values, `${location}.additionalProperties`);
-  else if (schema.kind === 'object')
-    for (const [name, value] of schema.properties)
-      visit(value, `${location}.properties.${name}`);
-  else if (schema.kind === 'union') {
-    schema.branches.forEach((value, index) => {
-      const branchLocation = schemaBranchLocation(schema, location, index);
-      const branchAccess = schemaAccess(value, schemas);
-      if (branchAccess.readOnly || branchAccess.writeOnly)
-        fail(
-          branchLocation,
-          'readOnly and writeOnly on union branches are not supported in this version; remove the annotation from the branch or its referenced component; use separate request and response schemas when their shapes differ',
-        );
-      visit(value, branchLocation);
-    });
-    validateUnion(schema, schemas, location, usage);
+    case 'array':
+      visit(schema.items, `${location}.items`);
+      return;
+    case 'map':
+      if (schema.values !== true)
+        visit(schema.values, `${location}.additionalProperties`);
+      return;
+    case 'object':
+      for (const [name, value] of schema.properties)
+        visit(value, `${location}.properties.${name}`);
+      return;
+    case 'union':
+      schema.branches.forEach((value, index) => {
+        const branchLocation = schemaBranchLocation(schema, location, index);
+        const branchAccess = schemaAccess(value, schemas);
+        if (branchAccess.readOnly || branchAccess.writeOnly)
+          fail(
+            branchLocation,
+            'readOnly and writeOnly on union branches are not supported in this version; remove the annotation from the branch or its referenced component; use separate request and response schemas when their shapes differ',
+          );
+        visit(value, branchLocation);
+      });
+      validateUnion(schema, schemas, location, usage);
+      return;
+    case 'json':
+    case 'binary':
+    case 'string':
+    case 'number':
+    case 'integer':
+    case 'boolean':
+    case 'null':
+      return;
+    default:
+      assertNever(schema);
   }
 }
 

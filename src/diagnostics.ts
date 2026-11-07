@@ -12,6 +12,11 @@ export function fail(location: string, detail: string): never {
   throw new ContractError(location, detail);
 }
 
+// Model extensions must identify every pass that needs to handle the new kind.
+export function assertNever(value: never): never {
+  throw new Error('unhandled compiler variant', { cause: value });
+}
+
 type KeywordContext = 'schema' | 'info' | 'license';
 
 function keywordDetail(allowed: readonly string[]): string {

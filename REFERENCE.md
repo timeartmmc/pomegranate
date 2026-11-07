@@ -480,14 +480,17 @@ either. This holds through references, maps, arrays, and union branches. Default
 never supply a missing response field or rescue an invalid response value.
 
 Component schemas, HTTP schemas, and policy field declarations share a
-per-document normalization budget of 1,000,000 expanded input nodes, counting
-keys, values, and collections. Shared
-inline values count at every occurrence; opaque annotation payloads such as
-`default` and `example` are excluded from this budget and retain their own
-validation. Unused declarations count before output selection. Move repeated
-inline schemas into components and use local `$ref` declarations to reduce
-expansion. This budget applies to JSON, YAML, and programmatic inputs; the YAML
-parser's whole-document expansion limit remains separate.
+per-document normalization budget of 1,000,000 work units. Each source schema
+visit consumes one unit, as does each literal value (`enum` or `const`), property
+name, required name, union branch-list entry, nullable type-array entry, and
+discriminator mapping entry. A branch consumes its list-entry unit and its own
+schema-visit units. Collection work is reserved before constructing results.
+Shared inline values count at every occurrence; opaque annotation payloads such
+as `default` and `example` retain their own validation outside this budget.
+Unused declarations count before output selection. Reduce or split a contract
+that exceeds the budget; component references reduce repeated inline work.
+This budget applies to JSON, YAML, and programmatic inputs. The YAML parser's
+whole-document expansion limit remains separate.
 
 Schemas support at most 128 structural levels, including structure behind
 references. Pure aliases add no levels. Each inline schema is limited to 32
