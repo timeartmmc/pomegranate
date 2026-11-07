@@ -4,11 +4,11 @@
   "files": {
     "call-runtime.ts": "632a88fd052c29b8fe2fdf03b894fc38001bbec6bef658581b6dbd18e98bfe61",
     "client.consumer.execute.ts": "8f319b7c955971987d2766172e0d04ea56a4b0cd2bd6ad3e4e3024553f6318e2",
-    "client.consumer.operations.ts": "5d854cce614f0ef19f46d82f52ec76e2f362b0ea46dc8e074b2d360064a92484",
+    "client.consumer.operations.ts": "528bc1c114ce2f3856cceb9ee20d55579fcee88f6f6be650496237704d9d9751",
     "client.consumer.queries.ts": "61b8e9c1cee45704f3a274987c2c331832f3725021e3d86cfa41510634fb2294",
     "client.consumer.schemas.ts": "f9a7d043f3fc42e5281ac3394f15eb56d28d03843e24cb34a5f8f9ff355dc35b",
     "client.consumer.ts": "6cf203bf922ed29ed93761edfd734b7d7b7549332e889fe304c4f840b2b876cb",
-    "client.staff.operations.ts": "fd9f2d7f7162bcc05e506bb5cc5112e25470e368b78eaae713cf5198d621aa72",
+    "client.staff.operations.ts": "328ae938c79cb88a4490accd6d078f124ea81b5df6025d33cff612d56f125628",
     "client.staff.schemas.ts": "37ce981a420d4fc4eee3d43ef979c03b9bd8a04796b86fff7ca2f2aa49913854",
     "client.staff.ts": "56fdcad88484324c64fad9d4cf87c438e3bc47c6a3dc199f0744903e5dec4c73",
     "endpoint-runtime.ts": "106b4d6623afeffcaf34887e88cf72f87dd1d294f73da9b9b0b7e155f77cb7b4",

@@ -222,12 +222,94 @@ function requestHeaders(operation: Operation, renderer: SchemaRenderer) {
   return { schemas, specs };
 }
 
-function responseSpecs(
+type PreparedResponse = {
+  readonly id: number;
+  readonly expression: Expression;
+  readonly type: string;
+  readonly location: string;
+  uses: number;
+  shared: Expression | undefined;
+};
+type ResponseEntries = readonly (readonly [number, PreparedResponse])[];
+type ErrorProfile = {
+  readonly entries: ResponseEntries;
+  readonly type: string;
+  readonly location: string;
+  uses: number;
+  typeName: string | undefined;
+  value: Expression | undefined;
+};
+type MetadataProfile = {
+  readonly expression: Expression;
+  readonly location: string;
+  uses: number;
+  shared: Expression | undefined;
+};
+type EndpointEmission = {
+  readonly helpers: Set<string>;
+  readonly types: Set<string>;
+  readonly account: ReturnType<typeof sourceBudget>;
+  readonly response: (
+    expression: Expression,
+    type: string,
+    location: string,
+  ) => PreparedResponse;
+  readonly errors: (
+    entries: ResponseEntries,
+    location: string,
+  ) => ErrorProfile | undefined;
+  readonly profile: (
+    expression: Expression,
+    location: string,
+  ) => MetadataProfile;
+};
+type PreparedResponses = Readonly<{
+  success: ResponseEntries;
+  successType: string | undefined;
+  errors: ErrorProfile | undefined;
+}>;
+
+function endpointCall(
+  emission: EndpointEmission,
+  name: string,
+  args: readonly Expression[],
+): Expression {
+  emission.helpers.add(name);
+  const expression = call(identifier(name), args);
+  // These constructors receive only compiler-owned data and parser identities.
+  // Mark the call itself; arbitrary consumer values never cross this boundary.
+  return {
+    source: `/* @__PURE__ */ ${expression.source}`,
+    depth: expression.depth,
+  };
+}
+
+function responseType(
+  entries: ResponseEntries,
+  emission: EndpointEmission,
+): string | undefined {
+  if (!entries.length) return undefined;
+  emission.types.add('ResponseStatuses');
+  const groups = new Map<string, number[]>();
+  for (const [status, response] of entries) {
+    const statuses = groups.get(response.type) ?? [];
+    statuses.push(status);
+    groups.set(response.type, statuses);
+  }
+  return [...groups]
+    .map(
+      ([type, statuses]) =>
+        `ResponseStatuses<${statuses.join(' | ')}, ${type}>`,
+    )
+    .join(' & ');
+}
+
+function prepareResponses(
   operation: Operation,
   renderer: SchemaRenderer,
-): { expression: Expression; type: string } {
-  const types: string[] = [];
-  const expression = object(
+  emission: EndpointEmission,
+): PreparedResponses {
+  const entries: (readonly [number, PreparedResponse])[] =
     operation.responses.map((response) => {
       const prefix = `${operationScope(operation.id)}_response_${response.status}`;
       const headerTypes: string[] = [];
@@ -239,64 +321,123 @@ function responseSpecs(
             `${operation.id}.responses.${response.status}.headers.${header.name}`,
             `${prefix}_header_${index}`,
           );
+          renderer.typeImports.add('ResponseHeader');
           headerTypes.push(
-            `readonly ${propertyKey(header.name)}: { readonly required: ${header.required}; readonly schema: typeof ${parse.source} };`,
+            `readonly ${propertyKey(header.name)}: ResponseHeader<typeof ${parse.source}${header.required ? ', true' : ''}>;`,
           );
           return [
             header.name,
-            object([
-              ['required', literal(header.required)],
-              ['schema', parse],
-            ]),
+            endpointCall(
+              emission,
+              header.required ? 'requiredHeader' : 'optionalHeader',
+              [parse],
+            ),
           ];
         }),
       );
-      const entries: Entries = [
-        ['bodyKind', literal(response.body.kind)],
-        ['headers', headers],
-      ];
-      let schemaType = '';
-      if (response.body.kind !== 'none') {
+      const headerType = headerTypes.length
+        ? `{${headerTypes.join('')}}`
+        : undefined;
+      let type: string;
+      let expression: Expression;
+      if (response.body.kind === 'none') {
+        renderer.typeImports.add('EmptyResponse');
+        type = `EmptyResponse${headerType === undefined ? '' : `<${headerType}>`}`;
+        expression = endpointCall(
+          emission,
+          headerType === undefined ? 'emptyResponse' : 'emptyHeaders',
+          headerType === undefined ? [] : [headers],
+        );
+      } else {
         const contentTypes: string[] = [];
-        entries.push([
-          'content',
-          object(
-            [...response.body.content].map(([mediaType, representation]) => {
-              const parse = renderer.part(
-                representation.schema,
-                'response',
-                `${operation.id}.responses.${response.status}.content.${mediaType}`,
-                prefix,
-              );
-              contentTypes.push(
-                `readonly ${propertyKey(mediaType)}: {readonly bodyKind: '${representation.kind}'; readonly schema: typeof ${parse.source};};`,
-              );
-              return [
-                mediaType,
-                object([
-                  ['bodyKind', literal(representation.kind)],
-                  ['schema', parse],
-                ]),
-              ];
-            }),
-          ),
-        ]);
-        schemaType = `readonly content: {${contentTypes.join('')}};`;
+        let jsonParse: Expression | undefined;
+        const content = object(
+          [...response.body.content].map(([media, representation]) => {
+            const parse = renderer.part(
+              representation.schema,
+              'response',
+              `${operation.id}.responses.${response.status}.content.${media}`,
+              prefix,
+            );
+            if (
+              response.body.kind !== 'none' &&
+              response.body.content.size === 1 &&
+              media === 'application/json' &&
+              representation.kind === 'json'
+            )
+              jsonParse = parse;
+            contentTypes.push(
+              `readonly ${propertyKey(media)}: ResponseMedia<typeof ${parse.source}${representation.kind === 'text' ? ", 'text'" : ''}>;`,
+            );
+            return [
+              media,
+              object([
+                ['bodyKind', literal(representation.kind)],
+                ['schema', parse],
+              ]),
+            ];
+          }),
+        );
+        if (jsonParse) {
+          emission.types.add('JsonResponse');
+          type = `JsonResponse<typeof ${jsonParse.source}${headerType === undefined ? '' : `, ${headerType}`}>`;
+          expression = endpointCall(
+            emission,
+            headerType === undefined ? 'jsonResponse' : 'jsonHeaders',
+            headerType === undefined ? [jsonParse] : [jsonParse, headers],
+          );
+        } else {
+          renderer.typeImports.add('ContentResponse');
+          renderer.typeImports.add('ResponseMedia');
+          type = `ContentResponse<{${contentTypes.join('')}}${headerType === undefined ? '' : `, ${headerType}`}>`;
+          expression = object([
+            ['bodyKind', literal('content')],
+            ['headers', headers],
+            ['content', content],
+          ]);
+        }
       }
-      types.push(
-        `readonly ${response.status}: { readonly bodyKind: '${response.body.kind}'; readonly headers: { ${headerTypes.join('')} }; ${schemaType} };`,
-      );
-      return [response.status, object(entries)];
-    }),
-  );
-  return { expression, type: `{${types.join('')}}` };
+      return [
+        response.status,
+        emission.response(
+          expression,
+          type,
+          `${operation.id}.responses.${response.status}`,
+        ),
+      ];
+    });
+  const success = entries.filter(([status]) => status < 300);
+  const successType = responseType(success, emission);
+  if (successType) emission.account(successType, operation.id);
+  return {
+    success,
+    successType,
+    errors: emission.errors(
+      entries.filter(([status]) => status >= 300),
+      operation.id,
+    ),
+  };
 }
 
-function operationExpression(
+type PreparedOperation = Readonly<{
+  operation: Operation;
+  options: Expression;
+  optionsType: string;
+  bodyKind: string;
+  settings: Expression;
+  profile: MetadataProfile;
+  responses: PreparedResponses;
+  typeName: string;
+}>;
+
+function prepareOperation(
   operation: Operation,
   client: Client,
   renderer: SchemaRenderer,
-): { expression: Expression; type: string } {
+  emission: EndpointEmission,
+  index: number,
+): PreparedOperation {
+  const location = `paths.${operation.path}.${operation.method.toLowerCase()}`;
   const headers = requestHeaders(operation, renderer);
   const parameters = operation.parameters.filter(
     (parameter) =>
@@ -307,18 +448,25 @@ function operationExpression(
     operation,
     parameters,
     renderer,
-    `${operationScope(operation.id)}_options`,
+    `options_${index}`,
     headers.schemas,
   );
-  const responses = responseSpecs(operation, renderer);
-  const entries: Entries = [
-    ['operationId', literal(operation.id)],
-    ['method', literal(operation.method)],
-    ['path', literal(operation.path)],
-    ['security', data(operation.security)],
-    ['policy', data(Object.fromEntries(operation.policy))],
-    ['bodyKind', literal(operation.body.kind)],
-    [
+  const optionsType = `options_type${index}`;
+  // Public input types come directly from the descriptor, independently of the
+  // generated validator's implementation and generic constructor inference.
+  renderer.push(`type ${optionsType} = ${options.type};`, location);
+  const profile = emission.profile(
+    object([
+      ['security', data(operation.security)],
+      ['policy', data(Object.fromEntries(operation.policy))],
+      ['headers', headers.specs],
+    ]),
+    location,
+  );
+  const responses = prepareResponses(operation, renderer, emission);
+  const settings: Entries = [['bodyKind', literal(operation.body.kind)]];
+  if (parameters.length)
+    settings.push([
       'parameters',
       data(
         parameters.map(({ name, in: position, required, explode }) => ({
@@ -328,27 +476,43 @@ function operationExpression(
           ...(explode === false ? { explode } : {}),
         })),
       ),
-    ],
-    ['options', options.parse],
-    ['headers', headers.specs],
-    ['responses', responses.expression],
-  ];
+    ]);
   if (operation.body.kind === 'multipart')
-    entries.push(['multipart', data(operation.body.fields)]);
+    settings.push(['multipart', data(operation.body.fields)]);
   else if (operation.body.kind !== 'none')
-    entries.push(['contentType', literal(operation.body.contentType)]);
-  renderer.typeImports.add('Operation');
-  renderer.typeImports.add('Invalid');
+    settings.push(['contentType', literal(operation.body.contentType)]);
   const bodyKind =
     (operation.body.kind === 'json' || operation.body.kind === 'text') &&
     !bodyRequired(operation.body)
       ? `'${operation.body.kind}' | 'none'`
       : `'${operation.body.kind}'`;
+  const settingExpression = object(settings);
+  emission.account(
+    source(
+      endpointCall(emission, 'endpoint', [
+        literal(operation.id),
+        literal(operation.method),
+        literal(operation.path),
+        identifier('p'),
+        options.parse,
+        object([]),
+        settingExpression,
+      ]),
+      location,
+    ),
+    location,
+  );
+  emission.account(`Operation<${optionsType}, {}, ${bodyKind}>`, location);
+  renderer.typeImports.add('Operation');
   return {
-    expression: call(identifier('defineOperation'), [object(entries)]),
-    // The named options parser already has a checked contract return. Refer to
-    // it explicitly for isolated declarations without duplicating inline types.
-    type: `Operation<Exclude<ReturnType<typeof ${options.parse.source}>, Invalid>, ${responses.type}, ${bodyKind}>`,
+    operation,
+    options: options.parse,
+    optionsType,
+    bodyKind,
+    settings: settingExpression,
+    profile,
+    responses,
+    typeName: `operation_type${index}`,
   };
 }
 
@@ -442,25 +606,225 @@ function renderClient(
     },
     client.target,
   );
-  inline.helpers.add('defineOperation');
-  // Internal named exports share the same instances as the public aggregates.
-  // Query modules can retain selected operations without importing the registry.
-  const accountOperations = sourceBudget();
-  const operationDeclarations = client.operations.map((operation) => {
-    const scope = operationScope(operation.id);
-    const defined = operationExpression(operation, client, inline);
-    const declaration = `function define_${scope}(): ${defined.type} {
-        return ${source(defined.expression, `client.${moduleName(client.name)}.${operation.id}`)};
+  const accountPrepared = sourceBudget();
+  const accountDeclarations = sourceBudget();
+  const endpointDeclarations: string[] = [];
+  const appendEndpoint = (declaration: string, location: string) => {
+    accountDeclarations(declaration, location);
+    endpointDeclarations.push(declaration);
+  };
+  const responseGroups = new Map<string, Map<string, PreparedResponse>>();
+  const errorProfiles = new Map<string, ErrorProfile>();
+  const metadataProfiles = new Map<string, MetadataProfile>();
+  let responseCount = 0;
+  const emission: EndpointEmission = {
+    helpers: new Set(),
+    types: new Set(),
+    account: accountPrepared,
+    response(expression, type, location) {
+      const value = source(expression, location);
+      let byType = responseGroups.get(value);
+      const known = byType?.get(type);
+      if (known) {
+        known.uses++;
+        return known;
       }
-      export const ${scope}: ReturnType<typeof define_${scope}> = /* @__PURE__ */ define_${scope}();`;
-    // Policy strings can be shared in a small YAML input and repeated in every
-    // operation. Bound these fragments before joining the operations module.
-    accountOperations(
-      declaration,
-      `paths.${operation.path}.${operation.method.toLowerCase()}`,
+      accountPrepared(value, location);
+      const response: PreparedResponse = {
+        id: responseCount++,
+        expression,
+        type,
+        location,
+        uses: 1,
+        shared: undefined,
+      };
+      if (!byType) {
+        byType = new Map();
+        responseGroups.set(value, byType);
+      }
+      byType.set(type, response);
+      return response;
+    },
+    errors(entries, location) {
+      if (!entries.length) return undefined;
+      // Entry identities already capture the complete descriptor type and
+      // emitted parser/value identity. Status keys are part of this exact key.
+      const key = JSON.stringify(
+        entries.map(([status, response]) => [status, response.id]),
+      );
+      const known = errorProfiles.get(key);
+      if (known) {
+        known.uses++;
+        return known;
+      }
+      const type = responseType(entries, emission)!;
+      accountPrepared(type, location);
+      const profile: ErrorProfile = {
+        entries,
+        type,
+        location,
+        uses: 1,
+        typeName: undefined,
+        value: undefined,
+      };
+      errorProfiles.set(key, profile);
+      return profile;
+    },
+    profile(expression, location) {
+      const value = source(expression, location);
+      const known = metadataProfiles.get(value);
+      if (known) {
+        known.uses++;
+        return known;
+      }
+      accountPrepared(value, location);
+      const profile: MetadataProfile = {
+        expression,
+        location,
+        uses: 1,
+        shared: undefined,
+      };
+      metadataProfiles.set(value, profile);
+      return profile;
+    },
+  };
+  // Prepare once in declaration order. Retain each distinct error map/profile
+  // once, rather than constructing and charging the old expanded per-op types.
+  // Unique values/types, per-op success types and the base call are lower bounds
+  // on emitted source; final declarations and complete modules are checked too.
+  const preparedOperations = client.operations.map((operation, index) =>
+    prepareOperation(operation, client, inline, emission, index),
+  );
+  const profitable = (inline: number, shared: number) =>
+    shared * 10 <= inline * 9;
+  let errorTypes = 0;
+  for (const profile of errorProfiles.values()) {
+    if (profile.uses < 2) continue;
+    const name = `error_type${errorTypes}`;
+    const declaration = `type ${name} = ${profile.type};`;
+    if (
+      !profitable(
+        profile.uses * Buffer.byteLength(profile.type),
+        Buffer.byteLength(declaration) + profile.uses * name.length,
+      )
+    )
+      continue;
+    profile.typeName = name;
+    appendEndpoint(declaration, profile.location);
+    errorTypes++;
+  }
+  // Conservatively count a potential shared error value once. If the value
+  // later remains inline, this can miss a pooling opportunity, but cannot make
+  // a response constant unprofitable by overcounting its emitted uses.
+  const uses = new Map<PreparedResponse, number>();
+  const count = (entries: ResponseEntries, amount = 1) => {
+    for (const [, response] of entries)
+      uses.set(response, (uses.get(response) ?? 0) + amount);
+  };
+  for (const operation of preparedOperations)
+    count(operation.responses.success);
+  for (const profile of errorProfiles.values())
+    count(profile.entries, profile.typeName ? 1 : profile.uses);
+  let sharedResponses = 0;
+  for (const byType of responseGroups.values())
+    for (const response of byType.values()) {
+      const count = uses.get(response) ?? 0;
+      if (count < 2) continue;
+      const name = `response_${sharedResponses}`;
+      const declaration = `const ${name}: ${response.type} = ${response.expression.source};`;
+      if (
+        !profitable(
+          count * Buffer.byteLength(response.expression.source),
+          Buffer.byteLength(declaration) + count * name.length,
+        )
+      )
+        continue;
+      appendEndpoint(declaration, response.location);
+      response.shared = identifier(name);
+      sharedResponses++;
+    }
+  const responseValue = (entries: ResponseEntries) =>
+    object(
+      entries.map(([status, response]) => [
+        status,
+        response.shared ?? response.expression,
+      ]),
     );
-    return declaration;
-  });
+  let sharedErrors = 0;
+  for (const profile of errorProfiles.values()) {
+    if (!profile.typeName) continue;
+    const expression = responseValue(profile.entries);
+    const value = source(expression, profile.location);
+    const name = `error_responses${sharedErrors}`;
+    const declaration = `const ${name}: ${profile.typeName} = ${value};`;
+    // Merging is a pure constructor over disjoint compiler-owned data maps.
+    // Include its per-operation syntax in the profitability margin.
+    if (
+      !profitable(
+        profile.uses * Buffer.byteLength(value),
+        Buffer.byteLength(declaration) + profile.uses * (name.length + 40),
+      )
+    )
+      continue;
+    appendEndpoint(declaration, profile.location);
+    profile.value = identifier(name);
+    sharedErrors++;
+  }
+  let sharedProfiles = 0;
+  for (const profile of metadataProfiles.values()) {
+    if (profile.uses < 2) continue;
+    const name = `endpoint_profile${sharedProfiles}`;
+    const value = profile.expression.source;
+    const declaration = `const ${name}: EndpointProfile = ${value};`;
+    if (
+      !profitable(
+        profile.uses * Buffer.byteLength(value),
+        Buffer.byteLength(declaration) + profile.uses * name.length,
+      )
+    )
+      continue;
+    emission.types.add('EndpointProfile');
+    appendEndpoint(declaration, profile.location);
+    profile.shared = identifier(name);
+    sharedProfiles++;
+  }
+  for (const defined of preparedOperations) {
+    const { operation, responses } = defined;
+    const location = `paths.${operation.path}.${operation.method.toLowerCase()}`;
+    const errorType = responses.errors?.typeName ?? responses.errors?.type;
+    const resultType = [errorType, responses.successType]
+      .filter((type): type is string => type !== undefined)
+      .join(' & ');
+    const type = `Operation<${defined.optionsType}, ${resultType || '{}'}, ${defined.bodyKind}>`;
+    let value: Expression;
+    if (responses.errors?.value)
+      value = endpointCall(emission, 'mergeResponses', [
+        responses.errors.value,
+        responseValue(responses.success),
+      ]);
+    else
+      value = responseValue([
+        ...(responses.errors?.entries ?? []),
+        ...responses.success,
+      ]);
+    const expression = endpointCall(emission, 'endpoint', [
+      literal(operation.id),
+      literal(operation.method),
+      literal(operation.path),
+      defined.profile.shared ?? defined.profile.expression,
+      defined.options,
+      value,
+      defined.settings,
+    ]);
+    appendEndpoint(
+      `type ${defined.typeName} = ${type};
+function define_${operationScope(operation.id)}(): ${defined.typeName} {
+  return ${source(expression, location)};
+}
+export const ${operationScope(operation.id)}: ${defined.typeName} = /* @__PURE__ */ define_${operationScope(operation.id)}();`,
+      location,
+    );
+  }
   const operations = call(identifier('Object.freeze<type_operations>'), [
     object(
       client.operations.map((operation) => [
@@ -469,23 +833,18 @@ function renderClient(
       ]),
     ),
   ]);
-  // Name existing operation types so declaration emission does not expand the
-  // entire client again; large inferred aggregates exceed TS serialization limits.
-  // ReturnType of a function declaration names each member without a typeof
-  // query on a module variable, which would also walk module control flow.
-  const operationsType = `{${client.operations
-    .map(
-      (operation) =>
-        `${propertyKey(operation.id)}: ReturnType<typeof define_${operationScope(operation.id)}>;`,
-    )
-    .join('')}}`;
+  // Independent named aliases keep declaration publication bounded without
+  // typeof queries that walk control flow through module-level constructors.
+  const operationsType = `{${preparedOperations.map(({ operation, typeName }) => `${propertyKey(operation.id)}: ${typeName};`).join('')}}`;
   const emittedOperations = `${banner}
+    ${emission.helpers.size ? `import { ${[...emission.helpers].sort().join(', ')} } from './endpoint-runtime.ts';` : ''}
+    ${emission.types.size ? `import type { ${[...emission.types].sort().join(', ')} } from './endpoint-runtime.ts';` : ''}
     ${runtimeTypeImports(inline.typeImports)}
     ${helperImports(inline.helpers)}
     ${schemaImports.size ? `import { ${[...schemaImports].sort().join(', ')} } from './client.${moduleName(client.name)}.schemas.ts';` : ''}
     ${usesSchemaTypes ? `import type * as schemas from './client.${moduleName(client.name)}.schemas.ts';` : ''}
     ${inline.takeDeclarations()}
-    ${operationDeclarations.join('\n')}
+    ${endpointDeclarations.join('\n')}
     export type type_operations = ${operationsType};
     function make_operations(): Readonly<type_operations> {
       return ${source(operations, `client.${moduleName(client.name)}.operations`)};

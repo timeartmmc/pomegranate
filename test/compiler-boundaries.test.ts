@@ -15,7 +15,12 @@ import type { Descriptor, Schema, Standalone } from '../dist/model.js';
 import { parseYaml } from '../dist/yaml.js';
 import { fileSnapshot, fixture, temporary } from './helpers.ts';
 import { queryFixture } from './query-fixture.ts';
-import { record } from './assertions.ts';
+import { present, record } from './assertions.ts';
+import {
+  generatedTestWorkspace,
+  importGenerated,
+} from './generated-workspace.ts';
+import type { RuntimeClient } from './runtime-types.ts';
 
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -154,7 +159,7 @@ void test('input byte limits accept valid JSON one byte below and at the boundar
   }
 });
 
-void test('shared policy metadata is budgeted before joining operation declarations', async () => {
+void test('pooled policy metadata is admitted by its compact output size', async (t) => {
   const metadata = { note: 'x'.repeat(768 * 1024) };
   const ids = Array.from({ length: 48 }, (_, index) => `large${index}`);
   const document = {
@@ -176,18 +181,29 @@ void test('shared policy metadata is budgeted before joining operation declarati
   };
   const yaml = stringify(document);
   assert.ok(Buffer.byteLength(yaml) < 1024 * 1024);
-  await assert.rejects(
-    compile(parseYaml(yaml, 'policy.yaml'), {
-      clients: ['consumer'],
-      surfaces: { consumer: ids },
-    }),
-    (error) => {
-      assert.ok(error instanceof ContractError);
-      assert.match(error.message, /generated source exceeds the 32 MiB limit/);
-      assert.match(error.location, /^paths\.\/large\d+\.get$/);
-      return true;
-    },
+  const files = await compile(parseYaml(yaml, 'policy.yaml'), {
+    clients: ['consumer'],
+    surfaces: { consumer: ids },
+  });
+  // The former expanded representation exceeded 32 MiB. Shared declarations
+  // keep this complete output small; the limit applies to actual source.
+  assert.ok(
+    Object.values(files).reduce(
+      (bytes, source) => bytes + Buffer.byteLength(source),
+      0,
+    ) <
+      2 * 1024 * 1024,
   );
+  const root = await generatedTestWorkspace(t, files);
+  const client = await importGenerated<RuntimeClient>(
+    root,
+    'client.consumer.ts',
+  );
+  for (const id of ids) {
+    const request = present(client.operations[id]).build();
+    assert.equal(request.operationId, id);
+    assert.equal(request.policy['note'], metadata.note);
+  }
 });
 
 for (const existing of [false, true]) {
