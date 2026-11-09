@@ -296,6 +296,48 @@ resource/type-cost coverage and controlled performance CI remain unfinished.
 Interpret results for the declared adapters, normalized result contract and seeded
 workload.
 
+### Calibration pilot
+
+The calibration analyzer checks fixed-plan controls against the same timing
+profile. Before collecting data, create a version 1 study under ignored `.local/`
+storage with explicit `rounds`, `policy`, `profiles`, a `reference` adapter ID,
+`comparisons`, semantic negative `controls`, and `sessions`. Comparisons declare
+an `id` and either `kind: "identical"` or `kind: "repeat"` with an integer `every`
+from 1 through 1024. Include at least one identical control and two sessions;
+each session declares an `id`, a distinct numeric `seed`, and its timing `report`
+path. Report paths resolve from the study file's real directory. Study files use
+the 64 KiB UTF-8 JSON limit; each input timing report is limited to 16 MiB.
+
+Use `repeatValidation` from `bench/controls.ts` to wrap a base adapter. The
+reference uses `every: 0`; identical controls use the same factory module,
+sources and identity. Repeated-work controls use the same base validator and
+perform an extra validation every declared number of calls. In `controls`, list
+IDs of adapters marked `expect: "ineligible"` in the timing plans.
+
+Prepare the session timing plans before collection. Use the study's rounds,
+policy, profiles and adapter IDs, selecting each session's declared seed. Include
+the study path in every adapter's `sources`. Keep the study unchanged through
+analysis and use the same collection harness for all sessions. Once all session
+reports exist, run:
+
+```sh
+node bench/analyze-calibration.ts .local/study.json .local/calibration-analysis
+```
+
+The output directory must be new and its parent must exist. The analyzer checks
+study, host, source and adapter identities before pairing process means within
+their original randomized round. It reports conditional median intervals with a
+correction across the declared comparison/profile cells in each session.
+Measurement windows remain observations within one process. If no finite interval
+meets the declared family level, bounds are `null` and the signal is `unresolved`.
+The report preserves collection identities and records the analyzer's own source
+receipt, so a copied analyzer can process retained reports.
+
+These reports are pilot evidence. Neighboring sessions and shared reference
+controls can be dependent; session counts do not establish a false-alarm rate or
+detection power. Extra-call frequency does not specify a percentage slowdown.
+A minimum detectable effect and performance acceptance gates remain unfinished.
+
 ### Local diagnostic scripts
 
 Use `node scripts/benchmark-execution.ts [baseline-ref]` for handwritten/generated
