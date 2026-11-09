@@ -10,8 +10,10 @@ const integrity = 'sha512-synthetic-archive-identity';
 
 void test('benchmark identities automatically include new nested source files and their changes', async (t) => {
   const current = await benchmarkSources();
-  assert.ok(current.some(({ name }) => name === 'controller.ts'));
-  assert.ok(current.some(({ name }) => name === 'process.ts'));
+  assert.ok(
+    current.some(({ name }) => name === 'cases/json-response-runtime.ts'),
+  );
+  assert.ok(current.some(({ name }) => name === 'timing.ts'));
   const root = await temporary(t);
   assert.deepEqual(await benchmarkSources(root), []);
   await mkdir(join(root, 'nested'));

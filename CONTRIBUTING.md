@@ -124,8 +124,9 @@ currently version 2. Its independent expectations cover accepted boundaries,
 validation and issue paths, stripping, detached mutable results across calls,
 changed-input validation, excluded-field reads, and protocol behavior. The report
 records case/output hashes and bytes; this preflight remains explicitly untimed.
-Performance acceptance gates remain unfinished. Review the case version whenever
-its workload or promised behavior changes.
+The separate validation profile below collects exploratory timings. Performance
+acceptance gates remain unfinished. Review the case version whenever its workload
+or promised behavior changes.
 
 Benchmark code follows the same strict types, Oxlint, Oxfmt and verification as
 other repository code. Canonical checks test the oracle against deliberately
@@ -176,6 +177,95 @@ fresh path for each attempt. Replaying the retained plan uses the current
 controller and harness and resolves dependencies again; compare those identities,
 dependency locks and installed code before using results together. Preparation
 establishes artifact and behavioral evidence; its report contains no timings.
+
+### Exploratory validation timings
+
+Run `bun run bench:run <timing-plan.json> <new-output-directory>` for the shared
+`json-response` response-body validation and construction profile. This uses a
+separate plan format from artifact preparation. Keep plans, adapters and reports
+under ignored `.local/` storage:
+
+```json
+{
+  "version": 1,
+  "seed": 20261108,
+  "rounds": 12,
+  "profiles": [
+    { "scenario": "parsed-valid", "records": 128 },
+    { "scenario": "json-valid", "records": 128 },
+    { "scenario": "parsed-invalid-many", "records": 128 }
+  ],
+  "adapters": [
+    {
+      "id": "candidate",
+      "module": "./adapters/candidate.mjs",
+      "sources": ["./generated", "./runtime-dependencies"]
+    }
+  ]
+}
+```
+
+Timing plans must be UTF-8 JSON no larger than 64 KiB. Provide the adapter module
+and source paths before running. Paths resolve from the plan file's real
+directory.
+Adapter IDs use ASCII letters, digits, underscores or hyphens and must be unique
+ignoring ASCII case. Each module exports `create()`, which may return a promise.
+It supplies a synchronous `validate`, a nonempty string-valued
+`identity` record, and optional `dispose` cleanup. Validation uses the
+[`safeParse` result shape](REFERENCE.md#schema-validation). Adapter normalization,
+copying and stripping belong inside `validate`; their cost is measured.
+
+The benchmark harness tree and adapter entry modules are fingerprinted
+automatically. Declare all other code and inputs that affect validation in
+`sources`, including generated validators and dependency trees. Sources may be
+regular files or directories. The caller owns the completeness of adapter sources;
+the runner does not discover their imports. Keep output directories outside source
+trees. Invalid declared source paths stop setup before adapter qualification;
+changes to captured sources invalidate the whole run.
+
+| Scenario               | Measured operation                                                      |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `parsed-valid`         | Validate parsed data and construct detached, stripped output            |
+| `json-valid`           | Decode JSON, validate and construct detached, stripped output           |
+| `parsed-invalid-first` | Validate an invalid tag in the first record and construct diagnostics   |
+| `parsed-invalid-last`  | Validate an invalid tag in the last record and construct diagnostics    |
+| `parsed-invalid-many`  | Validate invalid tags in up to 16 initial records and report every path |
+
+The optional `profiles` list selects between 1 and 32 unique scenario/count pairs.
+Each `records` value is an integer from 0 through 128. Invalid profiles require at
+least one record; `parsed-invalid-many` requires at least two. Without `profiles`,
+the runner selects `parsed-valid`, `json-valid` and `parsed-invalid-last`, each
+with two records. Every selected profile must pass the oracle before an adapter
+is timed. The multi-error profile stays below the diagnostic issue cap; it does
+not measure overflow behavior.
+
+The runtime workload is independently versioned as `json-response-runtime`
+version 1; the contract/preflight case remains version 2. Timing reports use
+`schemaVersion: 2` and record scenario and record count in observations and
+summaries.
+
+Module loading, adapter creation and cleanup stay outside measured windows.
+Measurements include common result consumption. Preflight runs separately; each
+measured process uses a 64-entry input pool, finite warmup/windows, retained
+results and natural GC. Workers run serially in seeded randomized order. The optional
+`policy` supplies all four fields: `warmupMs`, `sampleMs`, `samples`, and `batchSize`.
+Defaults are seed `20261108`, 12 rounds, 100 ms warmup, five 100 ms windows and a
+batch size of 128. The report records the effective policy.
+
+Mark a deliberate semantic negative control with `"expect": "ineligible"`. It
+must be rejected by the shared oracle; setup failures or unexpected acceptance
+fail the run. Expected controls are not timed. Other preflight failures appear
+as ineligible adapters in a partial report, and the CLI exits nonzero.
+
+The fresh output directory retains the plan, preflight evidence, raw process
+observations, source identities and `report.json`. Measured-worker execution or
+identity failures retain logs and `failure.json` with the failed stage and error.
+Summaries report the median of process means and observed min/max in microseconds
+per operation. These are local exploratory measurements, with no confidence
+intervals or performance acceptance verdict. Noise/detection qualification,
+resource/type-cost coverage and controlled performance CI remain unfinished.
+Interpret results for the declared adapters, normalized result contract and seeded
+workload.
 
 ### Local diagnostic scripts
 
