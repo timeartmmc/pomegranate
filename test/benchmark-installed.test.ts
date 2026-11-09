@@ -11,22 +11,22 @@ const integrity = 'sha512-synthetic-archive-identity';
 void test('benchmark identities automatically include new nested source files and their changes', async (t) => {
   const current = await benchmarkSources();
   assert.ok(
-    current.some(({ name }) => name === 'cases/json-response-runtime.ts'),
+    current.files.some(({ path }) => path === 'cases/json-response-runtime.ts'),
   );
-  assert.ok(current.some(({ name }) => name === 'timing.ts'));
+  assert.ok(current.files.some(({ path }) => path === 'timing.ts'));
   const root = await temporary(t);
-  assert.deepEqual(await benchmarkSources(root), []);
+  assert.deepEqual((await benchmarkSources(root)).files, []);
   await mkdir(join(root, 'nested'));
   await writeFile(join(root, 'nested/helper.ts'), 'export const value = 1;\n');
   const first = await benchmarkSources(root);
   assert.deepEqual(
-    first.map(({ name }) => name),
+    first.files.map(({ path }) => path),
     ['nested/helper.ts'],
   );
   await writeFile(join(root, 'nested/helper.ts'), 'export const value = 2;\n');
   const second = await benchmarkSources(root);
-  assert.equal(second[0]!.name, first[0]!.name);
-  assert.notEqual(second[0]!.sha256, first[0]!.sha256);
+  assert.equal(second.files[0]!.path, first.files[0]!.path);
+  assert.notEqual(second.sha256, first.sha256);
 });
 
 async function fixture(t: TestContext) {

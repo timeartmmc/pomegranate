@@ -12,6 +12,11 @@ Read [README.md](README.md) for an introduction,
 
 - Finish and verify each change before expanding scope. Report results and
   remaining limits accurately.
+- Before adding code, inspect the owning implementation and existing helpers.
+  Before finishing, review the complete diff for duplicated domain rules,
+  unnecessary abstractions, tautological assertions, and tests that merely defend
+  implementation details. Fix demonstrated problems; require a concrete benefit
+  for structural changes.
 - Preserve unrelated changes.
 - Delegate work only when explicitly requested.
 - Do not commit, publish, or deploy without an explicit request.

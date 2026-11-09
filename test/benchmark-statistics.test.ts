@@ -9,6 +9,8 @@ void test('exact median intervals respect sample size and the declared compariso
   assert.equal(small.lower, null);
   assert.equal(small.upper, null);
   assert.equal(small.signal, 'unresolved');
+  // The full-line interval covers everything but supplies no detection bound.
+  assert.equal(small.iidModelFamilyCoverageLowerBound, 1);
   const six = pairedMedianInterval(ones(6), [1, 2, 3, 4, 5, 6], 1);
   assert.deepEqual(six.ranks, [1, 6]);
   assert.equal(six.iidModelFamilyCoverageLowerBound, 0.96875);
@@ -109,41 +111,22 @@ void test('work controls add actual validations, preserve the primary result and
     );
 });
 
-void test('control disposal ignores cyclic error metadata and always cleans up its base', async () => {
-  let disposed = 0;
-  const error = new Error('invalid');
-  const issue = { path: ['items', 0], message: 'invalid', context: error };
-  Object.assign(error, {
-    issues: [issue],
-    context: error,
-    toJSON() {
-      throw new Error('unpromised serialization');
-    },
-  });
-  const control = repeatValidation(
-    {
-      identity: { name: 'cyclic-diagnostic' },
-      validate: () => ({ success: false, error }),
-      dispose() {
-        disposed++;
-      },
-    },
-    1,
-  );
-  control.validate({});
-  await control.dispose?.();
-  assert.equal(disposed, 1);
+void test('control disposal cleans up its base when an extra result is malformed', async () => {
+  let disposed = false;
   const broken = repeatValidation(
     {
       identity: {},
       validate: () => null,
       dispose() {
-        disposed++;
+        disposed = true;
       },
     },
     1,
   );
   broken.validate({});
-  await assert.rejects(async () => broken.dispose?.());
-  assert.equal(disposed, 2);
+  await assert.rejects(
+    async () => broken.dispose?.(),
+    /extra validation result: expected an object/,
+  );
+  assert.equal(disposed, true);
 });

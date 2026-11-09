@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { prepareArtifacts } from './artifacts.ts';
+import { prepareArtifactSpecs, readArtifactPlan } from './artifacts.ts';
 import {
   createRunDirectory,
   publishReport,
@@ -19,6 +19,7 @@ export async function compareArtifacts(
   settings: unknown = {},
 ) {
   const sampling = timingSettings(settings);
+  const specs = await readArtifactPlan(plan);
   const controllerPaths = [benchmarkDirectory];
   const controller = await fingerprintSources(controllerPaths);
   // All stages own subdirectories of one fresh run. A failure keeps evidence
@@ -28,7 +29,7 @@ export async function compareArtifacts(
   try {
     await writeJson(join(root, 'settings.json'), sampling);
     const preparedRoot = join(root, 'prepared');
-    const preparation = await prepareArtifacts(plan, preparedRoot);
+    const preparation = await prepareArtifactSpecs(specs, preparedRoot);
     stage = 'binding';
     const expected = preparation.artifacts
       .flatMap((artifact) => {

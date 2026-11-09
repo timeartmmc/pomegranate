@@ -19,14 +19,18 @@ import {
   createRunDirectory,
   publishReport,
   readPlan,
+  readJson,
   record,
   sha256,
   writeFailure,
   benchmarkDirectory,
+  benchmarkSeed,
+  benchmarkId,
 } from './controller.ts';
 
 import {
   defaultProfiles,
+  defaultRecords,
   jsonResponseRuntime,
   poolSize,
   profileKey,
@@ -73,10 +77,11 @@ type Result =
     };
 
 export function samplingPolicy(value: unknown): SamplingPolicy {
-  const policy = record(value);
+  const policy = record(value, 'policy');
   assert.deepEqual(
     Object.keys(policy).sort(),
     Object.keys(defaultPolicy).sort(),
+    'policy: expected warmupMs, sampleMs, samples and batchSize only',
   );
   for (const [name, maximum] of [
     ['warmupMs', 10_000],
@@ -90,7 +95,7 @@ export function samplingPolicy(value: unknown): SamplingPolicy {
         Number.isSafeInteger(setting) &&
         setting >= (name === 'warmupMs' ? 0 : 1) &&
         setting <= maximum,
-      `invalid sampling policy: ${name}`,
+      `policy.${name}: expected an integer between ${name === 'warmupMs' ? 0 : 1} and ${maximum}`,
     );
   }
   return policy as unknown as SamplingPolicy;
@@ -102,25 +107,20 @@ export function workerDeadline(policy: SamplingPolicy): number {
 }
 
 export function timingSettings(value: unknown = {}) {
-  const settings = record(value);
-  assert.ok(
-    Object.keys(settings).every((key) =>
+  const settings = record(value, 'settings');
+  for (const key of Object.keys(settings))
+    assert.ok(
       ['seed', 'rounds', 'policy', 'profiles'].includes(key),
-    ),
-  );
+      `settings: unknown field ${key}; expected seed, rounds, policy or profiles`,
+    );
   const rounds = settings.rounds ?? 12;
-  const seed = settings.seed ?? 20261108;
+  const seed = benchmarkSeed(settings.seed ?? 20261108);
   assert.ok(
     typeof rounds === 'number' &&
       Number.isSafeInteger(rounds) &&
       rounds >= 1 &&
       rounds <= 100,
-  );
-  assert.ok(
-    typeof seed === 'number' &&
-      Number.isSafeInteger(seed) &&
-      seed >= 0 &&
-      seed <= 0xffffffff,
+    'rounds: expected an integer between 1 and 100',
   );
   return {
     seed,
@@ -135,7 +135,7 @@ export function measureValidation(
   scenario: Scenario,
   seed: number,
   policy: SamplingPolicy,
-  records = 2,
+  records = defaultRecords,
 ) {
   samplingPolicy(policy);
   assert.ok(scenarios.includes(scenario));
@@ -233,7 +233,7 @@ export async function timingWorker(
     seed,
     policy,
     profiles: selectedProfiles = defaultProfiles,
-    records = 2,
+    records = defaultRecords,
   }: WorkerOptions,
 ) {
   const profiles = runtimeProfiles(selectedProfiles);
@@ -385,15 +385,15 @@ function median(values: number[]) {
 
 export async function runTiming(planPath: string, output: string) {
   const { path, value } = await readPlan(planPath);
-  const plan = record(value);
-  assert.ok(
-    Object.keys(plan).every((key) =>
+  const plan = record(value, 'plan');
+  for (const key of Object.keys(plan))
+    assert.ok(
       ['version', 'adapters', 'seed', 'rounds', 'policy', 'profiles'].includes(
         key,
       ),
-    ),
-  );
-  assert.equal(plan.version, 1);
+      `plan: unknown field ${key}; expected version, adapters, seed, rounds, policy or profiles`,
+    );
+  assert.equal(plan.version, 1, 'plan.version: expected 1');
   const { seed, rounds, policy, profiles } = timingSettings({
     seed: plan.seed,
     rounds: plan.rounds,
@@ -404,29 +404,34 @@ export async function runTiming(planPath: string, output: string) {
     Array.isArray(plan.adapters) &&
       plan.adapters.length > 0 &&
       plan.adapters.length <= 20,
+    'plan.adapters: expected between 1 and 20 adapters',
   );
-  const adapters = plan.adapters.map((value: unknown) => {
-    const adapter = record(value);
-    assert.ok(
-      Object.keys(adapter).every((key) =>
+  const adapters = plan.adapters.map((value: unknown, index: number) => {
+    const location = `plan.adapters[${index}]`;
+    const adapter = record(value, location);
+    for (const key of Object.keys(adapter))
+      assert.ok(
         ['id', 'module', 'sources', 'expect'].includes(key),
-      ),
-    );
+        `${location}: unknown field ${key}; expected id, module, sources or expect`,
+      );
+    const id = benchmarkId(adapter.id, `${location}.id`);
     assert.ok(
-      typeof adapter.id === 'string' && /^[a-zA-Z0-9_-]+$/.test(adapter.id),
+      typeof adapter.module === 'string' && adapter.module.length > 0,
+      `${location}.module: expected a nonempty local module path`,
     );
-    assert.ok(typeof adapter.module === 'string');
     assert.ok(
       Array.isArray(adapter.sources) &&
         adapter.sources.every((source: unknown) => typeof source === 'string'),
+      `${location}.sources: expected an array of local source paths`,
     );
     assert.ok(
       adapter.expect === undefined ||
         adapter.expect === 'eligible' ||
         adapter.expect === 'ineligible',
+      `${location}.expect: expected eligible or ineligible`,
     );
     return {
-      id: adapter.id,
+      id,
       module: resolve(dirname(path), adapter.module),
       sources: adapter.sources.map((source) => resolve(dirname(path), source)),
       expect: adapter.expect ?? 'eligible',
@@ -476,9 +481,9 @@ export async function runTiming(planPath: string, output: string) {
   ) {
     const mode = selection === 'preflight' ? 'preflight' : selection.scenario;
     await attest(sources, 'before worker execution');
-    let stdout: string;
+    const resultPath = join(root, `${log}.result.json`);
     try {
-      stdout = await runLogged(
+      await runLogged(
         process.execPath,
         [
           entryPath,
@@ -493,6 +498,7 @@ export async function runTiming(planPath: string, output: string) {
               ? {}
               : { records: selection.records }),
           }),
+          resultPath,
         ],
         root,
         join(root, log),
@@ -502,7 +508,9 @@ export async function runTiming(planPath: string, output: string) {
     } finally {
       await attest(sources, 'after worker execution');
     }
-    const result = record(JSON.parse(stdout) as unknown);
+    // Adapter stdout/stderr are logs; only this dedicated file carries the
+    // result. Library notices must not become false oracle failures.
+    const result = record((await readJson(resultPath, 4 * 1024 * 1024)).value);
     assert.equal(result.schemaVersion, 2);
     assert.equal(result.mode, mode);
     return result;
@@ -606,7 +614,7 @@ export async function runTiming(planPath: string, output: string) {
             profilePosition,
             position,
             usPerOperation: result.usPerOperation,
-            file: `${file}.stdout.log`,
+            file: `${file}.result.json`,
           });
         }
       }

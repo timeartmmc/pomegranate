@@ -133,6 +133,34 @@ other repository code. Canonical checks test the oracle against deliberately
 incorrect implementations and run the preflight against the installed tarball.
 Generated core modules execute in a temporary directory without dependency links.
 
+### Generated-source budgets
+
+Run `bun run bench:output` to rebuild and check the synthetic
+`shared-contract-output` case, currently version 1. Its four contracts combine
+one or 32 operations with one or eight distinct sections in a shared response
+schema. The check compares repeated compilation, exercises generated operations
+and validators, and typechecks a standalone consumer before accepting source sizes.
+
+The policy in `bench/output-growth.ts` pins the complete file inventory and
+reference UTF-8 source sizes from compiler `da32f73`. Each file receives the
+larger of 512 extra bytes or `ceil(reference bytes * 5 / 100)` extra bytes, so
+small boilerplate edits fit without changing the reference. The combined
+operation/schema growth may exceed the sum of the separate growth axes by at
+most 1,024 bytes. Counts
+include runtime helpers and comments. Review output diffs and preserve behavioral
+and type checks when changing the reference or allowances.
+
+The report includes the reference sizes, compiler and TypeScript package versions,
+and the benchmark tree identity. A version is `null` for a custom entry without
+package version metadata. Failed checks retain their scratch directory with
+inputs, generated files, available logs and `failure.json`; the error names that
+directory. Successful checks remove scratch output.
+
+Canonical installed-package verification runs the same family through a copied
+harness, the installed compiler and the consumer's TypeScript. These limits cover
+deterministic generated source; bundled size, typecheck cost, latency, allocations
+and broader performance acceptance remain unqualified.
+
 ### Artifact preparation
 
 To prepare complete local package artifacts, create a JSON plan under ignored
@@ -170,6 +198,8 @@ qualified generated files, and installation/preflight logs. Successful preparati
 writes `report.json`, which records hashes for archives, installed code, the harness
 and generated outputs.
 It also records tool versions and `performance: "unmeasured"`.
+Preparation reports use `schemaVersion: 2`; their `controller` identity uses the
+same relative-path file inventory and tree hash as timing source fingerprints.
 Plan syntax and schema errors fail before creating
 the run directory; failures after a run starts retain available evidence and
 `failure.json`. Preparation refuses to reuse an existing output directory. Use a
@@ -287,7 +317,9 @@ fail the run. Expected controls are not timed. Other preflight failures appear
 as ineligible adapters in a partial report, and the CLI exits nonzero.
 
 The fresh output directory retains the plan, preflight evidence, raw process
-observations, source identities and `report.json`. Measured-worker execution or
+observations, source identities and `report.json`. Workers write results to
+separate `*.result.json` files; stdout and stderr are retained as logs, so adapter
+logging does not interfere with qualification or measurement. Measured-worker execution or
 identity failures retain logs and `failure.json` with the failed stage and error.
 Summaries report the median of process means and observed min/max in microseconds
 per operation. These are local exploratory measurements, with no confidence
@@ -326,7 +358,9 @@ node bench/analyze-calibration.ts .local/study.json .local/calibration-analysis
 
 The output directory must be new and its parent must exist. The analyzer checks
 study, host, source and adapter identities before pairing process means within
-their original randomized round. It reports conditional median intervals with a
+their original randomized round. Every comparison must declare the reference's
+validator sources; repeat wrappers may use different entry modules. Source lists
+remain caller declarations, not discovered import graphs. It reports conditional median intervals with a
 correction across the declared comparison/profile cells in each session.
 Measurement windows remain observations within one process. If no finite interval
 meets the declared family level, bounds are `null` and the signal is `unresolved`.

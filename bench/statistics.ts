@@ -4,7 +4,7 @@ export const calibrationMethod = Object.freeze({
   id: 'paired-median-sign-v1',
   status: 'unqualified candidate detector; no product acceptance verdict',
   estimator: 'median paired process cost ratio minus one',
-  familyAlpha: { numerator: 1, denominator: 20 },
+  familyAlpha: Object.freeze({ numerator: 1, denominator: 20 }),
   correction:
     'Bonferroni across the predeclared comparisons and profiles within each session',
   assumption:
@@ -44,9 +44,14 @@ export function pairedMedianInterval(
   let tail = 0n;
   let acceptedTail = 0n;
   let rank = 0;
+  const alpha = calibrationMethod.familyAlpha;
   for (let j = 0; j < Math.floor(n / 2); j++) {
     tail += choose;
-    if (2n * tail * 20n * BigInt(familySize) > denominator) break;
+    if (
+      2n * tail * BigInt(alpha.denominator) * BigInt(familySize) >
+      BigInt(alpha.numerator) * denominator
+    )
+      break;
     rank = j + 1;
     acceptedTail = tail;
     choose = (choose * BigInt(n - j)) / BigInt(j + 1);
@@ -54,6 +59,8 @@ export function pairedMedianInterval(
   const middle = Math.floor(n / 2);
   const estimate =
     n % 2 ? sorted[middle]! : sorted[middle - 1]! / 2 + sorted[middle]! / 2;
+  // With too few pairs, null bounds represent the full real line: coverage 1
+  // is vacuous and the signal stays unresolved, not a finite detection bound.
   const lower = rank ? sorted[rank - 1]! : null;
   const upper = rank ? sorted[n - rank]! : null;
   return {

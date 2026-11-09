@@ -148,10 +148,6 @@ void describe('fixed-plan calibration analysis', () => {
         (report.observations as unknown[]).pop();
       },
       (report) => {
-        const rows = report.observations as unknown[];
-        rows[0] = rows[1];
-      },
-      (report) => {
         record((report.observations as unknown[])[0]).usPerOperation = NaN;
       },
       (report) => {
@@ -186,6 +182,36 @@ void describe('fixed-plan calibration analysis', () => {
       alter(report);
       assert.throws(() => calibrationSession(report, plan, 11, study));
     }
+  });
+
+  void test('repeat controls cannot substitute different validator sources', () => {
+    const report = structuredClone(reports[0]!);
+    const extra = report.qualified.find(({ id }) => id === 'extra')!;
+    extra.sources = [join(root, 'different-generated-build')];
+    assert.throws(
+      () => calibrationSession(report, plan, 11, study),
+      /same validator sources as the reference/,
+    );
+  });
+
+  void test('duplicate pairs and duplicate adapter positions fail their own diagnostics', () => {
+    const paired = structuredClone(reports[0]!);
+    const original = paired.observations[0]!;
+    paired.observations[0] = {
+      ...paired.observations[1]!,
+      file: original.file,
+      position: original.position,
+    };
+    assert.throws(
+      () => calibrationSession(paired, plan, 11, study),
+      /duplicate paired observation/,
+    );
+    const positioned = structuredClone(reports[0]!);
+    positioned.observations[1]!.position = positioned.observations[0]!.position;
+    assert.throws(
+      () => calibrationSession(positioned, plan, 11, study),
+      /duplicate adapter position/,
+    );
   });
 
   void test('a copied analyzer records its own provenance while preserving collection identities', async () => {
@@ -239,27 +265,42 @@ void describe('fixed-plan calibration analysis', () => {
   });
 
   void test('study policy, comparisons and session seeds must be explicit and unambiguous', () => {
-    for (const change of [
-      { rounds: null },
-      { policy: null },
-      { profiles: null },
-      { comparisons: [{ id: 'reference', kind: 'identical' }] },
-      { comparisons: [{ id: 'extra', kind: 'repeat', every: 0 }] },
-      {
-        sessions: [
-          { id: 'a', seed: null, report: 'a' },
-          { id: 'b', seed: 1, report: 'b' },
-        ],
-      },
-      {
-        sessions: [
-          { id: 'a', seed: 1, report: 'a' },
-          { id: 'b', seed: 1, report: 'b' },
-        ],
-      },
-    ])
-      assert.throws(() =>
-        calibrationPlan({ ...record(study.value), ...change }),
+    for (const [change, message] of [
+      [{ round: 12 }, /study: expected version, rounds/],
+      [{ rounds: null }, /study.rounds: an explicit integer/],
+      [{ policy: null }, /study.policy: an explicit sampling policy/],
+      [{ profiles: null }, /study.profiles: explicit runtime profiles/],
+      [{ reference: 'zod.v4' }, /study.reference: expected ASCII letters/],
+      [
+        { comparisons: [{ id: 'reference', kind: 'identical' }] },
+        /study: adapter IDs must be unique/,
+      ],
+      [
+        { comparisons: [{ id: 'extra', kind: 'repeat', every: 0 }] },
+        /study.comparisons\[0\].every: expected an integer between 1 and 1024/,
+      ],
+      [
+        {
+          sessions: [
+            { id: 'a', seed: null, report: 'a' },
+            { id: 'b', seed: 1, report: 'b' },
+          ],
+        },
+        /study.sessions\[0\].seed: expected an integer/,
+      ],
+      [
+        {
+          sessions: [
+            { id: 'a', seed: 1, report: 'a' },
+            { id: 'b', seed: 1, report: 'b' },
+          ],
+        },
+        /study.sessions: seeds must be unique/,
+      ],
+    ] as const)
+      assert.throws(
+        () => calibrationPlan({ ...record(study.value), ...change }),
+        message,
       );
   });
 });

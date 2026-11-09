@@ -13,6 +13,7 @@ import {
   measureValidation,
   runTiming,
   samplingPolicy,
+  timingSettings,
   timingWorker,
   workerDeadline,
 } from '../bench/timing.ts';
@@ -25,16 +26,25 @@ const shortPolicy = { warmupMs: 0, sampleMs: 1, samples: 2, batchSize: 128 };
 
 void test('sampling policy requires bounded explicit durations and counts', () => {
   assert.deepEqual(samplingPolicy(defaultPolicy), defaultPolicy);
-  for (const value of [
-    {},
-    { ...defaultPolicy, extra: 1 },
-    { ...defaultPolicy, sampleMs: 0 },
-    { ...defaultPolicy, samples: 1.5 },
-    { ...defaultPolicy, batchSize: 0 },
-    { ...defaultPolicy, warmupMs: -1 },
-    { ...defaultPolicy, sampleMs: Infinity },
-  ])
-    assert.throws(() => samplingPolicy(value));
+  for (const [value, message] of [
+    [{}, /policy: expected warmupMs/],
+    [{ ...defaultPolicy, extra: 1 }, /policy: expected warmupMs/],
+    [
+      { ...defaultPolicy, sampleMs: 0 },
+      /policy.sampleMs: expected an integer between 1 and 10000/,
+    ],
+    [{ ...defaultPolicy, samples: 1.5 }, /policy.samples:/],
+    [{ ...defaultPolicy, batchSize: 0 }, /policy.batchSize:/],
+    [{ ...defaultPolicy, warmupMs: -1 }, /policy.warmupMs:/],
+    [{ ...defaultPolicy, sampleMs: Infinity }, /policy.sampleMs:/],
+  ] as const)
+    assert.throws(() => samplingPolicy(value), message);
+  for (const [value, message] of [
+    [{ round: 12 }, /settings: unknown field round/],
+    [{ rounds: 0 }, /rounds: expected an integer between 1 and 100/],
+    [{ seed: -1 }, /seed: expected an integer between 0 and 4294967295/],
+  ] as const)
+    assert.throws(() => timingSettings(value), message);
 });
 
 void test('every accepted duration fits its worker deadline with setup allowance', () => {
@@ -53,6 +63,25 @@ void test('timing plans reject case aliases, oversized input and invalid UTF-8 b
   const root = await temporary(t);
   const plan = join(root, 'plan.json');
   const output = join(root, 'run');
+  const adapter = { id: 'valid', module: './never-read.mjs', sources: [] };
+  for (const [value, message] of [
+    [
+      { version: 1, round: 12, adapters: [adapter] },
+      /plan: unknown field round/,
+    ],
+    [
+      { version: 1, adapters: [{ ...adapter, id: 'zod.v4' }] },
+      /plan.adapters\[0\].id: expected ASCII letters/,
+    ],
+    [
+      { version: 1, adapters: [{ ...adapter, sources: 'bad' }] },
+      /plan.adapters\[0\].sources: expected an array/,
+    ],
+  ] as const) {
+    await writeFile(plan, JSON.stringify(value));
+    await assert.rejects(runTiming(plan, output), message);
+    await assert.rejects(stat(output), { code: 'ENOENT' });
+  }
   await writeFile(
     plan,
     JSON.stringify({
@@ -220,6 +249,61 @@ void describe('timing validates actual seeded inputs and keeps complete process 
       8,
       'retain both qualifications and every measurement',
     );
+  });
+
+  void test('adapter logging stays separate from qualification and measurement results', async () => {
+    const logging = join(root, 'logging.mjs');
+    await writeFile(
+      logging,
+      importLine +
+        `
+      console.log('validator ready');
+      export const create=()=>({
+        identity:{name:'logging'},
+        validate:responseSchemas.RecordList.safeParse,
+        dispose(){console.log('validator disposed');console.error('cleanup diagnostic');}
+      });
+    `,
+    );
+    const plan = join(root, 'logging-plan.json');
+    await writeFile(
+      plan,
+      JSON.stringify({
+        version: 1,
+        rounds: 1,
+        policy: shortPolicy,
+        profiles: [{ scenario: 'parsed-valid', records: 2 }],
+        adapters: [
+          { id: 'logging', module: logging, sources: generatedSources },
+        ],
+      }),
+    );
+    const output = join(root, 'logging-run');
+    const report = await runTiming(plan, output);
+    assert.equal(report.status, 'complete');
+    assert.deepEqual(report.ineligible, []);
+    assert.equal(report.observations.length, 1);
+    const raw = record(
+      JSON.parse(
+        await readFile(join(output, report.observations[0]!.file), 'utf8'),
+      ) as unknown,
+    );
+    assert.equal(raw.mode, 'parsed-valid');
+    for (const prefix of [
+      'preflight-logging',
+      'measurement-0-parsed-valid-2-logging',
+    ]) {
+      const stdout = await readFile(
+        join(output, `${prefix}.stdout.log`),
+        'utf8',
+      );
+      assert.match(stdout, /validator ready/);
+      assert.match(stdout, /validator disposed/);
+      assert.match(
+        await readFile(join(output, `${prefix}.stderr.log`), 'utf8'),
+        /cleanup diagnostic/,
+      );
+    }
   });
 
   void test('a missing shared source fails setup without misclassifying a valid adapter', async () => {

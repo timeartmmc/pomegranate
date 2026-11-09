@@ -7,6 +7,8 @@ import {
 } from './cases/json-response-runtime.ts';
 import {
   benchmarkDirectory,
+  benchmarkId,
+  benchmarkSeed,
   createRunDirectory,
   publishReport,
   readJson,
@@ -18,20 +20,15 @@ import {
 import { calibrationMethod, pairedMedianInterval } from './statistics.ts';
 import { fingerprintSources, timingSettings } from './timing.ts';
 
-function array(value: unknown): unknown[] {
-  assert.ok(Array.isArray(value));
-  return value;
-}
-
-function id(value: unknown): string {
-  assert.ok(typeof value === 'string' && /^[a-zA-Z0-9_-]+$/.test(value));
+function array(value: unknown, location = 'value'): unknown[] {
+  assert.ok(Array.isArray(value), `${location}: expected an array`);
   return value;
 }
 
 export function calibrationPlan(value: unknown) {
   // Version 1 fixes paired-median-sign-v1 and its family policy. Changing the
   // method requires a new study version, not reinterpretation of old plans.
-  const plan = record(value);
+  const plan = record(value, 'study');
   assert.deepEqual(
     Object.keys(plan).sort(),
     [
@@ -44,67 +41,125 @@ export function calibrationPlan(value: unknown) {
       'controls',
       'sessions',
     ].sort(),
+    'study: expected version, rounds, policy, profiles, reference, comparisons, controls and sessions only',
   );
-  assert.equal(plan.version, 1);
+  assert.equal(plan.version, 1, 'study.version: expected 1');
   const settings = timingSettings({
     rounds: plan.rounds,
     policy: plan.policy,
     profiles: plan.profiles,
   });
-  assert.equal(settings.rounds, plan.rounds);
-  assert.deepEqual(settings.policy, plan.policy);
-  assert.deepEqual(settings.profiles, plan.profiles);
-  const reference = id(plan.reference);
-  const comparisons = array(plan.comparisons).map((value) => {
-    const entry = record(value);
-    assert.ok(entry.kind === 'identical' || entry.kind === 'repeat');
-    assert.deepEqual(
-      Object.keys(entry).sort(),
-      (entry.kind === 'repeat'
-        ? ['id', 'kind', 'every']
-        : ['id', 'kind']
-      ).sort(),
-    );
-    if (entry.kind === 'repeat')
+  assert.equal(
+    settings.rounds,
+    plan.rounds,
+    'study.rounds: an explicit integer between 1 and 100 is required',
+  );
+  assert.deepEqual(
+    settings.policy,
+    plan.policy,
+    'study.policy: an explicit sampling policy is required',
+  );
+  assert.deepEqual(
+    settings.profiles,
+    plan.profiles,
+    'study.profiles: explicit runtime profiles are required',
+  );
+  const reference = benchmarkId(plan.reference, 'study.reference');
+  const comparisons = array(plan.comparisons, 'study.comparisons').map(
+    (value, index) => {
+      const location = `study.comparisons[${index}]`;
+      const entry = record(value, location);
       assert.ok(
-        typeof entry.every === 'number' &&
-          Number.isSafeInteger(entry.every) &&
-          entry.every >= 1 &&
-          entry.every <= 1024,
+        entry.kind === 'identical' || entry.kind === 'repeat',
+        `${location}.kind: expected identical or repeat`,
       );
-    return {
-      id: id(entry.id),
-      kind: entry.kind,
-      every: entry.kind === 'repeat' ? (entry.every as number) : 0,
-    };
-  });
-  assert.ok(comparisons.length >= 1 && comparisons.length <= 18);
+      assert.deepEqual(
+        Object.keys(entry).sort(),
+        (entry.kind === 'repeat'
+          ? ['id', 'kind', 'every']
+          : ['id', 'kind']
+        ).sort(),
+        `${location}: expected id, kind${entry.kind === 'repeat' ? ' and every' : ''} only`,
+      );
+      if (entry.kind === 'repeat')
+        assert.ok(
+          typeof entry.every === 'number' &&
+            Number.isSafeInteger(entry.every) &&
+            entry.every >= 1 &&
+            entry.every <= 1024,
+          `${location}.every: expected an integer between 1 and 1024`,
+        );
+      return {
+        id: benchmarkId(entry.id, `${location}.id`),
+        kind: entry.kind,
+        every: entry.kind === 'repeat' ? (entry.every as number) : 0,
+      };
+    },
+  );
+  assert.ok(
+    comparisons.length >= 1 && comparisons.length <= 18,
+    'study.comparisons: expected between 1 and 18 comparisons',
+  );
   assert.ok(
     comparisons.some(({ kind }) => kind === 'identical'),
-    'an identical-artifact control is required',
+    'study.comparisons: an identical-artifact control is required',
   );
-  const controls = array(plan.controls).map(id);
-  assert.ok(controls.length >= 1 && controls.length <= 18);
+  const controls = array(plan.controls, 'study.controls').map((value, index) =>
+    benchmarkId(value, `study.controls[${index}]`),
+  );
+  assert.ok(
+    controls.length >= 1 && controls.length <= 18,
+    'study.controls: expected between 1 and 18 control IDs',
+  );
   const ids = [reference, ...comparisons.map(({ id }) => id), ...controls];
-  assert.ok(ids.length <= 20);
-  assert.equal(new Set(ids.map((id) => id.toLowerCase())).size, ids.length);
-  const sessions = array(plan.sessions).map((value) => {
-    const session = record(value);
-    assert.deepEqual(Object.keys(session).sort(), ['id', 'report', 'seed']);
-    assert.ok(typeof session.report === 'string' && session.report.length > 0);
-    const { seed } = timingSettings({ seed: session.seed });
-    assert.equal(session.seed, seed);
-    return { id: id(session.id), report: session.report, seed };
-  });
-  assert.ok(sessions.length >= 2 && sessions.length <= 20);
+  assert.ok(
+    ids.length <= 20,
+    'study: expected at most 20 adapter IDs in total',
+  );
+  assert.equal(
+    new Set(ids.map((id) => id.toLowerCase())).size,
+    ids.length,
+    'study: adapter IDs must be unique ignoring ASCII case',
+  );
+  const sessions = array(plan.sessions, 'study.sessions').map(
+    (value, index) => {
+      const location = `study.sessions[${index}]`;
+      const session = record(value, location);
+      assert.deepEqual(
+        Object.keys(session).sort(),
+        ['id', 'report', 'seed'],
+        `${location}: expected id, report and seed only`,
+      );
+      assert.ok(
+        typeof session.report === 'string' && session.report.length > 0,
+        `${location}.report: expected a nonempty local report path`,
+      );
+      const seed = benchmarkSeed(session.seed, `${location}.seed`);
+      return {
+        id: benchmarkId(session.id, `${location}.id`),
+        report: session.report,
+        seed,
+      };
+    },
+  );
+  assert.ok(
+    sessions.length >= 2 && sessions.length <= 20,
+    'study.sessions: expected between 2 and 20 sessions',
+  );
   assert.equal(
     new Set(sessions.map(({ id }) => id.toLowerCase())).size,
     sessions.length,
+    'study.sessions: IDs must be unique ignoring ASCII case',
   );
-  assert.equal(new Set(sessions.map(({ seed }) => seed)).size, sessions.length);
+  assert.equal(
+    new Set(sessions.map(({ seed }) => seed)).size,
+    sessions.length,
+    'study.sessions: seeds must be unique',
+  );
   assert.equal(
     new Set(sessions.map(({ report }) => report)).size,
     sessions.length,
+    'study.sessions: report paths must be unique',
   );
   return {
     reference,
@@ -140,7 +195,9 @@ export function calibrationSession(
   assert.deepEqual(report.ineligible, []);
   const controls = array(report.controls).map((value) => record(value));
   assert.deepEqual(
-    controls.map((entry) => id(entry.id)).sort(),
+    controls
+      .map((entry) => benchmarkId(entry.id, 'report.controls[].id'))
+      .sort(),
     [...plan.controls].sort(),
   );
   for (const control of controls)
@@ -155,7 +212,9 @@ export function calibrationSession(
   const qualified = array(report.qualified).map((value) => record(value));
   const expectedIds = [plan.reference, ...plan.comparisons.map(({ id }) => id)];
   assert.deepEqual(
-    qualified.map((entry) => id(entry.id)).sort(),
+    qualified
+      .map((entry) => benchmarkId(entry.id, 'report.qualified[].id'))
+      .sort(),
     [...expectedIds].sort(),
   );
   const identities = new Map(
@@ -178,15 +237,21 @@ export function calibrationSession(
   assert.equal(base.repeatEvery, '0');
   for (const comparison of plan.comparisons) {
     const identity = identities.get(comparison.id)!;
+    const entry = qualified.find((entry) => entry.id === comparison.id)!;
+    // A different wrapper injects repeat work, but its underlying validator
+    // sources must stay fixed or build differences confound that effect.
+    assert.deepEqual(
+      entry.sources,
+      referenceEntry.sources,
+      'calibration controls must declare the same validator sources as the reference',
+    );
     if (comparison.kind === 'identical') {
       assert.deepEqual(
         identity,
         reference,
         'A/A controls must have identical factories and identities',
       );
-      const entry = qualified.find((entry) => entry.id === comparison.id)!;
       assert.equal(entry.module, referenceEntry.module);
-      assert.deepEqual(entry.sources, referenceEntry.sources);
     } else {
       const { adapter, moduleSha256, ...common } = identity;
       const {

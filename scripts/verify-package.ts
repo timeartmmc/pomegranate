@@ -373,6 +373,33 @@ try {
     join(benchmarkHarness, 'package.json'),
     '{"private":true,"type":"module"}\n',
   );
+  const outputGrowth = record(
+    json(
+      (
+        await run(
+          process.execPath,
+          [
+            join(benchmarkHarness, 'bench/check-output.ts'),
+            join(installed, 'dist/index.js'),
+            join(consumer, 'node_modules/typescript/bin/tsc'),
+          ],
+          scratch,
+        )
+      ).stdout,
+    ),
+  );
+  assert.equal(outputGrowth.sourceBudgets, 'passed');
+  assert.equal(outputGrowth.generatedTypes, 'verified');
+  assert.equal(outputGrowth.behavior, 'verified');
+  assert.deepEqual(record(outputGrowth.case), {
+    id: 'shared-contract-output',
+    version: 1,
+  });
+  assert.ok(Array.isArray(outputGrowth.cells));
+  assert.equal(outputGrowth.cells.length, 4);
+  console.log(
+    'Generated-source output budgets passed: four qualified contracts, isolated installed compiler and TypeScript consumer',
+  );
   const benchmarkSettings = join(scratch, 'benchmark-settings.json');
   const benchmarkProfiles = [
     { scenario: 'parsed-valid', records: 0 },

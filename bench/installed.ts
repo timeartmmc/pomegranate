@@ -49,10 +49,9 @@ export async function installedTree(root: string) {
 // require updating another controller's hand-maintained source-file list.
 export async function benchmarkSources(directory = benchmarkDirectory) {
   const tree = await installedTree(directory);
-  return tree.files.map((file) => {
+  for (const file of tree.files)
     assert.ok('sha256' in file, 'benchmark source files must not be links');
-    return { name: file.path, sha256: file.sha256 };
-  });
+  return tree;
 }
 
 export async function installedIdentity(

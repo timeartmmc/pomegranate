@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { runTiming, samplingPolicy, timingWorker } from './timing.ts';
-import { record } from './controller.ts';
-import { scenarios, runtimeProfiles } from './cases/json-response-runtime.ts';
+import { benchmarkSeed, record, writeJson } from './controller.ts';
+import { runtimeProfiles } from './cases/json-response-runtime.ts';
 import type { Scenario } from './cases/json-response-runtime.ts';
 
 if (process.argv[2] === '--worker') {
-  const [, , , adapter, mode, requestText] = process.argv;
-  assert.ok(adapter && mode && requestText && process.argv.length === 6);
-  assert.ok(mode === 'preflight' || scenarios.includes(mode as Scenario));
+  const [, , , adapter, mode, requestText, resultPath] = process.argv;
+  assert.ok(
+    adapter && mode && requestText && resultPath && process.argv.length === 7,
+  );
   const request = record(JSON.parse(requestText) as unknown);
   assert.deepEqual(
     Object.keys(request).sort(),
@@ -18,13 +19,7 @@ if (process.argv[2] === '--worker') {
       ...(mode === 'preflight' ? [] : ['records']),
     ].sort(),
   );
-  const seed = request.seed;
-  assert.ok(
-    typeof seed === 'number' &&
-      Number.isSafeInteger(seed) &&
-      seed >= 0 &&
-      seed <= 0xffffffff,
-  );
+  const seed = benchmarkSeed(request.seed, 'worker.seed');
   const profile =
     mode === 'preflight'
       ? undefined
@@ -35,7 +30,7 @@ if (process.argv[2] === '--worker') {
     profiles: runtimeProfiles(request.profiles),
     ...(profile ? { records: profile.records } : {}),
   });
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  await writeJson(resultPath, result);
 } else {
   const [plan, output] = process.argv.slice(2);
   assert.ok(

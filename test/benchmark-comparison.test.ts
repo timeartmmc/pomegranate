@@ -89,6 +89,12 @@ void describe('artifact-to-timing comparison', () => {
     assert.equal(report.preparation.behavior, 'verified');
     assert.equal(report.timing.observations.length, 18);
     assert.equal(report.timing.qualified.length, 3);
+    const controller = report.controller[0]!;
+    assert.equal(report.preparation.controller.sha256, controller.sha256);
+    assert.deepEqual(
+      report.timing.sources.find(({ path }) => path === controller.path),
+      controller,
+    );
     for (const artifact of report.preparation.artifacts) {
       const consumer = join(output, 'prepared', artifact.role);
       assert.equal(
@@ -145,7 +151,7 @@ void describe('artifact-to-timing comparison', () => {
     assert.equal(digest(await readFile(input.archive)), input.artifact.sha256);
   });
 
-  void test('bad settings fail before creating output; a bad archive keeps failure evidence without timing', async () => {
+  void test('bad settings and plans fail before creating output; a bad archive keeps failure evidence without timing', async () => {
     const input = await fixture('invalid');
     const output = join(input.directory, 'run');
     for (const invalid of [
@@ -156,6 +162,15 @@ void describe('artifact-to-timing comparison', () => {
     ])
       await assert.rejects(compareArtifacts(input.plan, output, invalid));
     await assert.rejects(stat(output), { code: 'ENOENT' });
+    await assert.rejects(
+      compareArtifacts(join(input.directory, 'missing.json'), output, settings),
+      { code: 'ENOENT' },
+    );
+    for (const source of ['{', '{"version":2}', Buffer.from([0xff])]) {
+      await writeFile(input.plan, source);
+      await assert.rejects(compareArtifacts(input.plan, output, settings));
+      await assert.rejects(stat(output), { code: 'ENOENT' });
+    }
     await writeFile(
       input.plan,
       JSON.stringify({

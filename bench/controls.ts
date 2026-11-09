@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { inspect } from 'node:util';
 import { record } from './controller.ts';
 import type { ValidationAdapter } from './timing.ts';
 
@@ -30,34 +29,13 @@ export function repeatValidation(
     },
     async dispose() {
       try {
-        // Observe the declared outputs without imposing JSON serialization on
-        // arbitrary Error metadata or invoking adapter inspection hooks.
-        const outputs = retained.map((value) => {
-          if (value === undefined) return value;
-          const result = record(value);
-          if (result.success === true) return { data: result.data };
-          assert.equal(result.success, false);
-          const issues = record(result.error).issues;
-          assert.ok(Array.isArray(issues));
-          return {
-            issues: issues.map((value: unknown) => {
-              const issue = record(value);
-              return { path: issue.path, message: issue.message };
-            }),
-          };
-        });
-        assert.ok(
-          inspect(
-            { calls, extras, outputs },
-            {
-              depth: null,
-              customInspect: false,
-              getters: false,
-              maxArrayLength: null,
-              maxStringLength: null,
-            },
-          ).length > 0,
-        );
+        // Keep extra results live through the timed windows. Observing their
+        // verdict needs neither formatting nor traversal of adapter metadata.
+        for (const value of retained) {
+          if (value === undefined) continue;
+          const result = record(value, 'extra validation result');
+          assert.equal(typeof result.success, 'boolean');
+        }
       } finally {
         await base.dispose?.();
       }

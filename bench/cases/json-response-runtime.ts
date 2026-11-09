@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { benchmarkSeed, record } from '../controller.ts';
 import { jsonResponseExpected, jsonResponseInput } from './json-response.ts';
 
 // The contract/preflight case remains v2. This separately versions measured
@@ -20,14 +21,15 @@ export interface RuntimeProfile {
   readonly records: number;
 }
 export const poolSize = 64;
+export const defaultRecords = 2;
 // At most 16 independent invalid leaves. This workflow requires all those paths
 // and stays below POM's documented 100-issue cap; overflow is a different profile.
 const manyErrors = 16;
 
 export const defaultProfiles: readonly RuntimeProfile[] = Object.freeze([
-  { scenario: 'parsed-valid', records: 2 },
-  { scenario: 'json-valid', records: 2 },
-  { scenario: 'parsed-invalid-last', records: 2 },
+  { scenario: 'parsed-valid', records: defaultRecords },
+  { scenario: 'json-valid', records: defaultRecords },
+  { scenario: 'parsed-invalid-last', records: defaultRecords },
 ]);
 
 export const collectionProfiles: readonly RuntimeProfile[] = Object.freeze(
@@ -51,31 +53,36 @@ export function runtimeProfiles(value: unknown): RuntimeProfile[] {
     Array.isArray(value) && value.length > 0 && value.length <= 32,
     'profiles: expected between 1 and 32 explicit selections',
   );
-  const profiles = value.map((entry: unknown): RuntimeProfile => {
-    assert.ok(
-      entry !== null && typeof entry === 'object' && !Array.isArray(entry),
-    );
-    assert.deepEqual(Object.keys(entry).sort(), ['records', 'scenario']);
-    const scenario: unknown = Reflect.get(entry, 'scenario');
-    const records: unknown = Reflect.get(entry, 'records');
-    assert.ok(
-      typeof scenario === 'string' && scenarios.includes(scenario as Scenario),
-      'unknown runtime scenario',
-    );
-    assert.ok(
-      typeof records === 'number' &&
-        Number.isSafeInteger(records) &&
-        records >= 0 &&
-        records <= 128,
-      'records: expected an integer between 0 and 128',
-    );
-    assert.ok(
-      !scenario.startsWith('parsed-invalid-') ||
-        records >= (scenario === 'parsed-invalid-many' ? 2 : 1),
-      'invalid profiles require records, and many requires at least two',
-    );
-    return { scenario: scenario as Scenario, records };
-  });
+  const profiles = value.map(
+    (value: unknown, index: number): RuntimeProfile => {
+      const location = `profiles[${index}]`;
+      const entry = record(value, location);
+      assert.deepEqual(
+        Object.keys(entry).sort(),
+        ['records', 'scenario'],
+        `${location}: expected records and scenario only`,
+      );
+      const { scenario, records } = entry;
+      assert.ok(
+        typeof scenario === 'string' &&
+          scenarios.includes(scenario as Scenario),
+        `${location}.scenario: expected ${scenarios.join(', ')}`,
+      );
+      assert.ok(
+        typeof records === 'number' &&
+          Number.isSafeInteger(records) &&
+          records >= 0 &&
+          records <= 128,
+        `${location}.records: expected an integer between 0 and 128`,
+      );
+      assert.ok(
+        !scenario.startsWith('parsed-invalid-') ||
+          records >= (scenario === 'parsed-invalid-many' ? 2 : 1),
+        `${location}: invalid profiles require records, and many requires at least two`,
+      );
+      return { scenario: scenario as Scenario, records };
+    },
+  );
   assert.equal(
     new Set(profiles.map(profileKey)).size,
     profiles.length,
@@ -103,7 +110,7 @@ function repeat<T extends { id: number; label: string }>(
 
 export function runtimePool(seed: number, profile: RuntimeProfile) {
   runtimeProfiles([profile]);
-  assert.ok(Number.isSafeInteger(seed) && seed >= 0 && seed <= 0xffffffff);
+  benchmarkSeed(seed);
   return Array.from({ length: poolSize }, (_, variant) => {
     const source = jsonResponseInput();
     const visible = jsonResponseExpected();

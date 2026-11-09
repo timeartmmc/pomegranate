@@ -22,6 +22,25 @@ export function record(
   return value as Record<string, unknown>;
 }
 
+export function benchmarkSeed(value: unknown, location = 'seed'): number {
+  assert.ok(
+    typeof value === 'number' &&
+      Number.isSafeInteger(value) &&
+      value >= 0 &&
+      value <= 0xffffffff,
+    `${location}: expected an integer between 0 and 4294967295`,
+  );
+  return value;
+}
+
+export function benchmarkId(value: unknown, location: string): string {
+  assert.ok(
+    typeof value === 'string' && /^[a-zA-Z0-9_-]+$/.test(value),
+    `${location}: expected ASCII letters, digits, underscores or hyphens`,
+  );
+  return value;
+}
+
 export const sha256 = (source: string | Buffer) =>
   createHash('sha256').update(source).digest('hex');
 

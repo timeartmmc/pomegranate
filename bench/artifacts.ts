@@ -121,12 +121,25 @@ export async function snapshotArtifact(
   };
 }
 
+export async function readArtifactPlan(planPath: string) {
+  const { path: manifest, value } = await readPlan(planPath);
+  return artifactPlan(value, dirname(manifest));
+}
+
 export async function prepareArtifacts(
   planPath: string,
   outputDirectory: string,
 ) {
-  const { path: manifest, value } = await readPlan(planPath);
-  const specs = artifactPlan(value, dirname(manifest));
+  return prepareArtifactSpecs(
+    await readArtifactPlan(planPath),
+    outputDirectory,
+  );
+}
+
+export async function prepareArtifactSpecs(
+  specs: readonly ArtifactSpec[],
+  outputDirectory: string,
+) {
   // Capture the trusted harness once, before installing or executing any artifact.
   // Every consumer receives these same bytes even if the checkout changes later.
   const harness = await Promise.all(
@@ -318,17 +331,14 @@ export async function prepareArtifacts(
       'benchmark sources changed during preparation',
     );
     const report = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       behavior: 'verified',
       performance: 'unmeasured',
       node: process.version,
       platform: process.platform,
       arch: process.arch,
       npm,
-      controller: {
-        sha256: sha256(JSON.stringify(controllerFiles)),
-        files: controllerFiles,
-      },
+      controller: controllerFiles,
       harness: {
         sha256: sha256(JSON.stringify(harnessFiles)),
         files: harnessFiles,
