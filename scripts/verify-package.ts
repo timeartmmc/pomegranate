@@ -345,8 +345,9 @@ try {
     { code: 'ENOENT' },
   );
   const installed = join(consumer, 'node_modules/pomegranate-compiler');
-  // The same complete archive exercises all explicit roles. This qualifies
-  // artifact provisioning and installed behavior, not measurement noise or speed.
+  // The same complete archive exercises all roles through preparation and timing.
+  // A copied harness outside the checkout must work without its node_modules or
+  // private experiment setup. This checks behavior, never a speed threshold.
   const benchmarkArtifact = {
     path: tarball,
     sha256: createHash('sha256')
@@ -363,21 +364,55 @@ try {
       releaseAnchor: benchmarkArtifact,
     }),
   );
-  const benchmarkPreparation = record(
+  const benchmarkHarness = join(scratch, 'benchmark-harness');
+  await mkdir(benchmarkHarness);
+  await cp(join(repo, 'bench'), join(benchmarkHarness, 'bench'), {
+    recursive: true,
+  });
+  await writeFile(
+    join(benchmarkHarness, 'package.json'),
+    '{"private":true,"type":"module"}\n',
+  );
+  const benchmarkSettings = join(scratch, 'benchmark-settings.json');
+  const benchmarkProfiles = [
+    { scenario: 'parsed-valid', records: 0 },
+    { scenario: 'json-valid', records: 16 },
+    { scenario: 'parsed-valid', records: 128 },
+    { scenario: 'parsed-invalid-many', records: 128 },
+  ];
+  await writeFile(
+    benchmarkSettings,
+    JSON.stringify({
+      rounds: 1,
+      profiles: benchmarkProfiles,
+      policy: { warmupMs: 0, sampleMs: 1, samples: 1, batchSize: 16 },
+    }),
+  );
+  const benchmarkComparison = record(
     json(
       (
         await run(
           process.execPath,
           [
-            join(repo, 'bench/prepare.ts'),
+            join(benchmarkHarness, 'bench/compare.ts'),
             benchmarkPlan,
-            join(scratch, 'benchmark-prepared'),
+            join(scratch, 'benchmark-comparison'),
+            benchmarkSettings,
           ],
           scratch,
         )
       ).stdout,
     ),
   );
+  assert.equal(benchmarkComparison.status, 'complete');
+  const benchmarkTiming = record(benchmarkComparison.timing);
+  assert.ok(Array.isArray(benchmarkTiming.observations));
+  assert.equal(
+    benchmarkTiming.observations.length,
+    benchmarkProfiles.length * 3,
+  );
+  assert.deepEqual(benchmarkTiming.profiles, benchmarkProfiles);
+  const benchmarkPreparation = record(benchmarkComparison.preparation);
   assert.equal(benchmarkPreparation.behavior, 'verified');
   assert.equal(benchmarkPreparation.performance, 'unmeasured');
   const benchmarkArtifacts = benchmarkPreparation.artifacts;
@@ -407,7 +442,7 @@ try {
     1,
   );
   console.log(
-    'Benchmark artifact preparation passed: three separate installed consumers; timing unmeasured',
+    'Benchmark comparison passed: isolated harness, three installed artifacts and selected collection/error profiles; performance acceptance unqualified',
   );
   assert.equal(await readFile(join(installed, 'LICENSE'), 'utf8'), license);
   assert.equal(
