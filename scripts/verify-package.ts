@@ -305,6 +305,11 @@ try {
     'execution-integration-checks.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, 'verification', name));
+  // Execute the same benchmark correctness preflight against the installed
+  // package. The harness stays outside the published compiler inventory.
+  await mkdir(join(consumer, 'bench/cases'), { recursive: true });
+  for (const name of ['preflight.ts', 'cases/json-response.ts'])
+    await cp(join(repo, 'bench', name), join(consumer, 'bench', name));
   await writeFile(
     join(consumer, 'package.json'),
     JSON.stringify(
@@ -344,6 +349,11 @@ try {
     { code: 'ENOENT' },
   );
   const installed = join(consumer, 'node_modules/pomegranate-compiler');
+  const benchmarkPreflight = record(
+    json((await run(process.execPath, ['bench/preflight.ts'])).stdout),
+  );
+  assert.equal(benchmarkPreflight.behavior, 'verified');
+  assert.equal(benchmarkPreflight.performance, 'unmeasured');
   assert.equal(await readFile(join(installed, 'LICENSE'), 'utf8'), license);
   assert.equal(
     record(json(await readFile(join(installed, 'package.json'), 'utf8')))

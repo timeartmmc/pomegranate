@@ -116,6 +116,19 @@ locals and parameters, including standalone constrained-reference chains.
 
 ## Measurements and adoption
 
+Maintained benchmark cases live in `bench/cases/`. Run
+`bun run bench:preflight` to rebuild and check the first versioned synthetic JSON
+response case. Its independent expectations cover validation, stripping, detached
+mutable output, excluded-field reads, and protocol behavior. The report records
+case/output hashes and bytes; performance remains explicitly unmeasured. There
+is no timing comparison or performance gate yet. Review the case version whenever
+its workload or promised behavior changes.
+
+Benchmark code follows the same strict types, Oxlint, Oxfmt and verification as
+other repository code. Canonical checks test the oracle against deliberately
+incorrect implementations and run the preflight against the installed tarball.
+Generated core modules execute in a temporary directory without dependency links.
+
 Use `node scripts/benchmark-execution.ts [baseline-ref]` for handwritten/generated
 binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Use
 `node scripts/benchmark-query-sharing.ts` for sharing comparisons. Timings are

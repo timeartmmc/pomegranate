@@ -39,7 +39,8 @@
   "scripts": {
     "build": "node scripts/clean-dist.ts && tsc -p tsconfig.json && node scripts/copy-runtime.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json",
-    "lint": "oxlint --deny-warnings --type-aware --type-check src examples/json test scripts",
+    "lint": "oxlint --deny-warnings --type-aware --type-check src examples/json test scripts bench",
+    "bench:preflight": "bun run build && node bench/preflight.ts",
     "test:prepare": "node scripts/prepare-tests.ts",
     "test": "node --test --test-timeout=30000 test/*.test.ts",
     "test:browser": "bun run build && node --test --test-timeout=30000 test/*.browser.test.ts",

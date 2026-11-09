@@ -8,7 +8,7 @@
     "resolveJsonModule": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["./**/*.ts", "../scripts/**/*.ts"],
+  "include": ["./**/*.ts", "../scripts/**/*.ts", "../bench/**/*.ts"],
   "exclude": [
     ".generated",
     "consumer-types.ts",
