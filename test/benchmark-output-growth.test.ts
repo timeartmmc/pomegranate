@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { readFile, rm, stat } from 'node:fs/promises';
+import { readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -19,6 +19,7 @@ import {
   verifyOutputBudgets,
 } from '../bench/output-growth.ts';
 import { json, record } from './assertions.ts';
+import { temporary } from './helpers.ts';
 import {
   generatedTestWorkspace,
   importGenerated,
@@ -351,4 +352,41 @@ void test('the output checker CLI runs the same qualified public-compiler family
     typeof record(record(report.referenceBytes).small)['client.consumer.ts'],
     'number',
   );
+});
+
+void test('loose compiler and TypeScript entries run without package metadata and attribute enclosing metadata explicitly', async (t) => {
+  const root = await temporary(t);
+  const compiler = join(root, 'compiler.mjs');
+  const typescript = join(root, 'typescript.cjs');
+  await writeFile(
+    compiler,
+    `export {compile} from ${JSON.stringify(import.meta.resolve('pomegranate-compiler'))};\n`,
+  );
+  await writeFile(typescript, `require(${JSON.stringify(tsc)});\n`);
+  const args = [
+    fileURLToPath(new URL('../bench/check-output.ts', import.meta.url)),
+    compiler,
+    typescript,
+  ];
+  const loose = record(
+    json((await exec(process.execPath, args, { timeout: 30_000 })).stdout),
+  );
+  assert.equal(loose.sourceBudgets, 'passed');
+  assert.equal(loose.compilerVersion, null);
+  assert.equal(loose.compilerPackageManifest, null);
+  assert.equal(loose.typescriptVersion, null);
+  assert.equal(loose.typescriptPackageManifest, null);
+  const manifest = join(root, 'package.json');
+  await writeFile(
+    manifest,
+    '{"name":"synthetic-benchmark-wrapper","version":"0.0.0-wrapper","type":"module"}\n',
+  );
+  const wrapped = record(
+    json((await exec(process.execPath, args, { timeout: 30_000 })).stdout),
+  );
+  assert.equal(wrapped.sourceBudgets, 'passed');
+  assert.equal(wrapped.compilerVersion, '0.0.0-wrapper');
+  assert.equal(wrapped.compilerPackageManifest, await realpath(manifest));
+  assert.equal(wrapped.typescriptVersion, '0.0.0-wrapper');
+  assert.equal(wrapped.typescriptPackageManifest, await realpath(manifest));
 });

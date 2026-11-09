@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { realpath } from 'node:fs/promises';
 import { findPackageJSON } from 'node:module';
+import { basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readJson, record } from './controller.ts';
 import { benchmarkSources } from './installed.ts';
@@ -19,16 +20,28 @@ const typeScriptEntry = process.argv[3]
   : fileURLToPath(
       new URL('bin/tsc', import.meta.resolve('typescript/package.json')),
     );
-async function packageVersion(entry: string) {
+async function packageMetadata(entry: string) {
   const manifest = findPackageJSON(entry);
-  if (manifest === undefined) return null;
-  const metadata = record((await readJson(manifest, 64 * 1024)).value);
-  return typeof metadata.version === 'string' ? metadata.version : null;
+  // Loose entries may resolve to themselves. Versions describe the entry's
+  // enclosing package (including wrappers), and optional metadata must never
+  // prevent the supplied compiler or TypeScript entry from executing.
+  if (manifest === undefined || basename(manifest) !== 'package.json')
+    return { manifest: null, version: null };
+  try {
+    const input = await readJson(manifest, 64 * 1024);
+    const metadata = record(input.value);
+    return {
+      manifest: input.path,
+      version: typeof metadata.version === 'string' ? metadata.version : null,
+    };
+  } catch {
+    return { manifest, version: null };
+  }
 }
-const compilerVersion = await packageVersion(compilerEntry);
-const typescriptVersion = await packageVersion(
-  pathToFileURL(typeScriptEntry).href,
-);
+const { manifest: compilerPackageManifest, version: compilerVersion } =
+  await packageMetadata(compilerEntry);
+const { manifest: typescriptPackageManifest, version: typescriptVersion } =
+  await packageMetadata(pathToFileURL(typeScriptEntry).href);
 const module: unknown = await import(compilerEntry);
 const compile = record(module).compile;
 assert.ok(typeof compile === 'function', 'compiler must export compile()');
@@ -45,5 +58,5 @@ assert.deepEqual(
   'output benchmark sources changed during collection',
 );
 process.stdout.write(
-  `${JSON.stringify({ ...report, compilerEntry, compilerVersion, typeScriptEntry, typescriptVersion, controller, node: process.version }, null, 2)}\n`,
+  `${JSON.stringify({ ...report, compilerEntry, compilerVersion, compilerPackageManifest, typeScriptEntry, typescriptVersion, typescriptPackageManifest, controller, node: process.version }, null, 2)}\n`,
 );
