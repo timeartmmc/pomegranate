@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +22,11 @@ import {
 const sha256 = (source: string) =>
   createHash('sha256').update(source).digest('hex');
 
+const [retain] = process.argv.slice(2);
+assert.ok(
+  process.argv.length === 2 || (process.argv.length === 3 && retain),
+  'usage: node bench/preflight.ts [new-generated-directory]',
+);
 const root = await mkdtemp(
   join(await realpath(tmpdir()), 'pom-bench-preflight-'),
 );
@@ -51,6 +63,23 @@ try {
     pathToFileURL(join(root, 'client.consumer.schemas.ts')).href
   );
   verifyJsonResponse(jsonResponseSubject(client, schemas));
+  if (retain) {
+    // Qualify outside dependency trees first, then retain exactly those bytes.
+    // A timing consumer must not regenerate a different output after preflight.
+    await mkdir(retain);
+    await writeFile(join(retain, 'package.json'), '{"type":"module"}\n', {
+      flag: 'wx',
+    });
+    for (const file of inventory) {
+      const source = await readFile(join(root, file.name), 'utf8');
+      assert.equal(
+        sha256(source),
+        file.sha256,
+        'generated code changed during preflight',
+      );
+      await writeFile(join(retain, file.name), source, { flag: 'wx' });
+    }
+  }
   process.stdout.write(
     `${JSON.stringify(
       {

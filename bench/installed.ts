@@ -1,17 +1,8 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFile, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
-function record(value: unknown): Record<string, unknown> {
-  assert.ok(
-    value !== null && typeof value === 'object' && !Array.isArray(value),
-  );
-  return value as Record<string, unknown>;
-}
-
-const sha256 = (source: string | Buffer) =>
-  createHash('sha256').update(source).digest('hex');
+import { benchmarkDirectory, record, sha256 } from './controller.ts';
 
 type InstalledFile =
   | { path: string; sha256: string }
@@ -47,6 +38,21 @@ async function inventory(
     }
   }
   return files;
+}
+
+export async function installedTree(root: string) {
+  const files = await inventory(await realpath(root));
+  return { files, sha256: sha256(JSON.stringify(files)) };
+}
+
+// All maintained benchmark code lives in this tree; adding a helper must not
+// require updating another controller's hand-maintained source-file list.
+export async function benchmarkSources(directory = benchmarkDirectory) {
+  const tree = await installedTree(directory);
+  return tree.files.map((file) => {
+    assert.ok('sha256' in file, 'benchmark source files must not be links');
+    return { name: file.path, sha256: file.sha256 };
+  });
 }
 
 export async function installedIdentity(
@@ -108,11 +114,11 @@ export async function installedIdentity(
       `${path}: unpinned dependency source; use integrity-pinned registry archives or bundled runtime dependencies`,
     );
   }
-  const files = await inventory(join(consumer, 'node_modules'));
+  const tree = await installedTree(join(consumer, 'node_modules'));
   return {
     packageVersion: metadata.version,
     lockSha256: sha256(lockBytes),
-    treeSha256: sha256(JSON.stringify(files)),
-    files,
+    treeSha256: tree.sha256,
+    files: tree.files,
   };
 }

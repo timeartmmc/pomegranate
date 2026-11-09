@@ -114,9 +114,9 @@ export function jsonResponseExpected() {
 }
 
 export interface JsonResponseSubject {
-  build(): unknown;
-  validate(input: unknown): unknown;
-  parseResponse(input: unknown): unknown;
+  readonly build: () => unknown;
+  readonly validate: (input: unknown) => unknown;
+  readonly parseResponse: (input: unknown) => unknown;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -145,14 +145,20 @@ export function jsonResponseSubject(
   const operations = record(record(clientModule).operations);
   assert.deepEqual(Object.keys(operations), ['listRecords']);
   const operation = record(operations.listRecords);
+  return {
+    build: callable(operation.build).bind(operation),
+    validate: jsonResponseValidator(schemaModule),
+    parseResponse: callable(operation.parseResponse).bind(operation),
+  };
+}
+
+export function jsonResponseValidator(
+  schemaModule: unknown,
+): JsonResponseSubject['validate'] {
   const validator = record(
     record(record(schemaModule).responseSchemas).RecordList,
   );
-  return {
-    build: callable(operation.build),
-    validate: callable(validator.safeParse),
-    parseResponse: callable(operation.parseResponse),
-  };
+  return callable(validator.safeParse).bind(validator);
 }
 
 function containers(value: unknown, result = new Set<object>()): Set<object> {
@@ -187,11 +193,15 @@ function mutateOutput(value: unknown): void {
     details.active = details.active !== true;
     array(details.tags).push('output mutation');
   }
+  // reverse() performs no writes at length zero or one. Exercise array writes
+  // at every cardinality so frozen small result arrays cannot qualify.
+  items.push({});
+  items.pop();
   items.reverse();
 }
 
-function verifyValid(
-  subject: JsonResponseSubject,
+export function verifyJsonResponseValue(
+  subject: Pick<JsonResponseSubject, 'validate'>,
   input: unknown,
   expected: unknown,
 ): unknown {
@@ -323,21 +333,23 @@ function invalidInputs(): {
 
 function verifyIssues(
   value: unknown,
-  path: readonly (string | number)[] | undefined,
+  paths: readonly (readonly (string | number)[] | undefined)[],
   part?: string,
+  name = 'failure',
 ): void {
   const issues = array(value).map(record);
   assert.ok(issues.length > 0);
   for (const issue of issues)
     assert.ok(typeof issue.message === 'string' && issue.message.length > 0);
-  assert.ok(
-    issues.some(
-      (issue) =>
-        (part === undefined || issue.part === part) &&
-        (path === undefined || isDeepStrictEqual(issue.path, path)),
-    ),
-    'failure must retain the expected issue path and part',
-  );
+  for (const path of paths)
+    assert.ok(
+      issues.some(
+        (issue) =>
+          (part === undefined || issue.part === part) &&
+          (path === undefined || isDeepStrictEqual(issue.path, path)),
+      ),
+      `${name} must retain the expected issue path and part`,
+    );
 }
 
 function verifyProtocolFailure(
@@ -351,34 +363,87 @@ function verifyProtocolFailure(
   assert.equal(failure.operationId, 'listRecords');
   assert.equal(failure.status, response.status);
   assert.deepEqual({ ...record(failure.headers) }, response.headers);
-  verifyIssues(failure.issues, path, part);
+  verifyIssues(failure.issues, [path], part);
 }
 
-export function verifyJsonResponse(subject: JsonResponseSubject): void {
-  const request = record(subject.build());
-  assert.equal(request.method, 'GET');
-  assert.equal(request.url, '/records');
+export function verifyJsonResponseRejection(
+  subject: Pick<JsonResponseSubject, 'validate'>,
+  value: unknown,
+  paths: readonly (readonly (string | number)[])[],
+  name = 'invalid response',
+): void {
+  const before = structuredClone(value);
+  const failure = record(subject.validate(value));
+  verifyJsonResponseFailure(failure, paths, name);
+  assert.deepEqual(value, before, name);
+}
 
-  const input = jsonResponseInput();
-  const output = verifyValid(subject, input, jsonResponseExpected());
+export function verifyJsonResponseFailure(
+  value: unknown,
+  paths: readonly (readonly (string | number)[])[],
+  name = 'invalid response',
+): void {
+  const failure = record(value);
+  assert.equal(failure.success, false, name);
+  assert.ok(failure.error instanceof Error, name);
+  assert.ok(paths.length > 0, 'rejected sample must declare expected paths');
+  verifyIssues(record(failure.error).issues, paths, undefined, name);
+}
+
+export function verifyJsonResponseConstruction(
+  subject: Pick<JsonResponseSubject, 'validate'>,
+  input: unknown,
+  expected: unknown,
+): unknown {
+  const before = structuredClone(input);
+  const output = verifyJsonResponseValue(subject, input, expected);
   // Identity caches can pass a single parse while reusing mutable results or
   // retaining a stale snapshot after the same input object changes.
-  const repeated = verifyValid(subject, input, jsonResponseExpected());
+  const repeated = verifyJsonResponseValue(subject, input, expected);
   assertDetached(
     repeated,
     output,
     'validation calls must return independent containers',
   );
   mutateOutput(output);
-  assert.deepEqual(
-    input,
-    jsonResponseInput(),
-    'output must be independently mutable',
-  );
+  assert.deepEqual(input, before, 'output must be independently mutable');
   assert.deepEqual(
     repeated,
-    jsonResponseExpected(),
+    expected,
     'output changes must not affect another result',
+  );
+  return output;
+}
+
+export function verifyJsonResponseNoExcludedReads(
+  subject: Pick<JsonResponseSubject, 'validate'>,
+  input: unknown,
+  expected: unknown,
+): void {
+  const excluded = record(structuredClone(input));
+  let reads = 0;
+  for (const item of array(excluded.items))
+    Object.defineProperty(record(item), 'secret', {
+      enumerable: true,
+      get() {
+        reads++;
+        throw new Error('excluded response field was read');
+      },
+    });
+  const stripped = record(subject.validate(excluded));
+  assert.equal(stripped.success, true);
+  assert.deepEqual(stripped.data, expected);
+  assert.equal(reads, 0, 'write-only response fields must not be read');
+}
+
+export function verifyJsonResponseValidation(
+  subject: Pick<JsonResponseSubject, 'validate'>,
+): void {
+  const input = jsonResponseInput();
+  const output = verifyJsonResponseConstruction(
+    subject,
+    input,
+    jsonResponseExpected(),
   );
   const outputBefore = structuredClone(output);
   input.items[0].details.tags.push('input mutation');
@@ -389,17 +454,17 @@ export function verifyJsonResponse(subject: JsonResponseSubject): void {
   );
   const changedExpected = jsonResponseExpected();
   changedExpected.items[0].details.tags.push('input mutation');
-  verifyValid(subject, input, changedExpected);
+  verifyJsonResponseValue(subject, input, changedExpected);
   input.items[0].id = 0;
   assert.equal(
     record(subject.validate(input)).success,
     false,
     'validation must reject newly invalid input',
   );
-  verifyValid(subject, { items: [] }, { items: [] });
+  verifyJsonResponseValue(subject, { items: [] }, { items: [] });
   const withoutSecrets = jsonResponseInput();
   for (const item of withoutSecrets.items) delete record(item).secret;
-  verifyValid(subject, withoutSecrets, jsonResponseExpected());
+  verifyJsonResponseValue(subject, withoutSecrets, jsonResponseExpected());
   const boundary = {
     items: Array.from({ length: 128 }, () => ({
       id: 1,
@@ -410,22 +475,24 @@ export function verifyJsonResponse(subject: JsonResponseSubject): void {
   };
   // Every field here is visible. The independently chosen limits are not read
   // from the schema; a clone is the expected value, never the expected identity.
-  verifyValid(subject, boundary, structuredClone(boundary));
+  verifyJsonResponseValue(subject, boundary, structuredClone(boundary));
 
-  const excluded = jsonResponseInput();
-  let reads = 0;
-  for (const item of excluded.items)
-    Object.defineProperty(item, 'secret', {
-      enumerable: true,
-      get() {
-        reads++;
-        throw new Error('excluded response field was read');
-      },
-    });
-  const stripped = record(subject.validate(excluded));
-  assert.equal(stripped.success, true);
-  assert.deepEqual(stripped.data, jsonResponseExpected());
-  assert.equal(reads, 0, 'write-only response fields must not be read');
+  verifyJsonResponseNoExcludedReads(
+    subject,
+    jsonResponseInput(),
+    jsonResponseExpected(),
+  );
+
+  for (const { name, value, path } of invalidInputs()) {
+    verifyJsonResponseRejection(subject, value, [path], name);
+  }
+}
+
+export function verifyJsonResponse(subject: JsonResponseSubject): void {
+  const request = record(subject.build());
+  assert.equal(request.method, 'GET');
+  assert.equal(request.url, '/records');
+  verifyJsonResponseValidation(subject);
 
   const observed = (body: string) => ({
     status: 200,
@@ -469,13 +536,7 @@ export function verifyJsonResponse(subject: JsonResponseSubject): void {
     'response parsing must reject newly invalid input',
   );
 
-  for (const { name, value, path } of invalidInputs()) {
-    const before = structuredClone(value);
-    const failure = record(subject.validate(value));
-    assert.equal(failure.success, false, name);
-    assert.ok(failure.error instanceof Error, name);
-    verifyIssues(record(failure.error).issues, path);
-    assert.deepEqual(value, before, name);
+  for (const { value, path } of invalidInputs()) {
     verifyProtocolFailure(
       subject,
       observed(JSON.stringify(value)),

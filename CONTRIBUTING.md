@@ -116,19 +116,23 @@ locals and parameters, including standalone constrained-reference chains.
 
 ## Measurements and adoption
 
+### Case correctness
+
 Maintained benchmark cases live in `bench/cases/`. Run
 `bun run bench:preflight` to rebuild and check the synthetic `json-response` case,
 currently version 2. Its independent expectations cover accepted boundaries,
 validation and issue paths, stripping, detached mutable results across calls,
 changed-input validation, excluded-field reads, and protocol behavior. The report
-records case/output hashes and bytes; performance remains explicitly unmeasured.
-There is no timing comparison or performance gate yet. Review the case version
-whenever its workload or promised behavior changes.
+records case/output hashes and bytes; this preflight remains explicitly untimed.
+Performance acceptance gates remain unfinished. Review the case version whenever
+its workload or promised behavior changes.
 
 Benchmark code follows the same strict types, Oxlint, Oxfmt and verification as
 other repository code. Canonical checks test the oracle against deliberately
 incorrect implementations and run the preflight against the installed tarball.
 Generated core modules execute in a temporary directory without dependency links.
+
+### Artifact preparation
 
 To prepare complete local package artifacts, create a JSON plan under ignored
 `.local/` storage. Supply each archive's SHA-256 as 64 lowercase hexadecimal
@@ -160,17 +164,20 @@ locks record resolutions, and an installed-file inventory records actual bytes.
 Links escaping a consumer's installed tree are rejected.
 
 The run directory retains archive snapshots, a replayable `plan.json` pointing to
-those snapshots, dependency locks, installed-file inventories, harness copies, and
-installation/preflight logs. Successful preparation writes `report.json`, which
-records hashes for archives, installed code, the harness and generated outputs.
+those snapshots, dependency locks, installed-file inventories, harness copies,
+qualified generated files, and installation/preflight logs. Successful preparation
+writes `report.json`, which records hashes for archives, installed code, the harness
+and generated outputs.
 It also records tool versions and `performance: "unmeasured"`.
 Plan syntax and schema errors fail before creating
 the run directory; failures after a run starts retain available evidence and
 `failure.json`. Preparation refuses to reuse an existing output directory. Use a
-fresh path for each attempt. Replaying the retained plan resolves dependencies
-again; check the new locks and installed identities. Preparation establishes
-artifact and behavioral evidence; timing, resource measurements and performance
-acceptance remain unimplemented.
+fresh path for each attempt. Replaying the retained plan uses the current
+controller and harness and resolves dependencies again; compare those identities,
+dependency locks and installed code before using results together. Preparation
+establishes artifact and behavioral evidence; its report contains no timings.
+
+### Local diagnostic scripts
 
 Use `node scripts/benchmark-execution.ts [baseline-ref]` for handwritten/generated
 binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Use
@@ -181,6 +188,8 @@ Use `node scripts/benchmark-typecheck.ts [baseline-ref] [path-to-tsc]` for
 600-, 1,200-, and 3,000-component contracts with distinct parser graphs. Rebuild
 first; the optional compiler path lets the same fixture measure each supported
 TypeScript line.
+
+### Application adoption
 
 Application adoption needs its own parity/integration checks and declared time
 and memory budgets. Measure generated/retained bundle size, typecheck, parsing,

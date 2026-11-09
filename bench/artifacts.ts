@@ -1,31 +1,25 @@
 import assert from 'node:assert/strict';
-import { isUtf8 } from 'node:buffer';
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import {
-  mkdir,
-  open,
-  readFile,
-  realpath,
-  rename,
-  writeFile,
-} from 'node:fs/promises';
-import {
-  delimiter,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from 'node:path';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { jsonResponseCase } from './cases/json-response.ts';
-import { installedIdentity } from './installed.ts';
+import {
+  benchmarkSources,
+  installedIdentity,
+  installedTree,
+} from './installed.ts';
+import {
+  boundedFile,
+  createRunDirectory,
+  publishReport,
+  readPlan,
+  record,
+  sha256,
+  writeFailure,
+} from './controller.ts';
+import { nodeEnvironment, runLogged } from './process.ts';
 
-const exec = promisify(execFile);
 const roles = ['baseline', 'candidate', 'releaseAnchor'] as const;
 const harnessNames = ['cases/json-response.ts', 'preflight.ts'] as const;
 const maximumArchiveBytes = 64 * 1024 * 1024;
@@ -43,20 +37,9 @@ interface ArchiveIdentity {
   readonly integrity: string;
 }
 
-function record(value: unknown, location: string): Record<string, unknown> {
-  assert.ok(
-    value !== null && typeof value === 'object' && !Array.isArray(value),
-    `${location}: expected an object`,
-  );
-  return value as Record<string, unknown>;
-}
-
 function json(source: string): unknown {
   return JSON.parse(source) as unknown;
 }
-
-const sha256 = (source: string | Buffer) =>
-  createHash('sha256').update(source).digest('hex');
 
 function generatedInventory(value: unknown) {
   assert.ok(
@@ -123,43 +106,6 @@ export function artifactPlan(
   });
 }
 
-// Bound the actual read as well as stat: a concurrently growing file must not
-// allocate without limit or turn a partial archive into an accepted snapshot.
-async function boundedFile(
-  path: string,
-  maximumBytes: number,
-): Promise<Buffer> {
-  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-  try {
-    const metadata = await file.stat();
-    assert.ok(metadata.isFile(), `${path}: expected a regular file`);
-    assert.ok(
-      metadata.size <= maximumBytes,
-      `${path}: exceeds ${maximumBytes} bytes`,
-    );
-    const bytes = Buffer.alloc(metadata.size + 1);
-    let length = 0;
-    while (length < bytes.length) {
-      const result = await file.read(
-        bytes,
-        length,
-        bytes.length - length,
-        null,
-      );
-      if (result.bytesRead === 0) break;
-      length += result.bytesRead;
-    }
-    assert.equal(
-      length,
-      metadata.size,
-      `${path}: file size changed while reading`,
-    );
-    return bytes.subarray(0, length);
-  } finally {
-    await file.close();
-  }
-}
-
 export async function snapshotArtifact(
   spec: ArtifactSpec,
   destination: string,
@@ -175,54 +121,12 @@ export async function snapshotArtifact(
   };
 }
 
-function commandOutput(error: unknown, key: 'stdout' | 'stderr'): string {
-  if (error === null || typeof error !== 'object') return '';
-  const value: unknown = Reflect.get(error, key);
-  return typeof value === 'string' ? value : '';
-}
-
-async function runLogged(
-  command: string,
-  args: string[],
-  cwd: string,
-  log: string,
-  environment: NodeJS.ProcessEnv,
-  timeout: number,
-): Promise<string> {
-  let stdout = '';
-  let stderr = '';
-  try {
-    const result = await exec(command, args, {
-      cwd,
-      env: environment,
-      timeout,
-      maxBuffer: 4 * 1024 * 1024,
-      encoding: 'utf8',
-    });
-    stdout = result.stdout;
-    stderr = result.stderr;
-    return stdout;
-  } catch (error) {
-    stdout = commandOutput(error, 'stdout');
-    stderr = commandOutput(error, 'stderr');
-    throw error;
-  } finally {
-    await writeFile(`${log}.stdout.log`, stdout, { flag: 'wx' });
-    await writeFile(`${log}.stderr.log`, stderr, { flag: 'wx' });
-  }
-}
-
 export async function prepareArtifacts(
   planPath: string,
   outputDirectory: string,
 ) {
-  const manifest = await realpath(planPath);
-  const planBytes = await boundedFile(manifest, 64 * 1024);
-  assert.ok(isUtf8(planBytes), 'plan: expected UTF-8');
-  const specs = artifactPlan(
-    json(planBytes.toString('utf8')),
-    dirname(manifest),
-  );
+  const { path: manifest, value } = await readPlan(planPath);
+  const specs = artifactPlan(value, dirname(manifest));
   // Capture the trusted harness once, before installing or executing any artifact.
   // Every consumer receives these same bytes even if the checkout changes later.
   const harness = await Promise.all(
@@ -235,20 +139,14 @@ export async function prepareArtifacts(
     name,
     sha256: sha256(source),
   }));
-  const controllerFiles = await Promise.all(
-    ['artifacts.ts', 'installed.ts', 'prepare.ts'].map(async (name) => ({
-      name,
-      sha256: sha256(await readFile(new URL(name, import.meta.url))),
-    })),
-  );
+  const controllerFiles = await benchmarkSources();
   const caseHash = harnessFiles.find(
     ({ name }) => name === 'cases/json-response.ts',
   );
   assert.ok(caseHash);
   // A fresh directory is the ownership boundary. Preserve all evidence on failure;
   // never clean or overwrite an existing run or caller-owned inputs.
-  await mkdir(resolve(outputDirectory));
-  const root = await realpath(outputDirectory);
+  const root = await createRunDirectory(outputDirectory);
   let stage = 'snapshot';
   try {
     await writeFile(
@@ -281,10 +179,7 @@ export async function prepareArtifacts(
         await snapshotArtifact(spec, join(consumer, 'compiler.tgz')),
       );
     }
-    const environment = { ...process.env };
-    delete environment.NODE_OPTIONS;
-    delete environment.NODE_PATH;
-    environment.PATH = `${dirname(process.execPath)}${delimiter}${environment.PATH ?? ''}`;
+    const environment = nodeEnvironment();
     stage = 'npm-version';
     const npm = (
       await runLogged(
@@ -350,7 +245,7 @@ export async function prepareArtifacts(
       stage = `preflight:${spec.role}`;
       const stdout = await runLogged(
         process.execPath,
-        ['bench/preflight.ts'],
+        ['bench/preflight.ts', 'generated'],
         consumer,
         join(consumer, 'preflight'),
         environment,
@@ -408,11 +303,20 @@ export async function prepareArtifacts(
         entry: entryRelative,
         lockSha256: identity.lockSha256,
         installedTreeSha256: identity.treeSha256,
-        generated: generatedInventory(preflight.generated),
+        generated: {
+          directory: 'generated',
+          ...generatedInventory(preflight.generated),
+          treeSha256: (await installedTree(join(consumer, 'generated'))).sha256,
+        },
         preflightSha256: sha256(stdout),
       });
     }
     stage = 'report';
+    assert.deepEqual(
+      await benchmarkSources(),
+      controllerFiles,
+      'benchmark sources changed during preparation',
+    );
     const report = {
       schemaVersion: 1,
       behavior: 'verified',
@@ -431,28 +335,10 @@ export async function prepareArtifacts(
       },
       artifacts: prepared,
     };
-    await writeFile(
-      join(root, 'report.pending.json'),
-      `${JSON.stringify(report, null, 2)}\n`,
-      { flag: 'wx' },
-    );
-    await rename(join(root, 'report.pending.json'), join(root, 'report.json'));
+    await publishReport(root, report);
     return report;
   } catch (error) {
-    await writeFile(
-      join(root, 'failure.json'),
-      `${JSON.stringify(
-        {
-          schemaVersion: 1,
-          status: 'invalid',
-          stage,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        null,
-        2,
-      )}\n`,
-      { flag: 'wx' },
-    );
+    await writeFailure(root, stage, error);
     throw error;
   }
 }

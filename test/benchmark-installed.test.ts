@@ -3,10 +3,29 @@ import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import { installedIdentity } from '../bench/installed.ts';
+import { benchmarkSources, installedIdentity } from '../bench/installed.ts';
 import { temporary } from './helpers.ts';
 
 const integrity = 'sha512-synthetic-archive-identity';
+
+void test('benchmark identities automatically include new nested source files and their changes', async (t) => {
+  const current = await benchmarkSources();
+  assert.ok(current.some(({ name }) => name === 'controller.ts'));
+  assert.ok(current.some(({ name }) => name === 'process.ts'));
+  const root = await temporary(t);
+  assert.deepEqual(await benchmarkSources(root), []);
+  await mkdir(join(root, 'nested'));
+  await writeFile(join(root, 'nested/helper.ts'), 'export const value = 1;\n');
+  const first = await benchmarkSources(root);
+  assert.deepEqual(
+    first.map(({ name }) => name),
+    ['nested/helper.ts'],
+  );
+  await writeFile(join(root, 'nested/helper.ts'), 'export const value = 2;\n');
+  const second = await benchmarkSources(root);
+  assert.equal(second[0]!.name, first[0]!.name);
+  assert.notEqual(second[0]!.sha256, first[0]!.sha256);
+});
 
 async function fixture(t: TestContext) {
   const root = await temporary(t);
