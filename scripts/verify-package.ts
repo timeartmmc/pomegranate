@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   cp,
   readdir,
@@ -305,11 +306,6 @@ try {
     'execution-integration-checks.ts',
   ])
     await cp(join(repo, 'test', name), join(consumer, 'verification', name));
-  // Execute the same benchmark correctness preflight against the installed
-  // package. The harness stays outside the published compiler inventory.
-  await mkdir(join(consumer, 'bench/cases'), { recursive: true });
-  for (const name of ['preflight.ts', 'cases/json-response.ts'])
-    await cp(join(repo, 'bench', name), join(consumer, 'bench', name));
   await writeFile(
     join(consumer, 'package.json'),
     JSON.stringify(
@@ -349,11 +345,70 @@ try {
     { code: 'ENOENT' },
   );
   const installed = join(consumer, 'node_modules/pomegranate-compiler');
-  const benchmarkPreflight = record(
-    json((await run(process.execPath, ['bench/preflight.ts'])).stdout),
+  // The same complete archive exercises all explicit roles. This qualifies
+  // artifact provisioning and installed behavior, not measurement noise or speed.
+  const benchmarkArtifact = {
+    path: tarball,
+    sha256: createHash('sha256')
+      .update(await readFile(tarball))
+      .digest('hex'),
+  };
+  const benchmarkPlan = join(scratch, 'benchmark-plan.json');
+  await writeFile(
+    benchmarkPlan,
+    JSON.stringify({
+      version: 1,
+      baseline: benchmarkArtifact,
+      candidate: benchmarkArtifact,
+      releaseAnchor: benchmarkArtifact,
+    }),
   );
-  assert.equal(benchmarkPreflight.behavior, 'verified');
-  assert.equal(benchmarkPreflight.performance, 'unmeasured');
+  const benchmarkPreparation = record(
+    json(
+      (
+        await run(
+          process.execPath,
+          [
+            join(repo, 'bench/prepare.ts'),
+            benchmarkPlan,
+            join(scratch, 'benchmark-prepared'),
+          ],
+          scratch,
+        )
+      ).stdout,
+    ),
+  );
+  assert.equal(benchmarkPreparation.behavior, 'verified');
+  assert.equal(benchmarkPreparation.performance, 'unmeasured');
+  const benchmarkArtifacts = benchmarkPreparation.artifacts;
+  assert.ok(
+    Array.isArray(benchmarkArtifacts) && benchmarkArtifacts.length === 3,
+  );
+  assert.equal(
+    new Set(
+      benchmarkArtifacts.map((value) => record(value).installedTreeSha256),
+    ).size,
+    1,
+  );
+  assert.equal(
+    new Set(
+      benchmarkArtifacts.map((value) => record(record(value).archive).sha256),
+    ).size,
+    1,
+  );
+  assert.equal(
+    new Set(benchmarkArtifacts.map((value) => record(value).lockSha256)).size,
+    1,
+  );
+  assert.equal(
+    new Set(
+      benchmarkArtifacts.map((value) => record(record(value).generated).sha256),
+    ).size,
+    1,
+  );
+  console.log(
+    'Benchmark artifact preparation passed: three separate installed consumers; timing unmeasured',
+  );
   assert.equal(await readFile(join(installed, 'LICENSE'), 'utf8'), license);
   assert.equal(
     record(json(await readFile(join(installed, 'package.json'), 'utf8')))

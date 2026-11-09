@@ -56,6 +56,7 @@ try {
       {
         schemaVersion: 1,
         case: jsonResponseCase,
+        compilerEntry: import.meta.resolve('pomegranate-compiler'),
         caseSha256: sha256(
           await readFile(
             new URL('./cases/json-response.ts', import.meta.url),

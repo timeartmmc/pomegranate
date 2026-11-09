@@ -24,7 +24,7 @@ void test('benchmark preflight runs generated code without checkout dependencies
   ]);
   const result = record(json(stdout));
   assert.equal(result.schemaVersion, 1);
-  assert.deepEqual(result.case, { id: 'json-response', version: 1 });
+  assert.deepEqual(result.case, { id: 'json-response', version: 2 });
   assert.match(String(result.caseSha256), /^[a-f0-9]{64}$/);
   assert.equal(result.behavior, 'verified');
   assert.equal(result.performance, 'unmeasured');
@@ -106,6 +106,68 @@ void test('benchmark oracle accepts real generated behavior and rejects faster s
     },
   );
 
+  for (const method of ['validate', 'parseResponse'] as const)
+    await t.test(`caching mutable results from ${method}`, () => {
+      const cache = new WeakMap<object, unknown>();
+      const mutant: JsonResponseSubject = {
+        ...subject,
+        [method](input: unknown) {
+          const key = record(input);
+          if (!cache.has(key)) cache.set(key, subject[method](input));
+          return cache.get(key);
+        },
+      };
+      assert.throws(
+        () => verifyJsonResponse(mutant),
+        /calls must return independent containers/,
+      );
+    });
+
+  await t.test('returning fresh copies of a stale cached snapshot', () => {
+    const cache = new WeakMap<object, Record<string, unknown>>();
+    const mutant: JsonResponseSubject = {
+      ...subject,
+      validate(input) {
+        const key = record(input);
+        const result = cache.get(key) ?? record(subject.validate(input));
+        cache.set(key, result);
+        return result.success === true
+          ? { ...result, data: structuredClone(result.data) }
+          : result;
+      },
+    };
+    assert.throws(() => verifyJsonResponse(mutant), assert.AssertionError);
+  });
+
+  for (const target of ['root', 'items', 'record', 'details'] as const)
+    await t.test(`freezing the response ${target}`, () => {
+      const mutant = corruptSuccess((result) => {
+        const data = record(result.data);
+        const items = data.items;
+        assert.ok(Array.isArray(items));
+        if (target === 'root') Object.freeze(data);
+        if (target === 'items') Object.freeze(items);
+        if (items.length > 0) {
+          const first = record(items[0]);
+          if (target === 'record') Object.freeze(first);
+          if (target === 'details') Object.freeze(record(first.details));
+        }
+      });
+      assert.throws(() => verifyJsonResponse(mutant), TypeError);
+    });
+
+  await t.test('freezing a protocol success body', () => {
+    const mutant: JsonResponseSubject = {
+      ...subject,
+      parseResponse(input) {
+        const result = record(subject.parseResponse(input));
+        if (result.kind === 'success') Object.freeze(record(result.data));
+        return result;
+      },
+    };
+    assert.throws(() => verifyJsonResponse(mutant), TypeError);
+  });
+
   await t.test('skipping constraints on invalid values', () => {
     const mutant: JsonResponseSubject = {
       ...subject,
@@ -160,5 +222,92 @@ void test('benchmark oracle accepts real generated behavior and rejects faster s
       () => jsonResponseSubject({ operations: {} }, schemas),
       assert.AssertionError,
     );
+  });
+
+  await t.test('throwing instead of returning a failure for null', () => {
+    const mutant: JsonResponseSubject = {
+      ...subject,
+      validate(input) {
+        if (input === null) throw new TypeError('synthetic null shortcut');
+        return subject.validate(input);
+      },
+    };
+    assert.throws(() => verifyJsonResponse(mutant), /synthetic null shortcut/);
+  });
+
+  await t.test('discarding diagnostic paths', () => {
+    const mutant: JsonResponseSubject = {
+      ...subject,
+      validate(input) {
+        const result = record(subject.validate(input));
+        if (result.success === true) return result;
+        return {
+          success: false,
+          error: Object.assign(new Error('invalid'), {
+            issues: [{ path: [], message: 'invalid' }],
+          }),
+        };
+      },
+    };
+    assert.throws(
+      () => verifyJsonResponse(mutant),
+      /expected issue path and part/,
+    );
+  });
+
+  await t.test('discarding protocol evidence', () => {
+    const mutant: JsonResponseSubject = {
+      ...subject,
+      parseResponse(input) {
+        const result = record(subject.parseResponse(input));
+        return result.kind === 'protocol' ? { kind: 'protocol' } : result;
+      },
+    };
+    assert.throws(() => verifyJsonResponse(mutant), assert.AssertionError);
+  });
+
+  await t.test('rejecting a parameterized JSON content type', () => {
+    const mutant: JsonResponseSubject = {
+      ...subject,
+      parseResponse(input) {
+        const headers = record(record(input).headers);
+        return headers['content-type'] === 'application/json; charset=utf-8'
+          ? { kind: 'protocol' }
+          : subject.parseResponse(input);
+      },
+    };
+    assert.throws(() => verifyJsonResponse(mutant), assert.AssertionError);
+  });
+
+  await t.test('requiring an excluded response field', () => {
+    const mutant: JsonResponseSubject = {
+      ...subject,
+      validate(input) {
+        const result = record(subject.validate(input));
+        const items = input === null ? undefined : record(input).items;
+        return result.success === true &&
+          Array.isArray(items) &&
+          items.some((item) => !Object.hasOwn(record(item), 'secret'))
+          ? { success: false }
+          : result;
+      },
+    };
+    assert.throws(() => verifyJsonResponse(mutant), assert.AssertionError);
+  });
+
+  await t.test('rejecting a valid upper boundary', () => {
+    const mutant: JsonResponseSubject = {
+      ...subject,
+      validate(input) {
+        const result = record(subject.validate(input));
+        const items = input === null ? undefined : record(input).items;
+        return result.success === true &&
+          Array.isArray(items) &&
+          items.some((item) => record(item).label === 'x'.repeat(32))
+          ? { success: false }
+          : result;
+      },
+    };
+    assert.throws(() => verifyJsonResponse(mutant), assert.AssertionError);
   });
 });

@@ -117,17 +117,60 @@ locals and parameters, including standalone constrained-reference chains.
 ## Measurements and adoption
 
 Maintained benchmark cases live in `bench/cases/`. Run
-`bun run bench:preflight` to rebuild and check the first versioned synthetic JSON
-response case. Its independent expectations cover validation, stripping, detached
-mutable output, excluded-field reads, and protocol behavior. The report records
-case/output hashes and bytes; performance remains explicitly unmeasured. There
-is no timing comparison or performance gate yet. Review the case version whenever
-its workload or promised behavior changes.
+`bun run bench:preflight` to rebuild and check the synthetic `json-response` case,
+currently version 2. Its independent expectations cover accepted boundaries,
+validation and issue paths, stripping, detached mutable results across calls,
+changed-input validation, excluded-field reads, and protocol behavior. The report
+records case/output hashes and bytes; performance remains explicitly unmeasured.
+There is no timing comparison or performance gate yet. Review the case version
+whenever its workload or promised behavior changes.
 
 Benchmark code follows the same strict types, Oxlint, Oxfmt and verification as
 other repository code. Canonical checks test the oracle against deliberately
 incorrect implementations and run the preflight against the installed tarball.
 Generated core modules execute in a temporary directory without dependency links.
+
+To prepare complete local package artifacts, create a JSON plan under ignored
+`.local/` storage. Supply each archive's SHA-256 as 64 lowercase hexadecimal
+digits, replacing the placeholders below:
+
+```json
+{
+  "version": 1,
+  "baseline": { "path": "./baseline.tgz", "sha256": "<sha256>" },
+  "candidate": { "path": "./candidate.tgz", "sha256": "<sha256>" },
+  "releaseAnchor": { "path": "./release-anchor.tgz", "sha256": "<sha256>" }
+}
+```
+
+All three roles are required. Archive paths resolve from the plan file's real
+directory. Plans must be UTF-8 JSON no larger than 64 KiB; each archive is limited
+to 64 MiB. Run preparation with a new output directory whose parent exists:
+
+```sh
+bun run bench:prepare .local/bench-plan.json .local/bench-run-001
+```
+
+Preparation verifies all archive hashes before installation, installs each role
+in a separate npm consumer with lifecycle scripts disabled, and runs the same
+captured preflight in each consumer. Dependency resolution may require registry
+access. Runtime dependencies must be bundled or resolve to HTTP(S) archives with
+integrity metadata; linked directories and Git sources are unsupported. Dependency
+locks record resolutions, and an installed-file inventory records actual bytes.
+Links escaping a consumer's installed tree are rejected.
+
+The run directory retains archive snapshots, a replayable `plan.json` pointing to
+those snapshots, dependency locks, installed-file inventories, harness copies, and
+installation/preflight logs. Successful preparation writes `report.json`, which
+records hashes for archives, installed code, the harness and generated outputs.
+It also records tool versions and `performance: "unmeasured"`.
+Plan syntax and schema errors fail before creating
+the run directory; failures after a run starts retain available evidence and
+`failure.json`. Preparation refuses to reuse an existing output directory. Use a
+fresh path for each attempt. Replaying the retained plan resolves dependencies
+again; check the new locks and installed identities. Preparation establishes
+artifact and behavioral evidence; timing, resource measurements and performance
+acceptance remain unimplemented.
 
 Use `node scripts/benchmark-execution.ts [baseline-ref]` for handwritten/generated
 binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Use
