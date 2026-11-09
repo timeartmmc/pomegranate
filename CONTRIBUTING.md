@@ -150,11 +150,12 @@ most 1,024 bytes. Counts
 include runtime helpers and comments. Review output diffs and preserve behavioral
 and type checks when changing the reference or allowances.
 
-The report includes the reference sizes, compiler and TypeScript package versions,
-and the benchmark tree identity. A version is `null` for a custom entry without
-package version metadata. Failed checks retain their scratch directory with
-inputs, generated files, available logs and `failure.json`; the error names that
-directory. Successful checks remove scratch output.
+The report includes reference sizes, the benchmark tree identity, and package
+versions with manifest paths for the compiler and TypeScript entries. A version
+describes the entry's enclosing package, including custom wrappers; it is `null`
+when version metadata is unavailable. Failed checks retain their scratch directory
+with inputs, available generated files and logs, and `failure.json`; the error
+names that directory. Successful checks remove scratch output.
 
 Canonical installed-package verification runs the same family through a copied
 harness, the installed compiler and the consumer's TypeScript. These limits cover
@@ -318,9 +319,10 @@ as ineligible adapters in a partial report, and the CLI exits nonzero.
 
 The fresh output directory retains the plan, preflight evidence, raw process
 observations, source identities and `report.json`. Workers write results to
-separate `*.result.json` files; stdout and stderr are retained as logs, so adapter
-logging does not interfere with qualification or measurement. Measured-worker execution or
-identity failures retain logs and `failure.json` with the failed stage and error.
+separate `*.result.json` files and retain stdout and stderr as logs, so adapter
+logging cannot corrupt qualification or measurement results. Measured-worker
+execution or identity failures retain logs and `failure.json` with the failed
+stage and error.
 Summaries report the median of process means and observed min/max in microseconds
 per operation. These are local exploratory measurements, with no confidence
 intervals or performance acceptance verdict. Noise/detection qualification,
@@ -358,10 +360,11 @@ node bench/analyze-calibration.ts .local/study.json .local/calibration-analysis
 
 The output directory must be new and its parent must exist. The analyzer checks
 study, host, source and adapter identities before pairing process means within
-their original randomized round. Every comparison must declare the reference's
-validator sources; repeat wrappers may use different entry modules. Source lists
-remain caller declarations, not discovered import graphs. It reports conditional median intervals with a
-correction across the declared comparison/profile cells in each session.
+their original randomized round. Every comparison must declare exactly the
+reference's `sources` list; repeat wrappers may use different entry modules.
+Source lists remain caller declarations, not discovered import graphs. It reports
+conditional median intervals with a correction across the declared
+comparison/profile cells in each session.
 Measurement windows remain observations within one process. If no finite interval
 meets the declared family level, bounds are `null` and the signal is `unresolved`.
 The report preserves collection identities and records the analyzer's own source
