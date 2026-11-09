@@ -1,3 +1,4 @@
+import { random, shuffled } from './order.ts';
 import assert from 'node:assert/strict';
 import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { arch, cpus, platform, release } from 'node:os';
@@ -360,21 +361,6 @@ export async function fingerprintSources(paths: readonly string[]) {
   );
 }
 
-function random(seed: number) {
-  let state = seed >>> 0;
-  return () => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return state / 4294967296;
-  };
-}
-function shuffled<T>(values: readonly T[], next: () => number): T[] {
-  const order = [...values];
-  for (let i = order.length - 1; i > 0; i--) {
-    const j = Math.floor(next() * (i + 1));
-    [order[i], order[j]] = [order[j]!, order[i]!];
-  }
-  return order;
-}
 function median(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);

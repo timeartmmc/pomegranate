@@ -19,16 +19,17 @@ function commandOutput(error: unknown, key: 'stdout' | 'stderr'): string {
   return typeof value === 'string' ? value : '';
 }
 
-export async function runLogged(
+export async function runLoggedProcess(
   command: string,
   args: string[],
   cwd: string,
   log: string,
   environment: NodeJS.ProcessEnv,
   timeout: number,
-): Promise<string> {
+): Promise<{ stdout: string; stderr: string; wallMs: number }> {
   let stdout = '';
   let stderr = '';
+  const start = performance.now();
   try {
     const result = await exec(command, args, {
       cwd,
@@ -38,9 +39,10 @@ export async function runLogged(
       maxBuffer: 4 * 1024 * 1024,
       encoding: 'utf8',
     });
+    const wallMs = performance.now() - start;
     stdout = result.stdout;
     stderr = result.stderr;
-    return stdout;
+    return { stdout, stderr, wallMs };
   } catch (error) {
     stdout = commandOutput(error, 'stdout');
     stderr = commandOutput(error, 'stderr');
@@ -49,4 +51,16 @@ export async function runLogged(
     await writeFile(`${log}.stdout.log`, stdout, { flag: 'wx' });
     await writeFile(`${log}.stderr.log`, stderr, { flag: 'wx' });
   }
+}
+
+export async function runLogged(
+  command: string,
+  args: string[],
+  cwd: string,
+  log: string,
+  environment: NodeJS.ProcessEnv,
+  timeout: number,
+): Promise<string> {
+  return (await runLoggedProcess(command, args, cwd, log, environment, timeout))
+    .stdout;
 }

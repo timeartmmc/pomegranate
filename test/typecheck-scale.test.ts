@@ -14,15 +14,23 @@ import {
 import type { RuntimeClient } from './runtime-types.ts';
 import {
   scaleCompilerOptions,
-  typecheckScaleFixture,
-} from './typecheck-scale-fixture.ts';
+  typecheckWorkload,
+  typecheckProfiles,
+} from '../bench/cases/typecheck.ts';
 
 void test('distinct parser graphs retain every executable contract at scale', async (t) => {
   const count = 600;
-  const input = typecheckScaleFixture(count);
+  const input = typecheckWorkload(
+    present(
+      typecheckProfiles.find((profile) => profile.id === `distinct-${count}`),
+    ),
+  );
   const root = await generatedTestWorkspace(
     t,
-    await compile(input.document, input.options),
+    await compile(input.document, {
+      ...input.options,
+      executionClients: ['consumer'],
+    }),
   );
   const client = await importGenerated<RuntimeClient>(
     root,

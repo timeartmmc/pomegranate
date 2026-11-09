@@ -18,6 +18,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
+import { minimumTypeScript } from '../bench/typecheck.ts';
 import {
   commandError,
   commandFailure,
@@ -316,7 +317,7 @@ try {
         dependencies: {},
         devDependencies: {
           'pomegranate-compiler': `file:${tarball}`,
-          typescript: '5.7.3',
+          typescript: minimumTypeScript,
           '@types/node': '22.18.0',
         },
       },
@@ -369,10 +370,44 @@ try {
   await cp(join(repo, 'bench'), join(benchmarkHarness, 'bench'), {
     recursive: true,
   });
+  const benchmarkPackage = record(
+    json(await readFile(join(repo, 'package.json'), 'utf8')),
+  );
   await writeFile(
     join(benchmarkHarness, 'package.json'),
-    '{"private":true,"type":"module"}\n',
+    JSON.stringify({
+      private: true,
+      type: 'module',
+      devDependencies: {
+        typescript: record(benchmarkPackage.devDependencies).typescript,
+      },
+    }),
   );
+  const typecheckSettings = join(scratch, 'typecheck-settings.json');
+  await writeFile(
+    typecheckSettings,
+    JSON.stringify({ rounds: 1, profiles: ['smoke'] }),
+  );
+  const typecheckReport = record(
+    json(
+      (
+        await run(
+          process.execPath,
+          [
+            join(benchmarkHarness, 'bench/check-typecheck.ts'),
+            benchmarkPlan,
+            join(scratch, 'typecheck-benchmark'),
+            typecheckSettings,
+          ],
+          scratch,
+        )
+      ).stdout,
+    ),
+  );
+  assert.equal(typecheckReport.status, 'complete');
+  assert.equal(record(typecheckReport.case).id, 'core-typecheck');
+  assert.ok(Array.isArray(typecheckReport.observations));
+  assert.equal(typecheckReport.observations.length, 6);
   const outputGrowth = record(
     json(
       (

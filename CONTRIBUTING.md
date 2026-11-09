@@ -159,8 +159,69 @@ names that directory. Successful checks remove scratch output.
 
 Canonical installed-package verification runs the same family through a copied
 harness, the installed compiler and the consumer's TypeScript. These limits cover
-deterministic generated source; bundled size, typecheck cost, latency, allocations
-and broader performance acceptance remain unqualified.
+deterministic generated source; bundled size, latency, allocations and broader
+performance acceptance remain unqualified. The separate synthetic typecheck runner below measures checking
+cost without an acceptance threshold.
+
+### Synthetic TypeScript checking
+
+Run the maintained `core-typecheck` case, version 2, against the complete installed
+artifacts in the [artifact plan](#artifact-preparation):
+
+```sh
+bun run bench:typecheck .local/bench-plan.json .local/typecheck-run-001
+```
+
+The output directory must be new and its parent must exist. An optional third
+argument names a JSON settings file with `seed` (unsigned 32-bit integer),
+`rounds` (1–30, default 3), and `profiles` (unique IDs from the list below).
+The default seed is 20261109. Plans, settings and evidence belong in ignored
+`.local/` storage. Artifact preparation and TypeScript installation may require
+registry access.
+
+| Profile                                          |          Components |         Operations | Extra string fields per object |
+| ------------------------------------------------ | ------------------: | -----------------: | -----------------------------: |
+| `base`                                           |                  32 |                 32 |                              1 |
+| `distinct-600`, `distinct-1200`, `distinct-3000` | 600 / 1,200 / 3,000 | same as components |                              1 |
+| `width-32`, `width-125`, `width-128`             |                  32 |                 32 |                 32 / 125 / 128 |
+| `shared-1`, `shared-8`                           |               1 / 8 |                 32 |                              1 |
+| `shared-wide`                                    |                   1 |                 32 |                             32 |
+
+Every object also has a distinct literal `kind`, integer `score`, and string-array
+`tags`. The distinct-graph series deliberately grows component/operation pairs,
+preserving the existing scale workload. Width and sharing each vary one axis
+from `base`; `shared-wide` combines them. All cases stay within existing compiler
+limits. `width-125` has 128 total properties, at the current parser-table
+boundary; `width-128` has 131 and exercises chunked parsers. Keep that
+representation change visible when interpreting width results. A separate `smoke` profile (2 components, 3 operations, 2 extra fields)
+is available for correctness checks and excluded from the default matrix.
+
+Complete operation and request/response schema inventories qualify outside timing.
+All generated modules are checked. Small consumers exercise first, middle and
+last operations: request validation, builders, response narrowing, response
+validation, array inference, field access and inferred exports. Targeted negative
+type probes protect required inputs, literal types and field types against
+accidental `any`. These cases cover core types and protocol APIs; executable
+clients, queries, mutations and pagination remain a later slice.
+
+The runner reuses artifact preparation and installs both TypeScript 5.7.3 (the
+consumer minimum) and the exact development version from `package.json`.
+Installation, generation, consumer qualification and effective-option capture
+finish before measurement. Each round shuffles all artifact/profile/toolchain
+cells with the recorded seed, then runs fresh TypeScript processes serially.
+There are no performance thresholds. Canonical verification runs only the small
+correctness tests and one installed smoke round on both TypeScript lines.
+
+`report.json` records whole-process wall milliseconds, including TypeScript
+startup and project loading; TypeScript's reported check milliseconds,
+instantiations and memory in unconverted reported `K` units; effective project options; dimensions; tool
+versions and CPU/OS details; and archive, lock, installed-code, harness and project identities.
+TypeScript's memory counter is **not peak process memory**, which is unmeasured.
+Raw stdout/stderr, qualified projects, the schedule and individual samples remain
+in the run directory. Missing, duplicate or malformed diagnostic counters fail
+explicitly rather than becoming zero. Failed runs retain available evidence and
+`failure.json` and exit nonzero. Timings describe these synthetic workloads on the
+recorded machine/toolchain; they do not establish complete application performance.
 
 ### Artifact preparation
 
@@ -382,10 +443,8 @@ binding, size, typecheck, and runtime comparisons (default baseline: `HEAD`). Us
 `node scripts/benchmark-query-sharing.ts` for sharing comparisons. Timings are
 local evidence, never machine-dependent CI thresholds. Include the source
 revision, toolchain versions and exact command scope when reporting results.
-Use `node scripts/benchmark-typecheck.ts [baseline-ref] [path-to-tsc]` for
-600-, 1,200-, and 3,000-component contracts with distinct parser graphs. Rebuild
-first; the optional compiler path lets the same fixture measure each supported
-TypeScript line.
+For generated TypeScript costs, use the
+[synthetic checking runner](#synthetic-typescript-checking).
 
 ### Application adoption
 
