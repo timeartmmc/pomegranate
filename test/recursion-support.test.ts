@@ -221,6 +221,83 @@ void test('recursive failures retain the nested field path at standalone, reques
     );
 });
 
+void test('recursive limit causes keep earlier issues and stay under their request part', async (t) => {
+  const content = { 'application/json': { schema: ref('Node') } };
+  const input = {
+    openapi: '3.1.2',
+    info: { title: 'Synthetic recursive failure attribution', version: '1' },
+    components: {
+      schemas: {
+        Node: {
+          type: 'object',
+          properties: {
+            caption: { type: 'string' },
+            children: { type: 'array', items: ref('Node') },
+          },
+        },
+      },
+    },
+    paths: {
+      '/nodes': {
+        post: {
+          operationId: 'save',
+          parameters: [
+            {
+              name: 'limit',
+              in: 'query',
+              required: true,
+              schema: { type: 'integer' },
+            },
+          ],
+          requestBody: { required: true, content },
+          responses: { 200: { description: 'Saved node', content } },
+        },
+      },
+    },
+  };
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(input, {
+      clients: ['consumer'],
+      surfaces: { consumer: ['save'] },
+      standalone: { node: { schema: ref('Node').$ref, usage: 'request' } },
+    }),
+  );
+  const client = await importGenerated<RuntimeClient>(
+    root,
+    'client.consumer.ts',
+  );
+  const node = (
+    await importGenerated<StandaloneModule>(root, 'standalone.node.ts')
+  ).schema;
+  let deep: Record<string, unknown> = {};
+  for (let level = 0; level < 70; level++) deep = { children: [deep] };
+  const cause = 'recursive validation depth exceeds 128 levels';
+  const failure = node.safeParse({ caption: 1, children: [deep] });
+  assert.equal(failure.success, false);
+  if (!failure.success)
+    assert.deepEqual(failure.error.issues.slice(0, 2), [
+      { path: [], message: cause },
+      { path: ['caption'], message: 'expected a string' },
+    ]);
+  assert.throws(
+    () =>
+      present(client.operations.save).build({
+        query: { limit: 'x' },
+        body: { children: [deep] },
+      }),
+    (error) => {
+      assert.ok(error instanceof client.RequestValidationError);
+      assert.deepEqual(
+        error.issues.slice(0, 2).map(({ path }) => path),
+        [['query', 'limit'], ['body']],
+      );
+      assert.equal(error.issues[1]?.message, cause);
+      return true;
+    },
+  );
+});
+
 void test('cycles through recursive arrays, maps, mutual objects and tagged unions fail normally and release traversal state', async (t) => {
   const { roots } = await generated(t);
   const array: unknown[] = [];

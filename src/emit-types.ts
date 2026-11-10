@@ -8,7 +8,7 @@ import type {
   Standalone,
 } from './model.js';
 import { schemaType, typeSymbol } from './schema-types.js';
-import { recursiveSchemas, schemaReferences } from './schemas.js';
+import { recursiveSchemas, schemaReferences, terminalName } from './schemas.js';
 import { byteBudget, sourceBudget } from './source-budget.js';
 
 type Variant = {
@@ -159,24 +159,8 @@ export function renderTypes(
     }),
     [parents.request, parents.response],
   );
-  const aliases: Record<Direction, Map<string, string>> = {
-    request: new Map(),
-    response: new Map(),
-  };
-  function terminal(name: string, direction: Direction): string {
-    const path: string[] = [];
-    let current = name;
-    while (!aliases[direction].has(current)) {
-      const schema = descriptor.schemas[direction].get(current)!;
-      if (schema.kind !== 'ref') break;
-      path.push(current);
-      current = schema.name;
-    }
-    const target = aliases[direction].get(current) ?? current;
-    aliases[direction].set(current, target);
-    for (const alias of path) aliases[direction].set(alias, target);
-    return target;
-  }
+  const terminal = (name: string, direction: Direction): string =>
+    terminalName(name, descriptor.schemas[direction]);
   const identities = new Map<string, number>();
   const identity = (
     name: string,

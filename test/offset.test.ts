@@ -172,6 +172,7 @@ void test('offset contracts reject unsupported request and success shapes rather
       { type: 'integer', maximum: -1 },
       { type: 'integer', exclusiveMinimum: 0 },
       { type: 'integer', enum: [1, 2] },
+      { allOf: [{ type: 'integer' }, { type: 'integer', minimum: 1 }] },
     ].map(
       (
         schema,
@@ -286,6 +287,16 @@ void test('offset contracts reject unsupported request and success shapes rather
     schema: { $ref: '#/components/schemas/Origin', exclusiveMinimum: 0 },
   });
   await assert.rejects(compile(document, offsetSelection), expected);
+  // allOf conjuncts reach the origin check through the validator's scalar plan.
+  Object.assign(document.paths['/records/{category}'].get.parameters[1]!, {
+    schema: {
+      allOf: [
+        { type: 'integer', format: 'int32' },
+        { $ref: '#/components/schemas/Origin' },
+      ],
+    },
+  });
+  await compile(document, offsetSelection);
 });
 
 void test('required referenced offsets support zero without inserting annotated request defaults', async () => {

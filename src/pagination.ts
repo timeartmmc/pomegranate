@@ -6,6 +6,7 @@ import type {
   Schema,
   SchemaTable,
 } from './model.js';
+import { scalarValidationPlan } from './intersections.js';
 import { resolveSchema } from './schemas.js';
 import { literalViolation } from './scalar-rules.js';
 
@@ -50,20 +51,14 @@ export function validatePagination(
         'offset must name a nonnullable integer query parameter',
       );
     // Offset traversal has an explicit zero origin, independent of OpenAPI
-    // default annotations. Every reference restriction must admit that origin.
-    let schema = parameter.schema;
-    while (schema.kind === 'ref') {
-      if (literalViolation(schema.constraints)(0))
-        fail(
-          `${location}.offset`,
-          'offset schema must accept the initial value 0',
-        );
-      schema = requestSchemas.get(schema.name)!;
-    }
+    // default annotations. Reference restrictions and allOf conjuncts combine
+    // in the validator's scalar plan; its bounds and literals must admit that
+    // origin. Every remaining multipleOf assertion accepts zero.
+    const { base } = scalarValidationPlan(parameter.schema, requestSchemas);
     if (
-      schema.kind !== 'integer' ||
-      literalViolation(schema)(0) ||
-      (schema.literals && !schema.literals.includes(0))
+      base.kind !== 'integer' ||
+      literalViolation(base)(0) ||
+      (base.literals && !base.literals.includes(0))
     )
       fail(
         `${location}.offset`,

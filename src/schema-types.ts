@@ -60,9 +60,11 @@ export function schemaType(
     case 'union':
       return `(${schema.branches.map(child).join(' | ')})`;
     case 'intersection':
+      // Composition admits only scalar conjuncts of one primitive type, with
+      // number and integer both rendering as number. Literals carry narrowing.
       return schema.literals
         ? schema.literals.map((value) => jsonSource(value)).join(' | ')
-        : `(${schema.branches.map((branch) => `(${child(branch)})`).join(' & ')})`;
+        : child(schema.branches[0]!);
     case 'binary':
       if (target === undefined)
         fail(

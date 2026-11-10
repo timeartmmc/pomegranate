@@ -95,13 +95,20 @@ export function recursiveParse<T>(
     );
   traversal.parserDepth++;
   recursiveCalls++;
+  const start = issues.length;
   try {
     const value = parse(input, issues, rules);
-    // Speculative unions may prefix and truncate deep branch messages. Keep the
-    // traversal's cause visible at its root, within the existing issue quota.
+    // Speculative unions may prefix and truncate deep branch messages. Put the
+    // cause first among this value's issues; a full quota replaces one of them.
     if (ownsTraversal && value === invalid && traversal.failure) {
-      if (issues.length)
-        issues[0] = { path: [], message: traversal.failure, fatal: true };
+      // Annotate the empty path: non-strict consumers would infer any[].
+      const cause: Problem = {
+        path: [],
+        message: traversal.failure,
+        fatal: true,
+      };
+      if (remaining(issues) > 0) issues.splice(start, 0, cause);
+      else if (issues.length > start) issues[start] = cause;
       else report(issues, traversal.failure, true);
     }
     return value;

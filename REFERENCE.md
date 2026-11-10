@@ -562,8 +562,10 @@ This budget applies to JSON, YAML, and programmatic inputs. The YAML parser's
 whole-document expansion limit remains separate.
 
 `allOf` composition also bounds merged-field and scalar-assertion preprocessing
-to 1,000,000 work units per schema table. Shared references do not bypass this
-limit; excessive composition receives an actionable diagnostic before generation.
+to 1,000,000 work units per schema table, and resolves at most 256 nested
+schemas at a time, including members of recursive component groups. Shared
+references do not bypass these limits; excessive composition receives an
+actionable diagnostic before generation.
 
 Finite schema structure supports at most 128 structural levels, including
 structure behind references. Pure aliases add no levels. Each inline schema is
@@ -767,7 +769,12 @@ explicit `type: "object"` assertion, directly or through a reference. Without
 that assertion, object keywords alone also admit primitives under OpenAPI; POM
 diagnoses that unsupported form instead of changing its meaning.
 Multiple scalar branches must have the same kind, except that `number` and
-`integer` may intersect.
+`integer` may intersect. Other branches and sibling keywords need an explicit
+`type`, with one exception: string, numeric, and array constraints beside a
+single referenced branch restrict that reference, as 3.1 reference siblings do.
+For example, `{ "allOf": [{ "$ref": "#/components/schemas/Codes" }], "maxItems": 2 }`
+limits the referenced array, including in 3.0. Declare a type beside
+`enum`, `const`, or `format`, and in branches such as `{ "maxLength": 3 }`.
 
 For example, a reusable base may declare shared fields and an operation-specific
 schema may add fields:
@@ -829,7 +836,10 @@ single-wrapper support; intersecting them with additional assertions remains
 unsupported.
 
 This stage does not support intersections involving typed dynamic maps, multiple
-array schemas, binary schemas, or unions with other schemas. An unconstrained
+array schemas, binary schemas, or unions with other schemas. A nullable type
+beside or within a multi-branch composition is such a union: every branch would
+also need to accept null. Wrap the composition in an outer `anyOf` with a
+null-only branch instead. An unconstrained
 object such as `{ "type": "object" }` adds no constraints when combined with a
 fixed object; an empty schema `{}` is neutral. A single branch can still wrap
 existing supported shapes.
@@ -866,7 +876,9 @@ bindings that validate the same value without descending into a child.
 Each object property, array item, or map value adds one descent level; a child
 object inside an array property is two levels below its parent object.
 Excessive depth or work produces an ordinary validation error, or a
-protocol failure for an observed response. One allowance covers the complete
+protocol failure for an observed response. The error reports the limit first at
+the path of the recursive value and keeps issues found in other fields and
+request parts, within the ordinary issue budget. One allowance covers the complete
 value, including outer or inline containers and sibling recursive children.
 The limits bound expansion
 of shared acyclic inputs as well as ordinary trees. The compiler's separate

@@ -22,6 +22,12 @@ import {
 type ScalarKind = 'string' | 'number' | 'integer' | 'boolean' | 'null';
 type Access = Readonly<{ readOnly: boolean; writeOnly: boolean }>;
 const maximumCompositionWork = 1_000_000;
+// Composition recurses through inline structure and, inside recursive component
+// groups, through members not yet composed. Accepted output has at most 128
+// structural levels; this bound leaves room for same-value allOf chains while
+// stopping well before the JS stack (measured near 800 nested schemas with
+// Node's default stack size).
+const maximumCompositionNesting = 256;
 
 function compositionBudget(): (amount: number, location: string) => void {
   let remaining = maximumCompositionWork;
@@ -112,7 +118,11 @@ export function scalarValidationPlan(
   }
   const known = cache.get(schema);
   if (known) return known;
-  const location = schema.kind === 'intersection' ? schema.location : 'allOf';
+  // Callers plan composed intersections and constrained references.
+  const location =
+    schema.kind === 'intersection' || schema.kind === 'ref'
+      ? schema.location
+      : 'allOf';
   let charge = scalarWork.get(schemas);
   if (!charge) {
     charge = compositionBudget();
@@ -444,6 +454,19 @@ export function createIntersectionNormalizer(
       return materializeObject({ ...branch, ...access }, location);
     }
     const targets = branches.map((branch) => resolve(branch, location));
+    // A nullable type is a union with null, so every other conjunct would also
+    // need to accept null. Name the supported nullable form instead of the
+    // generic union restriction below.
+    if (
+      targets.some(
+        ({ schema }) =>
+          schema.kind === 'union' && schema.sourceTypeArray === true,
+      )
+    )
+      fail(
+        location,
+        'allOf cannot combine a nullable type with other branches; wrap the composition in an outer anyOf with a null-only branch instead',
+      );
     if (targets.some(({ schema }) => schema.kind === 'object')) {
       if (
         targets.some(
@@ -569,6 +592,10 @@ export function createIntersectionNormalizer(
         ...access,
       });
     }
+    // Scalar conjunctions keep their branches for emission. Plan them once here
+    // to diagnose contradictions before selection, and expose the narrowed
+    // literals on the canonical node for generated types. Register the plan
+    // under that node so later lookups in this table reuse it.
     const result = schemaNode({
       kind: 'intersection',
       branches,
@@ -592,6 +619,11 @@ export function createIntersectionNormalizer(
     const known = normalized.get(input);
     if (known) return known;
     if (processing.has(input)) recursiveExpansion(location);
+    if (processing.size >= maximumCompositionNesting)
+      fail(
+        location,
+        `allOf composition exceeds the supported limit of ${maximumCompositionNesting} nested schemas; reduce structural nesting, recursive regions or chains of allOf references`,
+      );
     processing.add(input);
     charge(1, location);
     try {

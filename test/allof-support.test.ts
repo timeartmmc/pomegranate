@@ -620,6 +620,24 @@ const invalid: readonly [string, Schema, RegExp][] = [
     },
     /admit no literal value/,
   ],
+  [
+    'untyped scalar branch',
+    { allOf: [ref('Combined'), { maxLength: 3 }] },
+    /allOf members without object keywords require an explicit type/,
+  ],
+  [
+    'untyped literal sibling',
+    { allOf: [ref('Combined')], enum: ['A'] },
+    /allOf members without object keywords require an explicit type/,
+  ],
+  [
+    'nullable type beside object branches',
+    {
+      type: ['object', 'null'],
+      allOf: [{ type: 'object', properties: { id: { type: 'integer' } } }],
+    },
+    /nullable type.*outer anyOf with a null-only branch/,
+  ],
 ];
 for (const [name, schema, message] of invalid) {
   void test(`unsupported allOf ${name} diagnoses before selection`, async () => {
@@ -641,6 +659,108 @@ void test('allOf component cycles diagnose without recursive traversal or silent
     Other: { allOf: [ref('Combined')] },
   });
   await assert.rejects(compile(input, selection), /cycl|recurs/);
+});
+
+void test('deep allOf composition through recursive components stops with a diagnostic before the call stack', async () => {
+  const count = 2000;
+  // Dependency order starts mid-cycle, so composition must resolve members
+  // that are not yet composed, structurally or at the same value.
+  const name = (index: number) =>
+    `N${String((index + count / 2) % count).padStart(4, '0')}`;
+  for (const sameValue of [false, true]) {
+    const schemas: Record<string, Schema> = { Combined: { type: 'string' } };
+    for (let index = 0; index < count - 1; index++) {
+      const composed = {
+        allOf: [
+          ref(name(index + 1)),
+          { type: 'object', properties: { [`p${index}`]: { type: 'string' } } },
+        ],
+      };
+      schemas[name(index)] = sameValue
+        ? composed
+        : { type: 'object', properties: { next: composed } };
+    }
+    schemas[name(count - 1)] = {
+      type: 'object',
+      properties: { back: ref(name(0)) },
+    };
+    await assert.rejects(compile(document(schemas), selection), (error) => {
+      assert.ok(error instanceof ContractError);
+      assert.match(
+        error.message,
+        /allOf composition exceeds the supported limit of 256 nested schemas/,
+      );
+      return true;
+    });
+  }
+});
+
+void test('allOf sibling constraints restrict one referenced value in OpenAPI 3.0 and 3.1', async (t) => {
+  for (const openapi of ['3.0.3', '3.1.2']) {
+    const contract = (schemas: Record<string, Schema>) => ({
+      openapi,
+      info: { title: 'Synthetic constrained allOf references', version: '1' },
+      paths: {},
+      components: {
+        schemas: {
+          Code: { type: 'string', pattern: '^A' },
+          Fixed: { type: 'object', properties: { id: { type: 'integer' } } },
+          ...schemas,
+        },
+      },
+    });
+    await assert.rejects(
+      compile(
+        contract({
+          Nullable: {
+            ...(openapi === '3.0.3'
+              ? { type: 'object', nullable: true }
+              : { type: ['object', 'null'] }),
+            allOf: [ref('Fixed')],
+          },
+        }),
+        {
+          clients: [],
+          standalone: {
+            fixed: { schema: ref('Fixed').$ref, usage: 'request' },
+          },
+        },
+      ),
+      /nullable type.*outer anyOf with a null-only branch/,
+    );
+    const input = contract({
+      Short: { allOf: [ref('Code')], maxLength: 2, pattern: 'Z$' },
+      Codes: { type: 'array', items: ref('Code') },
+      Pair: { allOf: [ref('Codes')], maxItems: 2 },
+    });
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(input, {
+        clients: [],
+        standalone: {
+          short: { schema: ref('Short').$ref, usage: 'request' },
+          pair: { schema: ref('Pair').$ref, usage: 'request' },
+        },
+      }),
+    );
+    const [short, pair] = await Promise.all(
+      ['short', 'pair'].map(
+        async (name) =>
+          (
+            await importGenerated<StandaloneModule>(
+              root,
+              `standalone.${name}.ts`,
+            )
+          ).schema,
+      ),
+    );
+    assert.equal(present(short).parse('AZ'), 'AZ');
+    for (const value of ['AZZ', 'BZ', 'AB'])
+      assert.equal(present(short).safeParse(value).success, false);
+    assert.deepEqual(present(pair).parse(['A1', 'A2']), ['A1', 'A2']);
+    for (const value of [['A1', 'A2', 'A3'], ['B1']])
+      assert.equal(present(pair).safeParse(value).success, false);
+  }
 });
 
 void test('oversized unused scalar composition graphs receive an actionable compilation limit', async () => {

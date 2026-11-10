@@ -94,12 +94,15 @@ export const numberConstraints = [
 ] as const;
 export const arrayConstraints = ['minItems', 'maxItems'] as const;
 export const objectConstraints = ['minProperties', 'maxProperties'] as const;
-const constraintKeys = [
+// Beside a single allOf reference, these restrict it like 3.1 reference
+// siblings without repeating its type. Object count bounds instead compose as
+// object fragments.
+const referenceConstraints: readonly string[] = [
   ...stringConstraints,
   ...numberConstraints,
   ...arrayConstraints,
-  ...objectConstraints,
 ];
+const constraintKeys = [...referenceConstraints, ...objectConstraints];
 
 const maximumSchemaNesting = 128;
 const maximumInlineSchemaNesting = 32;
@@ -474,18 +477,29 @@ function normalizeIntersection(
     ),
   );
   if (Object.keys(siblings).length > 0) {
+    const only = branches.length === 1 ? branches[0] : undefined;
     if (
-      !Object.hasOwn(siblings, 'type') &&
-      !objectKeys.some((key) => Object.hasOwn(siblings, key)) &&
-      !Object.hasOwn(siblings, '$ref') &&
-      branches.length === 1 &&
-      branches[0]!.kind === 'ref'
+      only?.kind === 'ref' &&
+      Object.keys(siblings).every((key) => referenceConstraints.includes(key))
     ) {
-      // Constrained aliases retain the original reference as an independent
-      // assertion, so sibling patterns cannot replace the branch's own rules.
-      siblings.$ref = `#/components/schemas/${branches[0]!.name}`;
-    }
-    branches.push(member(siblings, location));
+      // Untyped sibling constraints restrict the one referenced value, exactly
+      // like 3.1 reference siblings. An unconstrained branch adds no rule, so
+      // one constrained reference at the author's $ref represents the whole
+      // schema. A constrained branch stays independent: a reference holds one
+      // pattern or multipleOf, and sibling rules must not replace its own.
+      const constrained = member(
+        { ...siblings, $ref: `#/components/schemas/${only.name}` },
+        location,
+      );
+      if (constrained.kind === 'ref' && !hasConstraints(only.constraints))
+        return {
+          ...constrained,
+          location: only.location,
+          readOnly: constrained.readOnly || only.readOnly,
+          writeOnly: constrained.writeOnly || only.writeOnly,
+        };
+      branches.push(constrained);
+    } else branches.push(member(siblings, location));
   }
   if (branches.length === 1) return branches[0]!;
   return { kind: 'intersection', branches, location: `${location}.allOf` };
@@ -929,7 +943,10 @@ function normalizeShapeValue(
     return normalizeScalar(value, location, kind, registered, false, work);
   fail(
     `${location}.type`,
-    'supported types are object, array, string, number, integer, boolean and null; type arrays require one supported non-null type and null; implicit types are unsupported',
+    // Only object keywords can infer their type from another allOf member.
+    intersectionMember && kind === undefined
+      ? 'allOf members without object keywords require an explicit type; declare the composed type here, for example "type": "string"'
+      : 'supported types are object, array, string, number, integer, boolean and null; type arrays require one supported non-null type and null; implicit types are unsupported',
   );
 }
 
@@ -1420,4 +1437,31 @@ export function resolveSchema(schema: Schema, schemas: SchemaTable): Schema {
     resolved = scalarIntersectionBase(resolved, schemas);
   for (const alias of aliases) cache.set(alias, resolved);
   return resolved;
+}
+
+// Constraint siblings never change a reference's declaration identity. Types
+// and container refinements share the terminal declaration of a whole chain.
+const terminalNames = new WeakMap<SchemaTable, Map<string, string>>();
+
+export function terminalName(name: string, schemas: SchemaTable): string {
+  let cache = terminalNames.get(schemas);
+  if (!cache) {
+    cache = new Map();
+    terminalNames.set(schemas, cache);
+  }
+  const aliases: string[] = [];
+  let current = name;
+  for (;;) {
+    const known = cache.get(current);
+    if (known !== undefined) {
+      current = known;
+      break;
+    }
+    const schema = schemas.get(current)!;
+    if (schema.kind !== 'ref') break;
+    aliases.push(current);
+    current = schema.name;
+  }
+  for (const alias of aliases) cache.set(alias, current);
+  return current;
 }

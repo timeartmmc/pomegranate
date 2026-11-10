@@ -34,6 +34,7 @@ import {
   schemaBranchLocation,
   schemaReferences,
   stringConstraints as stringRules,
+  terminalName,
 } from './schemas.js';
 import { sourceBudget } from './source-budget.js';
 
@@ -203,32 +204,6 @@ export function schemaRenderer(
       `generated parser ${name}`,
     );
     return name;
-  }
-
-  const containerTerminals = {
-    request: new WeakMap<Schema, string>(),
-    response: new WeakMap<Schema, string>(),
-  };
-  function containerTerminal(
-    value: Extract<Schema, { kind: 'ref' }>,
-    direction: Direction,
-  ): string {
-    const cache = containerTerminals[direction];
-    const pending: Schema[] = [];
-    let current: Schema = value;
-    let terminal = value.name;
-    while (current.kind === 'ref') {
-      const known = cache.get(current);
-      if (known !== undefined) {
-        terminal = known;
-        break;
-      }
-      pending.push(current);
-      terminal = current.name;
-      current = schemas[direction].get(terminal)!;
-    }
-    for (const reference of pending) cache.set(reference, terminal);
-    return terminal;
   }
 
   function objectChecks(
@@ -598,7 +573,7 @@ export function schemaRenderer(
           return scalarPlan();
         // Container aliases keep one terminal constructor and their merged
         // bounds; they never rebuild or replay the child graph.
-        const terminal = containerTerminal(value, direction);
+        const terminal = terminalName(value.name, schemas[direction]);
         const terminalSchema = schemas[direction].get(terminal)!;
         const base = reference(terminal, direction).source;
         if (terminalSchema.kind === 'object' || terminalSchema.kind === 'map') {
