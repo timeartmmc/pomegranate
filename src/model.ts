@@ -19,6 +19,8 @@ export type Constraints = {
   readonly float: true | undefined;
   readonly minItems: number | undefined;
   readonly maxItems: number | undefined;
+  // Only true asserts uniqueness; false is the JSON Schema default.
+  readonly uniqueItems: true | undefined;
   readonly minProperties: number | undefined;
   readonly maxProperties: number | undefined;
 };
@@ -56,13 +58,17 @@ export type SchemaDraft = {
   | {
       readonly kind: 'union';
       readonly branches: readonly Schema[];
+      // anyOf accepts any matching branch; oneOf requires exactly one. Keep this
+      // independent of discriminator dispatch, which selects one tagged branch.
+      readonly cardinality?: 'any' | 'one' | undefined;
       // Diagnostic provenance: these branches came from a nullable type
       // declaration, rather than an anyOf keyword in the source document.
       readonly sourceTypeArray?: true | undefined;
       readonly discriminator?:
         | {
             readonly propertyName: string;
-            readonly mapping: ReadonlyMap<string, string>;
+            // Tag to branch position, so composed branches keep their tags.
+            readonly mapping: ReadonlyMap<string, number>;
           }
         | undefined;
     }
@@ -84,6 +90,7 @@ export type SchemaDraft = {
       readonly items: Schema;
       readonly minItems?: number | undefined;
       readonly maxItems?: number | undefined;
+      readonly uniqueItems?: true | undefined;
     }
   | {
       readonly kind: 'string';
@@ -136,11 +143,13 @@ export type Schema = {
   | {
       readonly kind: 'union';
       readonly branches: readonly Schema[];
+      readonly cardinality: 'any' | 'one';
       readonly sourceTypeArray: true | undefined;
       readonly discriminator:
         | {
             readonly propertyName: string;
-            readonly mapping: ReadonlyMap<string, string>;
+            // Tag to branch position, so composed branches keep their tags.
+            readonly mapping: ReadonlyMap<string, number>;
           }
         | undefined;
     }
@@ -155,7 +164,7 @@ export type Schema = {
     } & Pick<Constraints, 'minProperties' | 'maxProperties'>)
   | ({ readonly kind: 'array'; readonly items: Schema } & Pick<
       Constraints,
-      'minItems' | 'maxItems'
+      'minItems' | 'maxItems' | 'uniqueItems'
     >)
   | ({
       readonly kind: 'string';

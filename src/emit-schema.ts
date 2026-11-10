@@ -26,7 +26,6 @@ import { isRequired } from './required-index.js';
 import { scalarValidationPlan } from './intersections.js';
 import { stringFormatHelpers } from './formats.js';
 import {
-  arrayConstraints as arrayRules,
   numberConstraints,
   objectConstraints as objectRules,
   recursiveSchemas,
@@ -96,6 +95,26 @@ export type ObjectField = Readonly<{
 
 // float is an internal format rule, never an accepted schema keyword.
 const numberRules = ['float', ...numberConstraints] as const;
+
+// Requests compare the parsed values they send. Responses compare received
+// items, which fixed-object parsing may strip, as JSON Schema requires.
+function arrayRules(
+  limits: ConstraintInput,
+  direction: Direction,
+): Expression | undefined {
+  return rules(
+    limits,
+    ['minItems', 'maxItems'],
+    limits.uniqueItems
+      ? [
+          [
+            'uniqueItems',
+            literal(direction === 'request' ? 'sent' : 'received'),
+          ],
+        ]
+      : [],
+  );
+}
 
 function rules(
   limits: ConstraintInput,
@@ -597,7 +616,7 @@ export function schemaRenderer(
             containerBounds[direction],
             constraintRecord(terminalSchema),
           );
-          const limits = rules(merged, arrayRules)!;
+          const limits = arrayRules(merged, direction)!;
           // The canonical parser owns its item parser and observes length once.
           // Supply the full intersection so all bounds run before any item read.
           return construct(
@@ -631,19 +650,30 @@ export function schemaRenderer(
           const cases = constant(
             `cases_${name}`,
             object(
-              [...mapping.keys()]
-                .sort()
-                .map((tag) => [tag, component(mapping.get(tag)!, direction)]),
+              [...mapping.keys()].sort().map((tag) => {
+                const index = mapping.get(tag)!;
+                return [
+                  tag,
+                  child(
+                    value.branches[index]!,
+                    schemaBranchLocation(value, location, index),
+                  ),
+                ];
+              }),
             ).source,
           );
           return construct('taggedParser', [jsonSource(propertyName), cases]);
         }
-        const [left, right, ...rest] = value.branches.map((branch, index) =>
-          child(branch, schemaBranchLocation(value, location, index)),
-        );
-        if (!left || !right || rest.length > 0)
-          fail(location, 'expected a two-branch union');
-        return construct('unionParser', [left.source, right.source]);
+        // Validation proved any oneOf branches disjoint, so both cardinalities
+        // use first-match parsing. One array argument keeps wide unions from
+        // becoming variadic calls.
+        return construct('unionParser', [
+          array(
+            value.branches.map((branch, index) =>
+              child(branch, schemaBranchLocation(value, location, index)),
+            ),
+          ).source,
+        ]);
       }
       case 'intersection':
         return scalarPlan();
@@ -662,7 +692,7 @@ export function schemaRenderer(
           rules(value, objectRules),
         );
       case 'array': {
-        const limits = rules(value, arrayRules);
+        const limits = arrayRules(value, direction);
         const items = child(value.items, `${location}.items`).source;
         const defaults = limits
           ? constant(`rules_${name}`, limits.source, 'ArrayRules')

@@ -223,8 +223,16 @@ void test('schema/property/discriminator maps preserve named keys, missing refer
   const choice = present(descriptor.schemas.request.get('Choice'));
   assert.ok(choice.kind === 'union' && choice.discriminator);
   expectMap(choice.discriminator.mapping);
-  assert.equal(choice.discriminator.mapping.get('toString'), 'A');
-  assert.equal(choice.discriminator.mapping.get('valueOf'), 'B');
+  // Tags select branch positions; each position holds its mapped reference.
+  for (const [tag, name] of [
+    ['toString', 'A'],
+    ['valueOf', 'B'],
+  ] as const) {
+    const branch: Schema | undefined =
+      choice.branches[present(choice.discriminator.mapping.get(tag))];
+    assert.ok(branch?.kind === 'ref');
+    assert.equal(branch.name, name);
+  }
   assert.equal(choice.discriminator.mapping.get('hasOwnProperty'), undefined);
   const formats = normalizeFormats({
     toString: { type: 'string', pattern: '^a' },

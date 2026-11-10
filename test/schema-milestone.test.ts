@@ -380,15 +380,15 @@ for (const [name, mutate, pattern] of [
     /discriminator/,
   ],
   [
-    'overlapping anyOf',
+    'overlapping oneOf',
     (d) => {
       Object.assign(d.components.schemas.Location, {
         items: {
-          anyOf: [{ type: 'number' }, { type: 'integer' }],
+          oneOf: [{ type: 'number' }, { type: 'integer' }],
         },
       });
     },
-    /supported anyOf/,
+    /oneOf alternatives without a discriminator must accept disjoint JSON types/,
   ],
   [
     'nonproductive schema alias cycle',

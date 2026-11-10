@@ -350,7 +350,7 @@ validation, including operations excluded from output.
 | Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; string and optional nullable string request headers; simple path/header and form query serialization |
 | Bodies      | Required or optional JSON/text bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON, text, or bodyless responses; string response headers; local component references and aliases                                                                                                            |
 | Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; productive local component references; restricted unions and maps described below                                                         |
-| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                  |
+| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length and `uniqueItems`, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                |
 | Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, `ipv6`, and `byte`; string `password` hint; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                             |
 
 Schema syntax follows the declared OpenAPI version. OpenAPI 3.0 schemas use
@@ -502,16 +502,27 @@ Supported schema composition:
 - [`allOf`](#allof-composition) supports single-branch wrappers and fixed-object
   or scalar compositions, including constrained overlapping fields, under the
   limits below.
-- `anyOf` has two branches: a schema and `null`, or `string` and `integer`.
-  A `type: "null"` branch requires 3.1; 3.0 nullable schemas use `nullable: true`
-  as described above.
+- `anyOf` accepts two or more supported schemas. A value is valid when any
+  branch accepts it, and POM returns the first matching branch's parsed value
+  in declaration order. Fixed-object branches keep their direction rules:
+  requests reject fields unknown to a branch and responses strip them, so the
+  first matching response branch decides which fields remain. Nested
+  alternatives that accept the same JSON type may validate one value again in
+  each branch; POM rejects contracts where that could exceed 1,024 evaluations
+  of one value, outside recursive regions, which keep their runtime budgets. A
+  `type: "null"` branch requires 3.1; 3.0 nullable schemas use
+  `nullable: true` as described above.
+- `oneOf` without a discriminator requires branches that accept disjoint JSON
+  types: null, boolean, string, number (including integer), array, and object.
+  Exactly one branch can then match. Use a discriminator for object
+  alternatives, or `anyOf` when the first matching branch is acceptable.
 - In 3.1, nullable schemas accept `"type": ["string", "null"]` with any supported
   non-null type and `"null"` in either order. Exactly two distinct type names
   are required. Scalar `enum` and `const` still restrict accepted values,
   including whether `null` is accepted. Existing parameter and multipart
   restrictions still apply.
-- `oneOf` uses component references without sibling constraints and
-  requires an explicit discriminator mapping. Each branch requires the
+- A discriminated `oneOf` uses component references without sibling
+  constraints and requires an explicit discriminator mapping. Each branch requires the
   discriminator field with a distinct string literal; the mapping must cover
   every branch exactly once.
 - Objects with fixed properties use `additionalProperties: false` or omission.
@@ -718,6 +729,21 @@ positions and returns a fresh dense array. Later growth is ignored; positions
 removed during parsing still undergo item validation. Missing slots cannot be
 filled by inherited numeric properties. Arbitrary JSON arrays use the same policy.
 
+`uniqueItems: true` rejects an array with equal items, reporting the later
+position. Items compare as JSON values: strings exactly, numbers by value (`1`
+equals `1.0` and `0` equals `-0`), arrays by position, and objects by members
+regardless of order. Requests compare the validated items POM sends, so
+undefined optional fields are ignored. Responses compare the received items,
+as JSON Schema specifies: items that differ only in fields POM strips stay
+distinct, so the returned array can hold items that look equal. Only when
+parsed items coincide does POM read those received items in full, including
+stripped fields. Shared acyclic children compare by value. Cyclic or non-JSON
+values that must be compared produce a validation error. Each item comparison
+allows at most 100,000 visited values, including expansion of shared children;
+excessive work produces a validation error. `uniqueItems: false` adds no rule.
+Constrained references and allOf siblings may add `uniqueItems`; multipart file
+arrays cannot declare it.
+
 `minProperties` and `maxProperties` are nonnegative integer bounds for fixed
 objects and maps. Fixed request objects count validated fields, excluding
 `undefined`; inherited or non-enumerable structural fields count after parsing
@@ -750,8 +776,8 @@ outputs change. For example, adding `format: 17` to the example's
 POM: components.schemas.WidgetId.format: expected a string
 ```
 
-External references, nonproductive reference cycles, general unions and other
-type arrays, objects mixing fixed properties with dynamic entries,
+External references, nonproductive reference cycles, `oneOf` alternatives that
+share a JSON type without a discriminator, other type arrays, objects mixing fixed properties with dynamic entries,
 optional multipart request bodies, status ranges/default
 responses, OpenID Connect, mutual TLS, unsupported HTTP authentication schemes,
 non-OAuth role requirements and external security-scheme references
@@ -835,11 +861,21 @@ maps, including `additionalProperties: {}`, retain existing standalone and
 single-wrapper support; intersecting them with additional assertions remains
 unsupported.
 
+`allOf` distributes over `anyOf` and `oneOf` branches: composing `A` with
+`oneOf: [B, C]` produces `oneOf: [allOf(A, B), allOf(A, C)]`. Each alternative
+keeps its position, so the union's matching rule and any discriminator tags
+still apply to the composed objects; shared fields therefore reach every mapped
+branch. `readOnly` and `writeOnly` from other conjuncts apply to the whole
+union; annotations on the alternatives themselves remain unsupported. An
+alternative that cannot combine with the other branches, such as
+`integer` with a `string` conjunct, fails compilation rather than disappearing.
+Constraints beside a referenced union are unsupported.
+
 This stage does not support intersections involving typed dynamic maps, multiple
-array schemas, binary schemas, or unions with other schemas. A nullable type
-beside or within a multi-branch composition is such a union: every branch would
-also need to accept null. Wrap the composition in an outer `anyOf` with a
-null-only branch instead. An unconstrained
+array schemas, or binary schemas. A nullable type beside or within a
+multi-branch composition is a union with null, and every branch would also need
+to accept null. Wrap the composition in an outer `anyOf` with a null-only branch
+instead. An unconstrained
 object such as `{ "type": "object" }` adds no constraints when combined with a
 fixed object; an empty schema `{}` is neutral. A single branch can still wrap
 existing supported shapes.
@@ -871,7 +907,8 @@ fails validation instead of producing a cyclic output. The same checks apply
 to standalone validators, request builders, and response parsing.
 
 Each recursive traversal permits at most 128 descent levels, 512 active parser
-entries, and 100,000 visited values. Parser entries include nullable and union
+entries, and 100,000 visits across child values and attempted union branches.
+Parser entries include nullable and union
 bindings that validate the same value without descending into a child.
 Each object property, array item, or map value adds one descent level; a child
 object inside an array property is two levels below its parent object.
@@ -942,7 +979,8 @@ Request types declare excluded read-only fields as optional `never` properties
 so assignments and spreads cannot supply them. Enable TypeScript's
 `exactOptionalPropertyTypes` to reject explicit `undefined` in those types too.
 The response requires `id` and `label`; it strips `secret` without validating or
-reading its value. Generated types and standalone validators use the same
+reading its value, except when a response `uniqueItems` check compares received
+items whose parsed values coincide. Generated types and standalone validators use the same
 projection, including nested objects, arrays and typed maps. An object with all
 properties excluded stays a fixed empty object. Returned response data remains
 mutable; these flags describe wire direction rather than TypeScript `readonly`.

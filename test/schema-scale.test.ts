@@ -103,7 +103,7 @@ void test('discriminator coverage reads mapping values a bounded number of times
     'selection',
   );
   assert.ok(normalized.kind === 'union' && normalized.discriminator);
-  class CountedMapping extends Map<string, string> {
+  class CountedMapping extends Map<string, number> {
     reads = 0;
     override get(name: string) {
       this.reads++;
@@ -134,7 +134,7 @@ void test('discriminator coverage reads mapping values a bounded number of times
           ...selection,
           discriminator: {
             ...selection.discriminator,
-            mapping: new Map(mapping).set('kind0', 'Branch1'),
+            mapping: new Map(mapping).set('kind0', 1),
           },
         },
         schemas,

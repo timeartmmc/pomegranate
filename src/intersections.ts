@@ -11,6 +11,7 @@ import {
   constraintNames,
   constraintRecord,
   schemaNode,
+  unionKeyword,
 } from './schema-node.js';
 import {
   assertScalarRules,
@@ -195,7 +196,7 @@ export function scalarValidationPlan(
     )
       fail(
         location,
-        'allOf supports object composition and compatible scalar intersections; combined arrays, maps, unions and binary schemas are unsupported',
+        'allOf supports object composition, compatible scalar intersections and unions of those forms; combined arrays, maps and binary schemas are unsupported',
       );
     if (kind !== undefined && kind !== current.kind) {
       if (
@@ -351,6 +352,16 @@ export function createIntersectionNormalizer(
           reference.location,
           'constraints on an unconstrained JSON reference are unsupported',
         );
+      // Distribution composes a union's branches, not the reference node, so
+      // its sibling constraints would otherwise disappear from the contract.
+      if (
+        value.schema.kind === 'union' &&
+        constraintNames(reference.constraints).length > 0
+      )
+        fail(
+          reference.location,
+          'constraints on a union reference are unsupported',
+        );
       value = {
         schema: value.schema,
         limits: intersectConstraints(value.limits, reference.constraints),
@@ -467,6 +478,50 @@ export function createIntersectionNormalizer(
         location,
         'allOf cannot combine a nullable type with other branches; wrap the composition in an outer anyOf with a null-only branch instead',
       );
+    // allOf distributes over a union: A and (B or C) is (A and B) or (A and C).
+    // Alternatives keep their positions, so cardinality and discriminator tags
+    // still describe the composed branches; a contradictory alternative fails
+    // instead of disappearing. Distribute untagged unions first so tagged ones
+    // stay inside and can keep dispatching on their own tag.
+    const unions = targets.flatMap(({ schema }, position) =>
+      schema.kind === 'union' ? [{ union: schema, position }] : [],
+    );
+    const factor =
+      unions.find(({ union }) => !union.discriminator) ?? unions[0];
+    if (factor) {
+      const { union, position } = factor;
+      const others = branches.filter((_, index) => index !== position);
+      charge(union.branches.length * branches.length, location);
+      return schemaNode({
+        kind: 'union',
+        cardinality: union.cardinality,
+        discriminator: union.discriminator,
+        branches: union.branches.map((alternative, index) => {
+          const path = `${location}.${unionKeyword(union)}[${index}]`;
+          const composed = normalize(
+            schemaNode({
+              kind: 'intersection',
+              branches: [alternative, ...others],
+              location: path,
+            }),
+            path,
+          );
+          // Annotations from other conjuncts apply to the whole union. Keep the
+          // alternative's own, so usage validation still rejects annotated
+          // union branches instead of losing them through composition.
+          const own = resolve(alternative, path);
+          return composed.readOnly === own.readOnly &&
+            composed.writeOnly === own.writeOnly
+            ? composed
+            : {
+                ...composed,
+                readOnly: own.readOnly,
+                writeOnly: own.writeOnly,
+              };
+        }),
+        ...access,
+      });
+    }
     if (targets.some(({ schema }) => schema.kind === 'object')) {
       if (
         targets.some(
@@ -477,7 +532,7 @@ export function createIntersectionNormalizer(
       )
         fail(
           location,
-          'allOf object composition cannot combine objects with scalars, arrays, typed maps, unions or binary schemas',
+          'allOf object composition cannot combine objects with scalars, arrays, typed maps or binary schemas',
         );
       if (
         !targets.some(
@@ -655,10 +710,7 @@ export function createIntersectionNormalizer(
           result = {
             ...input,
             branches: input.branches.map((branch, index) =>
-              normalize(
-                branch,
-                `${location}.${input.discriminator ? 'oneOf' : 'anyOf'}[${index}]`,
-              ),
+              normalize(branch, `${location}.${unionKeyword(input)}[${index}]`),
             ),
           };
           break;

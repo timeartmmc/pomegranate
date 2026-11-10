@@ -113,25 +113,28 @@ void test('surface typo diagnostics list bounded declared choices and the listed
   await compile(many, { clients: [names[0]!], surfaces });
 });
 
-void test('oneOf advice points supported scalar and nullable alternatives to an anyOf spelling that compiles', async () => {
+void test('oneOf without a discriminator compiles disjoint JSON types and points overlap to a discriminator or anyOf', async () => {
+  const schemas = { Text: { type: 'string' } };
   for (const branches of [
     [{ type: 'string' }, { type: 'integer' }],
     [{ $ref: '#/components/schemas/Text' }, { type: 'null' }],
-  ] satisfies Schema[][]) {
-    const schemas = { Text: { type: 'string' } };
+  ] satisfies Schema[][])
+    await compile(document({ oneOf: branches }, schemas), selection);
+  for (const [branches, type] of [
+    [[{ type: 'number' }, { type: 'integer', minimum: 1 }], 'number'],
+    [[{ $ref: '#/components/schemas/Text' }, { type: 'string' }], 'string'],
+    [[{ type: 'object' }, { type: 'object', minProperties: 1 }], 'object'],
+  ] satisfies [Schema[], string][]) {
     await assert.rejects(
       compile(document({ oneOf: branches }, schemas), selection),
       (error) => {
         assert.ok(error instanceof ContractError);
-        assert.equal(error.location, 'components.schemas.Value.discriminator');
+        assert.equal(error.location, 'components.schemas.Value');
         assert.match(
           error.message,
-          /use anyOf for a non-null schema plus null, or string plus integer/,
+          new RegExp(`disjoint JSON types; several accept ${type} values`),
         );
-        assert.match(
-          error.message,
-          /tagged object alternatives require component references/,
-        );
+        assert.match(error.message, /use a discriminator.*or anyOf/);
         return true;
       },
     );

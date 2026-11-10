@@ -39,6 +39,7 @@ import {
   constraintNames,
   hasConstraints,
   schemaNode,
+  unionKeyword,
 } from './schema-node.js';
 import { schemaAccess } from './directional.js';
 import { scalarIntersectionBase } from './intersections.js';
@@ -92,7 +93,11 @@ export const numberConstraints = [
   'exclusiveMaximum',
   'multipleOf',
 ] as const;
-export const arrayConstraints = ['minItems', 'maxItems'] as const;
+export const arrayConstraints = [
+  'minItems',
+  'maxItems',
+  'uniqueItems',
+] as const;
 export const objectConstraints = ['minProperties', 'maxProperties'] as const;
 // Beside a single allOf reference, these restrict it like 3.1 reference
 // siblings without repeating its type. Object count bounds instead compose as
@@ -164,6 +169,7 @@ function constraints(
     ...bounds(value, 'minProperties', 'maxProperties', location, true),
     ...bounds(value, 'minimum', 'maximum', location, false),
     ...bounds(value, 'exclusiveMinimum', 'exclusiveMaximum', location, false),
+    ...uniqueness(value, location),
   };
   const multipleOf = bound(value, 'multipleOf', location, false);
   if (multipleOf !== undefined && multipleOf <= 0)
@@ -220,6 +226,17 @@ function constraints(
     ...(multipleOf === undefined ? {} : { multipleOf }),
     ...(pattern === undefined ? {} : { pattern }),
   });
+}
+
+// uniqueItems: false is the JSON Schema default; only true adds an assertion.
+function uniqueness(
+  value: Record<string, unknown>,
+  location: string,
+): { uniqueItems?: true } {
+  if (!Object.hasOwn(value, 'uniqueItems')) return {};
+  if (typeof value.uniqueItems !== 'boolean')
+    fail(`${location}.uniqueItems`, 'expected a boolean');
+  return value.uniqueItems ? { uniqueItems: true } : {};
 }
 
 function bound(
@@ -536,12 +553,11 @@ function normalizeUnion(
       work,
     ),
   );
-  if (keyword === 'anyOf') return { kind: 'union', branches };
+  if (keyword === 'anyOf')
+    return { kind: 'union', cardinality: 'any', branches };
+  // Without a tag, usage validation proves that the branches never overlap.
   if (!Object.hasOwn(value, 'discriminator'))
-    fail(
-      `${location}.discriminator`,
-      'oneOf without a discriminator is not supported in this version; use anyOf for a non-null schema plus null, or string plus integer; tagged object alternatives require component references and a discriminator with propertyName and mapping',
-    );
+    return { kind: 'union', cardinality: 'one', branches };
   const discriminator = record(
     value.discriminator,
     `${location}.discriminator`,
@@ -556,18 +572,31 @@ function normalizeUnion(
     `${location}.discriminator.mapping`,
   );
   work?.(Object.keys(mappingSource).length, location);
+  // First positions only: a repeated reference leaves a branch unmapped, which
+  // the coverage check rejects.
+  const positions = new Map<string, number>();
+  branches.forEach((branch, index) => {
+    if (branch.kind === 'ref' && !positions.has(branch.name))
+      positions.set(branch.name, index);
+  });
   const mapping = new Map(
-    Object.entries(
-      Object.fromEntries(
-        Object.entries(mappingSource).map(([tag, ref]) => [
-          tag,
-          referenceName(ref, `${location}.discriminator.mapping.${tag}`),
-        ]),
-      ),
-    ),
+    Object.entries(mappingSource).map(([tag, ref]): [string, number] => {
+      const name = referenceName(
+        ref,
+        `${location}.discriminator.mapping.${tag}`,
+      );
+      const index = positions.get(name);
+      if (index === undefined)
+        fail(
+          `${location}.discriminator.mapping`,
+          'must cover every distinct oneOf branch exactly once',
+        );
+      return [tag, index];
+    }),
   );
   return {
     kind: 'union',
+    cardinality: 'one',
     branches,
     discriminator: { propertyName, mapping },
   };
@@ -915,7 +944,7 @@ function normalizeShapeValue(
   if (kind === 'array') {
     keys(
       value,
-      [...typedSchemaKeys, 'items', 'minItems', 'maxItems'],
+      [...typedSchemaKeys, 'items', ...arrayConstraints],
       location,
       'schema',
     );
@@ -929,6 +958,7 @@ function normalizeShapeValue(
         work,
       ),
       ...bounds(value, 'minItems', 'maxItems', location, true),
+      ...uniqueness(value, location),
     };
     assertScalarRules(kind, schema, undefined, location);
     return schema;
@@ -998,7 +1028,7 @@ export function schemaBranchLocation(
 ): string {
   return schema.sourceTypeArray
     ? location
-    : `${location}.${schema.discriminator ? 'oneOf' : 'anyOf'}[${index}]`;
+    : `${location}.${unionKeyword(schema)}[${index}]`;
 }
 
 function measureSchema(
@@ -1036,6 +1066,144 @@ function measureSchema(
   return depths.get(schema)!;
 }
 
+type JsonType = 'null' | 'boolean' | 'string' | 'number' | 'array' | 'object';
+const allJsonTypes: readonly JsonType[] = [
+  'null',
+  'boolean',
+  'string',
+  'number',
+  'array',
+  'object',
+];
+
+// Union analyses visit each normalized node once per table, so shared union
+// graphs stay linear in the contract instead of in their expanded paths.
+function tableCache<T>(
+  caches: WeakMap<SchemaTable, WeakMap<Schema, T>>,
+  schemas: SchemaTable,
+): WeakMap<Schema, T> {
+  let cache = caches.get(schemas);
+  if (!cache) {
+    cache = new WeakMap();
+    caches.set(schemas, cache);
+  }
+  return cache;
+}
+
+// The JSON types a schema can accept. Constraints and formats only narrow
+// values within a type, so they never make two alternatives disjoint.
+const jsonTypesByTable = new WeakMap<
+  SchemaTable,
+  WeakMap<Schema, readonly JsonType[]>
+>();
+function jsonTypes(schema: Schema, schemas: SchemaTable): readonly JsonType[] {
+  const resolved = resolveSchema(schema, schemas);
+  const cache = tableCache(jsonTypesByTable, schemas);
+  const known = cache.get(resolved);
+  if (known) return known;
+  let types: readonly JsonType[];
+  switch (resolved.kind) {
+    case 'null':
+    case 'boolean':
+    case 'string':
+      types = [resolved.kind];
+      break;
+    case 'number':
+    case 'integer':
+      types = ['number'];
+      break;
+    case 'array':
+      types = ['array'];
+      break;
+    case 'object':
+    case 'map':
+      types = ['object'];
+      break;
+    case 'union':
+      types = [
+        ...new Set(
+          resolved.branches.flatMap((branch) => jsonTypes(branch, schemas)),
+        ),
+      ];
+      break;
+    case 'json':
+    case 'binary':
+    case 'intersection':
+    case 'ref':
+      types = allJsonTypes;
+      break;
+    default:
+      return assertNever(resolved);
+  }
+  cache.set(resolved, types);
+  return types;
+}
+
+// Untagged unions try branches in order, and every branch accepting a value's
+// JSON type may evaluate that value and its children again. Bound the product
+// across nested overlapping alternatives at compile time, so runtime work stays
+// within a fixed multiple of the input size. Recursive regions keep their
+// runtime traversal budget; saturating at the limit keeps this arithmetic small.
+const maximumAlternativeVisits = 1024;
+const visitsByTable = new WeakMap<SchemaTable, WeakMap<Schema, number>>();
+function alternativeVisits(schema: Schema, schemas: SchemaTable): number {
+  const cache = tableCache(visitsByTable, schemas);
+  const known = cache.get(schema);
+  if (known !== undefined) return known;
+  const visits = (value: Schema) => alternativeVisits(value, schemas);
+  let count = 1;
+  switch (schema.kind) {
+    case 'ref': {
+      // Walk alias chains iteratively; they add no value nesting.
+      const recursive = recursiveSchemas(schemas).members;
+      let target: Schema = schema;
+      while (target.kind === 'ref' && !recursive.has(target.name))
+        target = schemas.get(target.name)!;
+      if (target.kind !== 'ref') count = visits(target);
+      break;
+    }
+    case 'object':
+      for (const value of schema.properties.values())
+        count = Math.max(count, visits(value));
+      break;
+    case 'array':
+      count = visits(schema.items);
+      break;
+    case 'map':
+      if (schema.values !== true) count = visits(schema.values);
+      break;
+    case 'union':
+      if (schema.discriminator)
+        for (const branch of schema.branches)
+          count = Math.max(count, visits(branch));
+      else
+        for (const type of allJsonTypes) {
+          let total = 0;
+          for (const branch of schema.branches)
+            if (jsonTypes(branch, schemas).includes(type))
+              total = Math.min(
+                maximumAlternativeVisits + 1,
+                total + visits(branch),
+              );
+          count = Math.max(count, total);
+        }
+      break;
+    case 'json':
+    case 'binary':
+    case 'intersection':
+    case 'string':
+    case 'number':
+    case 'integer':
+    case 'boolean':
+    case 'null':
+      break;
+    default:
+      return assertNever(schema);
+  }
+  cache.set(schema, count);
+  return count;
+}
+
 function validateUnion(
   schema: Extract<Schema, { kind: 'union' }>,
   schemas: SchemaTable,
@@ -1043,46 +1211,50 @@ function validateUnion(
   usage: Usage,
 ): void {
   if (!schema.discriminator) {
-    const kinds = schema.branches
-      .map((branch) => resolveSchema(branch, schemas).kind)
-      .sort();
-    if (
-      kinds.length !== 2 ||
-      !(
-        kinds.filter((kind) => kind === 'null').length === 1 ||
-        (kinds[0] === 'integer' && kinds[1] === 'string')
-      )
-    )
+    if (alternativeVisits(schema, schemas) > maximumAlternativeVisits)
       fail(
         location,
-        'supported anyOf forms are a nullable schema or string/integer union',
+        `overlapping union alternatives can validate one value more than ${maximumAlternativeVisits} times; use a discriminator, remove repeated alternatives or reduce nested overlapping alternatives`,
       );
+    // anyOf returns the first matching branch. oneOf requires exactly one
+    // match; without a tag, POM proves it by admitting only branches whose JSON
+    // types are disjoint, so first-match evaluation cannot hide a second match.
+    if (schema.cardinality === 'any') return;
+    const seen = new Set<JsonType>();
+    for (const branch of schema.branches)
+      for (const type of jsonTypes(branch, schemas)) {
+        if (seen.has(type))
+          fail(
+            location,
+            `oneOf alternatives without a discriminator must accept disjoint JSON types; several accept ${type} values, so use a discriminator for object alternatives or anyOf to accept the first match`,
+          );
+        seen.add(type);
+      }
     return;
   }
   const { propertyName, mapping } = schema.discriminator;
-  const names = schema.branches.map((branch) => {
-    if (branch.kind !== 'ref' || hasConstraints(branch.constraints))
-      fail(
-        location,
-        'discriminated oneOf branches must be component references without constraints',
-      );
-    return branch.name;
-  });
-  // Enumerating targets inside the membership loop makes large unions quadratic.
-  const mappedNames = [...mapping.values()];
-  const targets = new Set(mappedNames);
+  // Source mappings name component branches. allOf composition may replace a
+  // mapped branch with its composed object at the same position.
   if (
-    new Set(names).size !== names.length ||
-    mappedNames.length !== names.length ||
-    targets.size !== names.length ||
-    names.some((name) => !targets.has(name))
+    schema.branches.some(
+      (branch) => branch.kind === 'ref' && hasConstraints(branch.constraints),
+    )
+  )
+    fail(
+      location,
+      'discriminated oneOf branches must be component references without constraints',
+    );
+  const positions = [...mapping.values()];
+  if (
+    positions.length !== schema.branches.length ||
+    new Set(positions).size !== positions.length
   )
     fail(
       `${location}.discriminator.mapping`,
       'must cover every distinct oneOf branch exactly once',
     );
-  for (const [tag, name] of mapping) {
-    const branch = resolveSchema(schemas.get(name)!, schemas);
+  for (const [tag, index] of mapping) {
+    const branch = resolveSchema(schema.branches[index]!, schemas);
     // Source validation already proved that the tag exists and is required.
     // Its absence from a projected object identifies a directional exclusion.
     if (

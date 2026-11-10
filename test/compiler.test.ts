@@ -265,13 +265,13 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /responses\.202\.headers\.x-request-id: duplicate case-insensitive header/,
   ],
   [
-    'two null union branches',
+    'two null oneOf branches',
     (d) => {
       Object.assign(d.components.schemas, {
-        DuplicateNull: { anyOf: [{ type: 'null' }, { type: 'null' }] },
+        DuplicateNull: { oneOf: [{ type: 'null' }, { type: 'null' }] },
       });
     },
-    /components\.schemas\.DuplicateNull: supported anyOf forms/,
+    /components\.schemas\.DuplicateNull: oneOf alternatives without a discriminator must accept disjoint JSON types/,
   ],
   [
     'unknown HTTP method',
@@ -413,15 +413,15 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /minLength.*unsupported on referenced object/,
   ],
   [
-    'union',
+    'overlapping oneOf',
     (d) => {
       Object.assign(d.components.schemas, {
         Widget: {
-          anyOf: [{ type: 'string' }, { type: 'boolean' }],
+          oneOf: [{ type: 'string' }, { type: 'string', format: 'uuid' }],
         },
       });
     },
-    /supported anyOf forms/,
+    /oneOf alternatives without a discriminator must accept disjoint JSON types/,
   ],
   [
     'invalid readOnly annotation',

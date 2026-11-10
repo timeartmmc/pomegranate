@@ -139,11 +139,18 @@ function recursiveLimit(
       issues,
       `recursive validation depth exceeds ${maximumRecursiveDepth} levels`,
     );
+  return recursiveWork(traversal, issues);
+}
+
+function recursiveWork(
+  traversal: RecursiveTraversal,
+  issues: Issues,
+): Invalid | undefined {
   if (traversal.remaining-- <= 0)
     return recursiveFailure(
       traversal,
       issues,
-      `recursive validation work exceeds ${maximumRecursiveWork} values`,
+      `recursive validation work exceeds ${maximumRecursiveWork} visits`,
     );
   return undefined;
 }
@@ -1092,6 +1099,7 @@ export type ObjectRules = Partial<ObjectSettings>;
 type ArraySettings = Readonly<{
   minItems: number | undefined;
   maxItems: number | undefined;
+  uniqueItems: 'sent' | 'received' | undefined;
 }>;
 type ObjectSettings = Readonly<{
   minProperties: number | undefined;
@@ -1106,6 +1114,7 @@ function arraySettings(input: ArrayRules): ArraySettings {
   const settings: ArraySettings = {
     minItems: source.minItems,
     maxItems: source.maxItems,
+    uniqueItems: source.uniqueItems,
   };
   arraySettingsCache.set(input, settings);
   return settings;
@@ -1191,8 +1200,9 @@ export function list<T>(
   const length = arrayLength(input);
   if (length === undefined)
     return report(issues, 'expected a valid array length', true);
-  if (rules) {
-    const { maxItems, minItems } = arraySettings(rules);
+  const settings = rules && arraySettings(rules);
+  if (settings) {
+    const { maxItems, minItems } = settings;
     if (maxItems !== undefined && length > maxItems)
       return report(issues, `expected at most ${maxItems} items`, false);
     if (minItems !== undefined && length < minItems)
@@ -1200,10 +1210,13 @@ export function list<T>(
   }
   const start = issues.length;
   const output: T[] = [];
+  const received: unknown[] | undefined =
+    settings?.uniqueItems === 'received' ? [] : undefined;
   for (let index = 0; index < length; index++) {
     if (exhausted(issues)) return invalid;
     const before = issues.length;
     const element = arrayItem(input, index);
+    received?.push(element);
     const value = recursiveCalls
       ? recursiveChild(element, issues, items)
       : items(element, issues);
@@ -1212,7 +1225,148 @@ export function list<T>(
       within(issues, before, index);
     } else output.push(value);
   }
-  return issues.length === start ? output : invalid;
+  if (issues.length !== start) return invalid;
+  const duplicate = settings?.uniqueItems
+    ? firstDuplicate(output, issues, received)
+    : undefined;
+  if (duplicate === invalid) return invalid;
+  return duplicate
+    ? report(
+        issues,
+        `expected unique items; duplicates item ${duplicate[0]}`,
+        false,
+        [duplicate[1]],
+      )
+    : output;
+}
+
+// JSON Schema compares items as JSON values: numbers by value, objects by
+// members in any order. Equal parsed items are sent or returned identically. A
+// response also compares its received items, because parsing may strip the
+// fields that distinguish them; only items whose parsed values coincide are
+// read again. Uncomparable values fail explicitly instead of proving uniqueness.
+function firstDuplicate(
+  items: readonly unknown[],
+  issues: Issues,
+  received?: readonly unknown[],
+): readonly [number, number] | Invalid | undefined {
+  const groups = new Map<
+    string,
+    { first: number; raw?: Map<string, number> }
+  >();
+  for (let index = 0; index < items.length; index++) {
+    const key = canonicalJson(items[index], issues, index);
+    if (key === invalid) return invalid;
+    const group = groups.get(key);
+    if (!group) {
+      groups.set(key, { first: index });
+      continue;
+    }
+    if (!received) return [group.first, index];
+    if (!group.raw) {
+      const first = canonicalJson(received[group.first], issues, group.first);
+      if (first === invalid) return invalid;
+      group.raw = new Map([[first, group.first]]);
+    }
+    const own = canonicalJson(received[index], issues, index);
+    if (own === invalid) return invalid;
+    const earlier = group.raw.get(own);
+    if (earlier !== undefined) return [earlier, index];
+    group.raw.set(own, index);
+  }
+  return undefined;
+}
+
+// Raw stripped fields can contain small shared graphs whose JSON expansion is
+// enormous. Bound each comparison and track active ancestors so ordinary shared
+// children compare by value without admitting cycles. Strings are output text;
+// the other tasks enter values or release their ancestor after its children.
+const maximumComparisonWork = 100_000;
+function canonicalJson(
+  value: unknown,
+  issues: Issues,
+  index: number,
+): string | Invalid {
+  let text = '';
+  let remaining = maximumComparisonWork - 1;
+  const reserve = (amount: number): Invalid | undefined =>
+    (remaining -= amount) < 0
+      ? report(
+          issues,
+          `uniqueItems comparison exceeds ${maximumComparisonWork} values`,
+          true,
+          [index],
+        )
+      : undefined;
+  const ancestors = new Set<object>();
+  const pending: (string | { value: unknown } | { leave: object })[] = [
+    { value },
+  ];
+  while (pending.length > 0) {
+    const next = pending.pop()!;
+    if (typeof next === 'string') {
+      text += next;
+      continue;
+    }
+    if ('leave' in next) {
+      ancestors.delete(next.leave);
+      continue;
+    }
+    const current = next.value;
+    if (
+      current === null ||
+      typeof current === 'string' ||
+      typeof current === 'boolean' ||
+      (typeof current === 'number' && Number.isFinite(current))
+    ) {
+      text += JSON.stringify(current);
+      continue;
+    }
+    if (
+      (!Array.isArray(current) && !plainRecord(current)) ||
+      ancestors.has(current)
+    )
+      return report(
+        issues,
+        'uniqueItems comparison requires acyclic JSON values',
+        true,
+        [index],
+      );
+    ancestors.add(current);
+    pending.push({ leave: current });
+    if (Array.isArray(current)) {
+      const items: unknown[] = current;
+      const length = arrayLength(items);
+      if (length === undefined)
+        return report(issues, 'expected a valid array length', true, [index]);
+      // Reserve before allocating tasks or reading any array item.
+      if (reserve(length)) return invalid;
+      text += '[';
+      pending.push(']');
+      for (let index = length - 1; index >= 0; index--)
+        pending.push({ value: items[index] }, ...(index ? [','] : []));
+    } else {
+      const members: [string, unknown][] = [];
+      // Bound enumeration and value reads before retaining or sorting members.
+      for (const key in current) {
+        if (!Object.hasOwn(current, key)) continue;
+        if (reserve(1)) return invalid;
+        const member: unknown = Reflect.get(current, key);
+        if (member !== undefined) members.push([key, member]);
+      }
+      members.sort(([left], [right]) => (left < right ? -1 : 1));
+      text += '{';
+      pending.push('}');
+      for (let index = members.length - 1; index >= 0; index--) {
+        const [key, member] = members[index]!;
+        pending.push(
+          { value: member },
+          `${index ? ',' : ''}${JSON.stringify(key)}:`,
+        );
+      }
+    }
+  }
+  return text;
 }
 
 function* arrayEntries(
@@ -1307,38 +1461,42 @@ export function emptyOptions(
 export function union<T>(
   input: unknown,
   issues: Issues,
-  left: Parse<T>,
-  right: Parse<T>,
+  branches: readonly Parse<T>[],
 ): T | Invalid {
   if (exhausted(issues)) return invalid;
   const traversal = recursiveTraversals.get(issues);
   const priorFailure = traversal?.failure;
   // A failed branch is speculative: bound its buffer to the remaining quota,
-  // but still try the alternative before choosing diagnostics or success.
-  const first = issueBuffer<Problem>(remaining(issues), issues);
-  const a = left(input, first);
-  if (a !== invalid && first.length === 0) {
-    if (traversal) traversal.failure = priorFailure;
-    return a;
+  // but try the alternatives in order before choosing diagnostics or success.
+  const attempts: Issues[] = [];
+  for (const branch of branches) {
+    // Same-value alternatives consume work even when no child is visited.
+    if (traversal && recursiveWork(traversal, issues)) return invalid;
+    const attempt = issueBuffer<Problem>(remaining(issues), issues);
+    const value = branch(input, attempt);
+    if (value !== invalid && attempt.length === 0) {
+      if (traversal) traversal.failure = priorFailure;
+      return value;
+    }
+    attempts.push(attempt);
   }
-  const second = issueBuffer<Problem>(remaining(issues), issues);
-  const b = right(input, second);
-  if (b !== invalid && second.length === 0) {
-    if (traversal) traversal.failure = priorFailure;
-    return b;
-  }
+  // Branches that accepted the value's shape but failed a constraint are the
+  // closest matches. Report one such branch directly; otherwise name each one.
   const start = issues.length;
-  const leftFatal = fatalSince(first, 0);
-  if (leftFatal !== fatalSince(second, 0)) {
-    mergeIssues(issues, leftFatal ? second : first, (issue) => issue);
-    return rejected(issues, start);
-  }
-  for (const [index, branch] of [first, second].entries())
-    mergeIssues(issues, branch, ({ path, message }) => ({
-      path,
-      message: `union branch ${index + 1}: ${message}`,
-      fatal: true,
-    }));
+  const close = attempts.filter((attempt) => !fatalSince(attempt, 0));
+  const reported = close.length > 0 ? close : attempts;
+  if (reported.length === 1)
+    mergeIssues(issues, reported[0]!, (issue) => issue);
+  else
+    for (const [index, attempt] of attempts.entries()) {
+      if (exhausted(issues)) break;
+      if (close.length > 0 && fatalSince(attempt, 0)) continue;
+      mergeIssues(issues, attempt, ({ path, message }) => ({
+        path,
+        message: `union branch ${index + 1}: ${message}`,
+        fatal: true,
+      }));
+    }
   return rejected(issues, start);
 }
 
@@ -1481,8 +1639,8 @@ export function mapParser<T>(
 ): Parse<Record<string, T>> {
   return (input, issues) => map(input, issues, value, rules);
 }
-export function unionParser<T>(left: Parse<T>, right: Parse<T>): Parse<T> {
-  return (input, issues) => union(input, issues, left, right);
+export function unionParser<T>(branches: readonly Parse<T>[]): Parse<T> {
+  return (input, issues) => union(input, issues, branches);
 }
 export function taggedParser<T>(
   name: string,

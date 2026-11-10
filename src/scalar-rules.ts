@@ -42,6 +42,7 @@ export function intersectConstraints(
     maxLength: strongestBound(left.maxLength, right.maxLength, Math.min),
     minItems: strongestBound(left.minItems, right.minItems, Math.max),
     maxItems: strongestBound(left.maxItems, right.maxItems, Math.min),
+    uniqueItems: right.uniqueItems ?? left.uniqueItems,
     minProperties: strongestBound(
       left.minProperties,
       right.minProperties,

@@ -546,6 +546,21 @@ function multipartFields(
         `${location}.properties.${name}`,
         'multipart fields require strings, files or arrays of files',
       );
+    // Files have no JSON value equality, so a file-array uniqueness assertion
+    // could not be enforced. Reject it here or through a constrained alias.
+    if (multiple) {
+      let target = field;
+      while (target.kind === 'ref' && !target.constraints.uniqueItems)
+        target = schemas.get(target.name)!;
+      if (
+        target.kind === 'ref' ||
+        (target.kind === 'array' && target.uniqueItems)
+      )
+        fail(
+          `${location}.properties.${name}`,
+          'uniqueItems is unsupported for multipart file arrays',
+        );
+    }
     const required = isRequired(object.required, name);
     if (bounded && multiple && !required) {
       let nonempty = (resolved.minItems ?? 0) > 0;

@@ -86,13 +86,14 @@ Choose the integration needed by the application:
 POM supports JSON, plain text, and multipart requests; exact response statuses;
 API keys, HTTP basic/bearer, OAuth2 scopes, and public or optional access;
 security alternatives and combinations; selected client surfaces; and a
-restricted schema vocabulary that includes unconstrained JSON,
-[recursive local schemas](REFERENCE.md#recursive-schemas), and staged
+restricted schema vocabulary that includes unconstrained JSON, `anyOf` and
+`oneOf` unions, [recursive local schemas](REFERENCE.md#recursive-schemas), and staged
 [`allOf` composition](REFERENCE.md#allof-composition). Unrelated
 extensions require an explicit ignore list.
 
 Unsupported features fail with a location-specific diagnostic before outputs
-change. General unions, external schema references, optional
+change. Overlapping `oneOf` alternatives without a discriminator, external
+schema references, optional
 multipart uploads, OpenID Connect, and mutual TLS are unsupported. The
 [contract reference](REFERENCE.md#supported-vocabulary) defines the complete
 supported vocabulary and limits.

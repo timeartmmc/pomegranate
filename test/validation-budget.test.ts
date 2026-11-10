@@ -371,7 +371,7 @@ void test('a bounded failed branch does not suppress a valid alternative', () =>
     return invalid;
   };
   const parser = validator((input, issues) =>
-    union(input, issues, failed, stringValue),
+    union(input, issues, [failed, stringValue]),
   );
   assert.deepEqual(parser.safeParse('valid'), { success: true, data: 'valid' });
   assert.equal(reads, 100);
@@ -382,16 +382,14 @@ void test('existing sibling failures reduce the remaining branch budget and prod
   const parser = validator((input, issues) => {
     for (let index = 0; index < 97; index++)
       report(issues, 'prior failure', false);
-    return union<readonly string[] | null>(
-      input,
-      issues,
+    return union<readonly string[] | null>(input, issues, [
       (input, issues) =>
         list(input, issues, (input, issues) => {
           reads++;
           return stringValue(input, issues);
         }),
       nullValue,
-    );
+    ]);
   });
   const result = parser.safeParse(Array<unknown>(1_000).fill(false));
   assert.equal(result.success, false);

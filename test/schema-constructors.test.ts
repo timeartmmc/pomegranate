@@ -129,7 +129,7 @@ void test('native maps, nullable unions and arrays copy and validate special key
   for (const value of [new Date(), [], JSON.parse('{"__proto__":42}')])
     assert.equal(mapped.safeParse(value).success, false);
   const nullable = validator((input, issues) =>
-    union(input, issues, stringValue, nullValue),
+    union(input, issues, [stringValue, nullValue]),
   );
   assert.equal(nullable.parse(null), null);
   assert.equal(nullable.safeParse(3).success, false);
@@ -156,7 +156,7 @@ void test('every consumer fails and names an issue when a parser rejects silentl
   const containers: [Parse<unknown>, unknown, (string | number)[]][] = [
     [(input, issues) => list(input, issues, silent), [1], [0]],
     [(input, issues) => map(input, issues, silent), { entry: 1 }, ['entry']],
-    [(input, issues) => union(input, issues, silent, silent), 1, []],
+    [(input, issues) => union(input, issues, [silent, silent]), 1, []],
     [silent, 1, []],
   ];
   for (const [parse, input, path] of containers) {

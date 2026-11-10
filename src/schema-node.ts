@@ -21,6 +21,7 @@ export function constraintRecord(input: ConstraintInput = {}): Constraints {
     float: value.float,
     minItems: value.minItems,
     maxItems: value.maxItems,
+    uniqueItems: value.uniqueItems,
     minProperties: value.minProperties,
     maxProperties: value.maxProperties,
   };
@@ -77,6 +78,7 @@ export function schemaNode(input: SchemaDraft): Schema {
         kind: value.kind,
         ...access,
         branches: value.branches,
+        cardinality: value.cardinality ?? 'any',
         sourceTypeArray: value.sourceTypeArray,
         discriminator: value.discriminator,
       };
@@ -101,6 +103,7 @@ export function schemaNode(input: SchemaDraft): Schema {
         items: value.items,
         minItems: value.minItems,
         maxItems: value.maxItems,
+        uniqueItems: value.uniqueItems,
       };
     case 'string':
       return {
@@ -129,4 +132,11 @@ export function schemaNode(input: SchemaDraft): Schema {
     case 'null':
       return { kind: value.kind, ...access, literals: value.literals };
   }
+}
+
+// Diagnostics name the source keyword that produced a union's branches.
+export function unionKeyword(
+  schema: Extract<Schema, { kind: 'union' }>,
+): 'anyOf' | 'oneOf' {
+  return schema.cardinality === 'one' ? 'oneOf' : 'anyOf';
 }

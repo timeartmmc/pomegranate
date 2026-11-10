@@ -37,14 +37,13 @@ export class OutputGrowthError extends Error {
 // Keep the reference explicit: updating it requires inspecting the output diff,
 // preserving the behavior oracle, and reviewing the intended size increase.
 // Change the policy version when changing these limits; never rebaseline blindly.
-// Version 3 re-records runtime.ts alone after reviewing its growth since da32f73:
-// bounded recursive traversal, scalar allOf plans replacing alias refinement
-// chains, frozen security requirements, and issues kept at recursive limits.
+// Version 4 re-records runtime.ts after reviewing recursive traversal, scalar
+// allOf plans, security snapshots, general unions and bounded JSON uniqueness.
 const commonBytes = {
   'client.consumer.ts': 424,
   'endpoint-runtime.ts': 4640,
   'policy-types.ts': 1353,
-  'runtime.ts': 88127,
+  'runtime.ts': 93632,
 };
 export const outputGrowthReferenceBytes = {
   small: {
@@ -74,12 +73,12 @@ export const outputGrowthReferenceBytes = {
 };
 export const outputGrowthPolicy = Object.freeze({
   id: 'shared-contract-output-budgets',
-  version: 3,
+  version: 4,
   referenceCompiler: 'da32f73',
   // Later references name their reviewed generated source by content.
   rerecordedReferences: Object.freeze({
     'runtime.ts':
-      'sha256:c87ecacb2de4223e6a6e70ea883a471392c6c7a3da44695b19565f95a4424ff5',
+      'sha256:aafc1a31b3f00429cc8af87db805dc5fd8fbb81f2a7689494903c08b8aed885d',
   }),
   bytes:
     'complete generated TypeScript UTF-8 source, including runtime helpers and comments',
