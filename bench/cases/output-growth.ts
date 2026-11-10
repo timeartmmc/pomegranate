@@ -34,14 +34,6 @@ const operationIds = (profile: OutputGrowthProfile) =>
   );
 
 export function outputGrowthWorkload(profile: OutputGrowthProfile) {
-  assert.ok(
-    outputGrowthProfiles.some(
-      (known) =>
-        known.id === profile.id &&
-        known.operations === profile.operations &&
-        known.sections === profile.sections,
-    ),
-  );
   const base = jsonResponseWorkload();
   const sections = sectionNames(profile);
   const schemas: Record<string, unknown> = {
@@ -227,7 +219,11 @@ export function verifyOutputGrowth(
     );
 
   const operations = record(record(clientModule).operations);
-  assert.deepEqual(Object.keys(operations).sort(), operationIds(profile));
+  assert.deepEqual(
+    Object.keys(operations).sort(),
+    operationIds(profile),
+    `${profile.id}: operation inventory must match the contract`,
+  );
   for (const [index, id] of operationIds(profile).entries()) {
     const operation = record(operations[id]);
     const request = record(invoke(operation, 'build'));

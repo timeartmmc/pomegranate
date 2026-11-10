@@ -1,10 +1,10 @@
-import { random, shuffled } from './order.ts';
 import assert from 'node:assert/strict';
 import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { arch, cpus, platform, release } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { random, shuffled } from './order.ts';
 import {
   jsonResponseCase,
   verifyJsonResponseValidation,

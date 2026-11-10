@@ -49,14 +49,134 @@ type IssueBuffer<T> = T[] & Budget;
 export type Issues = IssueBuffer<Problem>;
 export type Parse<T> = (input: unknown, issues: Issues) => T | Invalid;
 
+type RecursiveTraversal = {
+  depth: number;
+  parserDepth: number;
+  failure: string | undefined;
+  remaining: number;
+  ancestors: Set<object>;
+};
+const recursiveTraversals = new WeakMap<
+  readonly unknown[],
+  RecursiveTraversal
+>();
+const maximumRecursiveDepth = 128;
+const maximumRecursiveParserDepth = 512;
+const maximumRecursiveWork = 100_000;
+// Issue buffers isolate traversals, including reentrant validators.
+let recursiveCalls = 0;
+
+export function recursiveParse<T>(
+  input: unknown,
+  issues: Issues,
+  parse: (input: unknown, issues: Issues, rules?: ArrayRules) => T | Invalid,
+  rules?: ArrayRules,
+): T | Invalid {
+  const ownsTraversal = !recursiveTraversals.has(issues);
+  if (ownsTraversal)
+    recursiveTraversals.set(issues, {
+      depth: 0,
+      parserDepth: 0,
+      failure: undefined,
+      remaining: maximumRecursiveWork,
+      ancestors: new Set(
+        typeof input === 'object' && input !== null ? [input] : [],
+      ),
+    });
+  const traversal = recursiveTraversals.get(issues)!;
+  // Same-value union/nullable bindings add stack frames without descending into
+  // data. Bound those entries separately so a productive schema cannot exhaust
+  // the call stack before its value-depth guard gets another chance to run.
+  if (traversal.parserDepth >= maximumRecursiveParserDepth)
+    return recursiveFailure(
+      traversal,
+      issues,
+      `recursive parser depth exceeds ${maximumRecursiveParserDepth} entries`,
+    );
+  traversal.parserDepth++;
+  recursiveCalls++;
+  try {
+    const value = parse(input, issues, rules);
+    // Speculative unions may prefix and truncate deep branch messages. Keep the
+    // traversal's cause visible at its root, within the existing issue quota.
+    if (ownsTraversal && value === invalid && traversal.failure) {
+      if (issues.length)
+        issues[0] = { path: [], message: traversal.failure, fatal: true };
+      else report(issues, traversal.failure, true);
+    }
+    return value;
+  } finally {
+    recursiveCalls--;
+    traversal.parserDepth--;
+    if (ownsTraversal) recursiveTraversals.delete(issues);
+  }
+}
+
+function recursiveFailure(
+  traversal: RecursiveTraversal,
+  issues: Issues,
+  message: string,
+): Invalid {
+  traversal.failure ??= message;
+  return report(issues, message, true);
+}
+
+function recursiveLimit(
+  traversal: RecursiveTraversal,
+  issues: Issues,
+  depth: number,
+): Invalid | undefined {
+  if (depth >= maximumRecursiveDepth)
+    return recursiveFailure(
+      traversal,
+      issues,
+      `recursive validation depth exceeds ${maximumRecursiveDepth} levels`,
+    );
+  if (traversal.remaining-- <= 0)
+    return recursiveFailure(
+      traversal,
+      issues,
+      `recursive validation work exceeds ${maximumRecursiveWork} values`,
+    );
+  return undefined;
+}
+
+function recursiveChild<T>(
+  input: unknown,
+  issues: Issues,
+  parse: Parse<T>,
+): T | Invalid {
+  const traversal = recursiveTraversals.get(issues);
+  if (!traversal) return parse(input, issues);
+  if (recursiveLimit(traversal, issues, traversal.depth)) return invalid;
+  const object =
+    typeof input === 'object' && input !== null ? input : undefined;
+  if (object !== undefined && traversal.ancestors.has(object))
+    return recursiveFailure(traversal, issues, 'cyclic input is not supported');
+  traversal.depth++;
+  if (object !== undefined) traversal.ancestors.add(object);
+  try {
+    return parse(input, issues);
+  } finally {
+    if (object !== undefined) traversal.ancestors.delete(object);
+    traversal.depth--;
+  }
+}
+
 const omitted = new WeakSet<readonly unknown[]>();
 const omittedMessage =
   'issue limit reached; further validation and issues may be omitted';
 
-function issueBuffer<T>(capacity = maximumIssues): IssueBuffer<T> {
+function issueBuffer<T>(
+  capacity = maximumIssues,
+  parent?: Issues,
+): IssueBuffer<T> {
   const issues: IssueBuffer<T> = [];
   if (capacity < maximumIssues)
     Object.defineProperty(issues, issueCapacity, { value: capacity });
+  const traversal =
+    parent === undefined ? undefined : recursiveTraversals.get(parent);
+  if (traversal) recursiveTraversals.set(issues, traversal);
   return issues;
 }
 
@@ -292,7 +412,9 @@ export function field<T>(
   if (exhausted(issues)) return invalid;
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
-  const result = parse(value, issues);
+  const result = recursiveCalls
+    ? recursiveChild(value, issues, parse)
+    : parse(value, issues);
   if (result === invalid) {
     rejected(issues, start);
     within(issues, start, key);
@@ -316,12 +438,11 @@ export function optionalField<T>(
   // undefined still needs an input holder.
   if (value === undefined)
     return key in source && holds(source, key) ? undefined : absent;
-  const result = parse(value, issues);
-  if (!present(source, key, value)) {
-    issues.length = start;
-    omitted.delete(issues);
-    return absent;
-  }
+  // Excluded prototype defaults must not consume validation or traversal work.
+  if (!present(source, key, value)) return absent;
+  const result = recursiveCalls
+    ? recursiveChild(value, issues, parse)
+    : parse(value, issues);
   if (result === invalid) {
     rejected(issues, start);
     within(issues, start, key);
@@ -808,12 +929,15 @@ function stringChecks(rules: StringRules): Check<string> {
   // Registered formats remain static data in generated modules. Compile their
   // expressions on first use, independently of the schema's own pattern.
   let formatCheck: ((value: string) => boolean) | undefined;
-  // Lengths count Unicode code points, as JSON Schema specifies.
+  // Each code point occupies one or two UTF-16 units. Those bounds can prove
+  // both length constraints without scanning; ambiguous inputs still count
+  // code points, including lone surrogates, as JSON Schema requires.
   const check: Check<string> = (value, issues) => {
     const length =
-      minLength === undefined && maxLength === undefined
-        ? 0
-        : codePoints(value);
+      (minLength !== undefined && value.length < minLength * 2) ||
+      (maxLength !== undefined && value.length > maxLength)
+        ? codePoints(value)
+        : value.length;
     // A value already rejected by size must not reach potentially expensive
     // pattern or format predicates, or initialize their regular expressions.
     if (maxLength !== undefined && length > maxLength) {
@@ -955,69 +1079,6 @@ function neverValue(_input: unknown, issues: Issues): Invalid {
   return report(issues, 'expected no value', true);
 }
 
-// $ref siblings restrict the referenced value. Their checks run unless the base
-// already reported a wrong type or shape. A constraint failure remains eligible
-// for the remaining sibling rules.
-// Each alias shares its preceding rules without recursive parser calls or
-// materializing every prefix. Reverse one chain per parse so issue order remains
-// terminal-outwards, including duplicate rules and independent patterns.
-export type RuleChain<T> = Readonly<{
-  previous: RuleChain<T> | null;
-  rule: T;
-}>;
-
-function ruleSequence<T>(chain: RuleChain<T>): T[] {
-  const sequence: T[] = [];
-  for (
-    let current: RuleChain<T> | null = chain;
-    current;
-    current = current.previous
-  )
-    sequence.push(current.rule);
-  return sequence.reverse();
-}
-
-export function refineText<T extends string>(
-  input: unknown,
-  issues: Issues,
-  base: Parse<T>,
-  rules: RuleChain<StringRules>,
-  maxLength?: number,
-): T | Invalid {
-  // The compiler supplies the tightest bound across the terminal and aliases.
-  // Guard it before either the base or a sibling can run a regex.
-  if (
-    typeof input === 'string' &&
-    maxLength !== undefined &&
-    codePoints(input) > maxLength
-  )
-    return report(issues, 'string is too long', false);
-  const start = issues.length;
-  const value = base(input, issues);
-  if (typeof input === 'string' && !fatalSince(issues, start))
-    for (const rule of ruleSequence(rules)) {
-      if (exhausted(issues)) return invalid;
-      stringChecks(rule)(input, issues);
-    }
-  return issues.length === start ? value : invalid;
-}
-
-export function refineNumber<T extends number>(
-  input: unknown,
-  issues: Issues,
-  base: Parse<T>,
-  rules: RuleChain<NumberRules>,
-): T | Invalid {
-  const start = issues.length;
-  const value = base(input, issues);
-  if (typeof input === 'number' && !fatalSince(issues, start))
-    for (const rule of ruleSequence(rules)) {
-      if (exhausted(issues)) return invalid;
-      numberChecks(rule)(input, issues);
-    }
-  return issues.length === start ? value : invalid;
-}
-
 export type ArrayRules = Partial<ArraySettings>;
 export type ObjectRules = Partial<ObjectSettings>;
 
@@ -1136,7 +1197,9 @@ export function list<T>(
     if (exhausted(issues)) return invalid;
     const before = issues.length;
     const element = arrayItem(input, index);
-    const value = items(element, issues);
+    const value = recursiveCalls
+      ? recursiveChild(element, issues, items)
+      : items(element, issues);
     if (value === invalid) {
       rejected(issues, before);
       within(issues, before, index);
@@ -1178,7 +1241,9 @@ export function map<T>(
       continue;
     const value: unknown = Reflect.get(input, name);
     const before = issues.length;
-    const parsed = values(value, issues);
+    const parsed = recursiveCalls
+      ? recursiveChild(value, issues, values)
+      : values(value, issues);
     if (parsed === invalid) {
       rejected(issues, before);
       within(issues, before, name);
@@ -1239,14 +1304,22 @@ export function union<T>(
   right: Parse<T>,
 ): T | Invalid {
   if (exhausted(issues)) return invalid;
+  const traversal = recursiveTraversals.get(issues);
+  const priorFailure = traversal?.failure;
   // A failed branch is speculative: bound its buffer to the remaining quota,
   // but still try the alternative before choosing diagnostics or success.
-  const first = issueBuffer<Problem>(remaining(issues));
+  const first = issueBuffer<Problem>(remaining(issues), issues);
   const a = left(input, first);
-  if (a !== invalid && first.length === 0) return a;
-  const second = issueBuffer<Problem>(remaining(issues));
+  if (a !== invalid && first.length === 0) {
+    if (traversal) traversal.failure = priorFailure;
+    return a;
+  }
+  const second = issueBuffer<Problem>(remaining(issues), issues);
   const b = right(input, second);
-  if (b !== invalid && second.length === 0) return b;
+  if (b !== invalid && second.length === 0) {
+    if (traversal) traversal.failure = priorFailure;
+    return b;
+  }
   const start = issues.length;
   const leftFatal = fatalSince(first, 0);
   if (leftFatal !== fatalSince(second, 0)) {
@@ -1416,19 +1489,32 @@ export function textParser(rules: StringRules): Parse<string> {
 export function numberParser(rules: NumberRules): Parse<number> {
   return (input, issues) => numeric(input, issues, rules);
 }
-export function refinedText<T extends string>(
+// The compiler admits only scalar conjuncts here. Every successful parser
+// validates the same primitive, without coercion; the base parser connects the
+// return type to the emitted contract. Containers compose before emission so no
+// branch can strip fields or observe a property getter for a second time.
+export function scalarIntersection<T>(
   base: Parse<T>,
-  rules: RuleChain<StringRules>,
-  maximum?: number,
+  checks: readonly Parse<unknown>[],
 ): Parse<T> {
-  return (input, issues) => refineText(input, issues, base, rules, maximum);
+  return (input, issues) => {
+    const start = issues.length;
+    const value = base(input, issues);
+    if (value === invalid || issues.length !== start) {
+      rejected(issues, start);
+      return invalid;
+    }
+    for (const parse of checks) {
+      const start = issues.length;
+      if (parse(value, issues) === invalid || issues.length !== start) {
+        rejected(issues, start);
+        return invalid;
+      }
+    }
+    return value;
+  };
 }
-export function refinedNumber<T extends number>(
-  base: Parse<T>,
-  rules: RuleChain<NumberRules>,
-): Parse<T> {
-  return (input, issues) => refineNumber(input, issues, base, rules);
-}
+
 export function refinedObject<T extends object>(
   base: Parse<T>,
   rules: ObjectRules,
@@ -1481,9 +1567,8 @@ function plainRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-const invalidJson = Symbol('invalid JSON');
-
-function cloneJson(input: unknown): JsonValue | typeof invalidJson {
+export function jsonValue(input: unknown, issues: Issues): JsonValue | Invalid {
+  const traversal = recursiveTraversals.get(issues);
   const result: Record<string, JsonValue> = {};
   type Frame = {
     source: object | undefined;
@@ -1498,8 +1583,7 @@ function cloneJson(input: unknown): JsonValue | typeof invalidJson {
     },
   ];
   const pending = new Set<object>();
-  // Validate and copy iteratively: valid JSON can exceed the JS call stack.
-  // Track ancestors, not all visited nodes, so shared values remain valid.
+  // Iterative copying tracks active ancestors, allowing shared acyclic inputs.
   while (stack.length > 0) {
     const frame = stack[stack.length - 1]!;
     const entry = frame.entries.next();
@@ -1509,6 +1593,13 @@ function cloneJson(input: unknown): JsonValue | typeof invalidJson {
       continue;
     }
     const [key, value] = entry.value;
+    // Root was charged by its caller; exclude it and the synthetic frame.
+    if (
+      traversal &&
+      frame.source &&
+      recursiveLimit(traversal, issues, traversal.depth + stack.length - 2)
+    )
+      return invalid;
     let copy: JsonValue;
     if (
       value === null ||
@@ -1518,12 +1609,16 @@ function cloneJson(input: unknown): JsonValue | typeof invalidJson {
     )
       copy = value;
     else {
-      if ((!Array.isArray(value) && !plainRecord(value)) || pending.has(value))
-        return invalidJson;
+      if (
+        (!Array.isArray(value) && !plainRecord(value)) ||
+        pending.has(value) ||
+        (frame.source && traversal?.ancestors.has(value))
+      )
+        break;
       let entries: Frame['entries'];
       if (Array.isArray(value)) {
         const count = arrayLength(value);
-        if (count === undefined) return invalidJson;
+        if (count === undefined) break;
         entries = arrayEntries(value, count);
       } else entries = Object.entries(value).values();
       pending.add(value);
@@ -1542,14 +1637,9 @@ function cloneJson(input: unknown): JsonValue | typeof invalidJson {
       writable: true,
     });
   }
-  return result['value']!;
-}
-
-export function jsonValue(input: unknown, issues: Issues): JsonValue | Invalid {
-  const result = cloneJson(input);
-  return result === invalidJson
+  return stack.length
     ? report(issues, 'expected a JSON value', true)
-    : result;
+    : result['value']!;
 }
 
 // Native applications resolve file references and own file access/serialization.
@@ -1583,9 +1673,49 @@ export function nativeFile(
   };
 }
 
-export type Security = Readonly<
-  { transport: 'none' } | { transport: 'bearer'; scheme: string }
+export type SecurityRequirement = Readonly<
+  | { transport: 'basic'; scheme: string }
+  | { transport: 'bearer'; scheme: string }
+  | {
+      transport: 'apiKey';
+      scheme: string;
+      in: 'header' | 'query' | 'cookie';
+      name: string;
+    }
+  | { transport: 'oauth2'; scheme: string; scopes: readonly string[] }
 >;
+export type Security =
+  | Readonly<{ transport: 'none' }>
+  | SecurityRequirement
+  | Readonly<{
+      transport: 'alternatives';
+      alternatives: readonly (readonly SecurityRequirement[])[];
+    }>;
+
+function securityRequirement(input: SecurityRequirement): SecurityRequirement {
+  const source = ownFields(input);
+  return Object.freeze(
+    source.transport === 'oauth2'
+      ? ownFields({ ...source, scopes: Object.freeze([...source.scopes]) })
+      : source,
+  );
+}
+
+function securitySnapshot(input: Security): Security {
+  const source = ownFields(input);
+  if (source.transport === 'none') return Object.freeze(source);
+  if (source.transport !== 'alternatives') return securityRequirement(source);
+  return Object.freeze(
+    ownFields({
+      transport: source.transport,
+      alternatives: Object.freeze(
+        source.alternatives.map((requirements) =>
+          Object.freeze(requirements.map(securityRequirement)),
+        ),
+      ),
+    }),
+  );
+}
 export type HeaderContext = Readonly<Record<string, string>>;
 export type ObservedResponse = Readonly<{
   status: number;
@@ -2337,7 +2467,7 @@ export function defineOperation<
   const definition = operationSettings(input);
   // Freezing own fields does not freeze Object.prototype. Metadata snapshots
   // exclude it so omitted fields cannot gain values after construction.
-  const security = Object.freeze(ownFields(definition.security));
+  const security = securitySnapshot(definition.security);
   const policy = Object.freeze(ownFields(definition.policy));
   const requestContentType = definition.contentType;
   const multipart = Object.freeze(

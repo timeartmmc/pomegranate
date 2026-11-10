@@ -46,6 +46,7 @@ import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
 import { projectSchemas } from './directional.js';
 import { normalizeOpenApi30, openApi30Diagnostic } from './openapi30.js';
 import { isRequired } from './required-index.js';
+import { createIntersectionNormalizer } from './intersections.js';
 import {
   deprecatedAnnotation,
   exampleAnnotations,
@@ -88,7 +89,7 @@ type OperationContext = Readonly<{
   responseComponents: ReadonlyMap<string, ResponseDefinition>;
   requestBodyComponents: ReadonlyMap<string, RequestBodyDefinition>;
   headerComponents: ReadonlyMap<string, HeaderDefinition>;
-  bearerSchemes: ReadonlySet<string>;
+  securitySchemes: ReturnType<typeof normalizeSecuritySchemes>;
   inheritedSecurity: Operation['security'];
   memberships: ReadonlyMap<string, readonly string[]> | undefined;
 }>;
@@ -829,7 +830,7 @@ function normalizeOperation(
     vocabulary,
     schemas,
     examples,
-    bearerSchemes,
+    securitySchemes,
     inheritedSecurity,
     memberships,
   } = context;
@@ -855,10 +856,10 @@ function normalizeOperation(
   annotations(value, location);
   externalDocsAnnotation(value, location);
   deprecatedAnnotation(value, location);
-  // Presence matters: [] and [{}] deliberately clear a document bearer
+  // Presence matters: [] and [{}] deliberately clear a document security
   // requirement; absence inherits it. Do not merge these alternatives.
   const security = Object.hasOwn(value, 'security')
-    ? normalizeSecurity(value.security, bearerSchemes, `${location}.security`)
+    ? normalizeSecurity(value.security, securitySchemes, `${location}.security`)
     : inheritedSecurity;
   const id = safeKey(
     Object.hasOwn(value, 'operationId')
@@ -1004,7 +1005,7 @@ function prepareSchemas(
   normalize: ReturnType<typeof createSchemaNormalizer>,
 ): { context: SchemaContext; order: readonly string[] } {
   const rawSchemas = record(input, 'components.schemas');
-  const schemas = new Map(
+  const raw = new Map(
     Object.keys(rawSchemas)
       .sort()
       .map((name) => [
@@ -1012,7 +1013,13 @@ function prepareSchemas(
         normalize(rawSchemas[name], `components.schemas.${name}`),
       ]),
   );
-  const schemaOrder = orderSchemas(schemas);
+  const schemaOrder = orderSchemas(raw);
+  // Productive cycles retain references to later component identities while
+  // composition resolves only the declarations needed at the same value.
+  const schemas = new Map(raw);
+  const compose = createIntersectionNormalizer(schemas);
+  for (const name of schemaOrder)
+    schemas.set(name, compose(raw.get(name)!, `components.schemas.${name}`));
   // Share traversal work only within this descriptor. Separate usage checks
   // keep multipart binary fields from weakening ordinary JSON validation.
   const validation = schemaValidation();
@@ -1025,7 +1032,8 @@ function prepareSchemas(
       validation,
     );
   const context: SchemaContext = {
-    normalize,
+    normalize: (input, location) =>
+      compose(normalize(input, location), location),
     source: schemas,
     projection: projectSchemas(schemas),
     sourceValidation: validation,
@@ -1186,14 +1194,14 @@ function describeDocument(
   const examples = exampleComponents(
     Object.hasOwn(components, 'examples') ? components.examples : {},
   );
-  const bearerSchemes = normalizeSecuritySchemes(
+  const securitySchemes = normalizeSecuritySchemes(
     Object.hasOwn(components, 'securitySchemes')
       ? components.securitySchemes
       : {},
     openApi30 ? '3.0' : '3.1',
   );
   const inheritedSecurity = Object.hasOwn(value, 'security')
-    ? normalizeSecurity(value.security, bearerSchemes, 'security')
+    ? normalizeSecurity(value.security, securitySchemes, 'security')
     : ({ transport: 'none' } as const);
   const { context, order: schemaOrder } = prepareSchemas(
     Object.hasOwn(components, 'schemas') ? components.schemas : {},
@@ -1230,7 +1238,7 @@ function describeDocument(
     responseComponents,
     requestBodyComponents,
     headerComponents,
-    bearerSchemes,
+    securitySchemes,
     inheritedSecurity,
     memberships,
   };

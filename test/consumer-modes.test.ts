@@ -64,6 +64,50 @@ void test('installed API and full generated modules support strict and non-stric
     }).kind,
     'success',
   );
+  for (const width of [128, 129]) {
+    const body: Record<string, unknown> = {
+      direct: null,
+      reference: null,
+      enumeration: null,
+      constant: null,
+      field2: 'retained',
+    };
+    for (const usage of ['request', 'response']) {
+      const { schema } = await importGenerated<StandaloneModule>(
+        root,
+        `standalone.wide-null${width}-${usage}.ts`,
+      );
+      const parsed = schema.parse(body);
+      assert.deepEqual(parsed, body);
+      assert.notEqual(parsed, body);
+      for (const optional of [null, undefined])
+        assert.deepEqual(schema.parse({ ...body, optional }), {
+          ...body,
+          optional,
+        });
+      for (const key of ['direct', 'reference', 'enumeration', 'constant']) {
+        const missing = { ...body };
+        delete missing[key];
+        assert.equal(schema.safeParse(missing).success, false);
+        assert.equal(
+          schema.safeParse({ ...body, [key]: 'wrong' }).success,
+          false,
+        );
+      }
+    }
+    const wide = operations[`saveWideNull${width}`];
+    assert.ok(wide);
+    const request = wide.build({ body });
+    assert.deepEqual(request.body, body);
+    assert.notEqual(request.body, body);
+    const response = request.parseResponse({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.kind, 'success');
+    if (response.kind === 'success') assert.deepEqual(response.data, body);
+  }
   await verifyConsumerModes(
     root,
     fileURLToPath(

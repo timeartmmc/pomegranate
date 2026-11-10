@@ -15,13 +15,31 @@ export function schemaAccess(schema: Schema, schemas: SchemaTable): Access {
     cache = new WeakMap();
     accessByTable.set(schemas, cache);
   }
+  if (schema.kind === 'intersection') {
+    const known = cache.get(schema);
+    if (known) return known;
+    const branches = schema.branches.map((branch) =>
+      schemaAccess(branch, schemas),
+    );
+    const access = {
+      readOnly: schema.readOnly || branches.some((branch) => branch.readOnly),
+      writeOnly:
+        schema.writeOnly || branches.some((branch) => branch.writeOnly),
+    };
+    cache.set(schema, access);
+    return access;
+  }
   const path: Schema[] = [];
-  let target = schema;
-  // Source validation resolves references and rejects cycles before projection.
+  let target: Schema = schema;
+  // Same-value reference cycles are rejected before projection. Productive
+  // recursion stops at its container; access flags do not flow through children.
   // True annotations accumulate through aliases; a local false cannot undo one.
   while (!cache.has(target)) {
     path.push(target);
-    if (target.kind !== 'ref') break;
+    if (target.kind !== 'ref') {
+      if (target.kind === 'intersection') schemaAccess(target, schemas);
+      break;
+    }
     const next = schemas.get(target.name);
     if (!next) fail(target.location, `unresolved reference ${target.name}`);
     target = next;
@@ -85,6 +103,7 @@ export function projectSchemas(raw: SchemaTable): {
           values: schema.values === true ? true : child(schema.values),
         };
         break;
+      case 'intersection':
       case 'union':
         projected = { ...schema, branches: schema.branches.map(child) };
         break;

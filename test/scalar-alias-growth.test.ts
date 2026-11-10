@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { compile } from '../dist/index.js';
 import type { Validator } from '../src/runtime.ts';
-import { entry, present } from './assertions.ts';
+import { entry } from './assertions.ts';
 import {
   generatedTestWorkspace,
   importGenerated,
@@ -117,15 +117,10 @@ void test('scalar refinement chains scale linearly in standalone parsers and com
     }
     const failure = schema.safeParse('');
     assert.equal(failure.success, false);
-    if (!failure.success) {
-      assert.equal(failure.error.issues.length, 101);
-      assert.ok(
-        failure.error.issues
-          .slice(0, 100)
-          .every((issue) => issue.message === 'string is too short'),
-      );
-      assert.match(present(failure.error.issues[100]).message, /issue limit/);
-    }
+    if (!failure.success)
+      assert.deepEqual(failure.error.issues, [
+        { path: [], message: 'string is too short' },
+      ]);
   }
   await writeFile(
     join(root, 'tsconfig.json'),
@@ -157,7 +152,7 @@ void test('scalar refinement chains scale linearly in standalone parsers and com
   ]);
 });
 
-void test('shared scalar refinements preserve independent rules, literals and ordered bounded issues', async (t) => {
+void test('shared scalar refinements preserve independent rules and literals with strongest-bound diagnostics', async (t) => {
   const schemas: Record<string, Schema> = {
     Text: { type: 'string', minLength: 2, pattern: '^a' },
     Pure: ref('Text'),
@@ -254,13 +249,16 @@ void test('shared scalar refinements preserve independent rules, literals and or
         : result.error.issues.map((issue) => issue.message);
     }
     assert.equal((await schema('TextRoot')).parse('aabb'), 'aabb');
-    assert.deepEqual(await messages('TextRoot', ''), [
-      'string is too short',
-      'string does not match pattern',
-      'string is too short',
-      'string does not match pattern',
-      'string is too short',
-      'string does not match pattern',
+    for (const value of ['', 'ab'])
+      assert.deepEqual(await messages('TextRoot', value), [
+        'string is too short',
+      ]);
+    for (const value of ['zzb', 'aaa', 'aAb'])
+      assert.deepEqual(await messages('TextRoot', value), [
+        'string does not match pattern',
+      ]);
+    assert.deepEqual(await messages('TextRoot', 'aaaaaab'), [
+      'string is too long',
     ]);
     assert.deepEqual(await messages('MaxOnly', 'zzzz'), ['string is too long']);
     for (const value of ['a', 'b', 'c'])
@@ -268,13 +266,11 @@ void test('shared scalar refinements preserve independent rules, literals and or
     assert.equal((await schema('Six')).parse(6), 6);
     assert.equal((await schema('Ten')).parse(10), 10);
     assert.equal((await schema('Six')).safeParse(2).success, false);
+    assert.equal((await schema('Six')).safeParse(3).success, false);
     assert.equal((await schema('Ten')).safeParse(6).success, false);
     assert.deepEqual(await messages('Six', -1.5), [
       'expected an integer',
-      'expected value >= 0',
-      'expected a declared multiple',
       'expected value >= 1',
-      'expected a declared multiple',
     ]);
     assert.equal((await schema('EnumRoot')).parse('alpha'), 'alpha');
     for (const value of ['ab', 'beta', 'other'])
@@ -283,7 +279,7 @@ void test('shared scalar refinements preserve independent rules, literals and or
       (await schema('MailRoot')).parse('x@example.com'),
       'x@example.com',
     );
-    for (const value of ['x@other.com', 'example', 'a@b.c'])
+    for (const value of ['x@other.com', 'example', 'a@b.c', '@example.com'])
       assert.equal((await schema('MailRoot')).safeParse(value).success, false);
     assert.deepEqual(
       (await schema('Object')).parse({ text: 'aaab', number: 6 }),
@@ -293,13 +289,9 @@ void test('shared scalar refinements preserve independent rules, literals and or
       (await schema('Object')).safeParse({ text: 'ab', number: 18 }).success,
       false,
     );
-    const bounded = await messages(previous, -1);
-    assert.deepEqual(
-      bounded.slice(0, 100),
-      Array.from({ length: 100 }, (_, index) => `expected value >= ${index}`),
-    );
-    assert.equal(bounded.length, 101);
-    assert.match(present(bounded[100]), /issue limit/);
+    assert.equal((await schema(previous)).parse(140), 140);
+    assert.deepEqual(await messages(previous, 139), ['expected value >= 140']);
+    assert.deepEqual(await messages(previous, -1), ['expected value >= 140']);
   }
   const { operations } = await importGenerated<RuntimeClient>(
     root,

@@ -103,11 +103,12 @@ format or validate that additional rule in the application.
 
 ## Operation policy
 
-Policy metadata is optional. OpenAPI security always determines the credential
-transport, exposed separately as `request.security.transport` (`"none"` or
-`"bearer"`). Bearer requests also expose `request.security.scheme`, the exact
-component name in the effective security requirement. Applications use that
-identity to select credentials and decide readiness, retry and deadline behavior.
+Policy metadata is optional. OpenAPI security determines the credential
+requirements, exposed separately as `request.security`. Its `transport` is
+`"none"`, `"apiKey"`, `"basic"`, `"bearer"`, `"oauth2"`, or `"alternatives"`.
+Each credential requirement preserves the exact component name as `scheme`.
+Applications use these identities and the declared policy to select credentials
+and decide readiness, retry and deadline behavior.
 
 To require application metadata, declare its fields and requiredness:
 
@@ -146,9 +147,12 @@ Operations select flat field values alongside inline membership:
 
 `auth` bindings are optional. When declared, they define the allowed auth labels
 and each supplied label's transport must agree with effective OpenAPI security.
-Several labels may share bearer transport while describing different application
-readiness requirements. Labels never authorize a request; credential identity
-comes from `request.security.scheme`.
+Several labels may share a transport while describing different application
+readiness requirements. An OR or AND expression uses `"alternatives"`, including
+optional access; it cannot use a `"none"` or single-scheme label even when one of
+its alternatives is anonymous or every requirement uses bearer credentials.
+Labels never select an alternative or authorize a request; credential identity
+comes from each requirement's `scheme`.
 
 `fields` declares application-owned values using only `type` and optional `enum`.
 Types are `string`, `number`, `integer`, `boolean`, and `null`; numbers must be
@@ -168,7 +172,8 @@ Generated requests expose flat values such as `policy.auth`, `policy.retry` and
 fields in builders, direct executors and query executors. It describes the
 whole document's vocabulary, rather than narrowing to one operation's values.
 `policy-types.ts` accompanies the runtime even for standalone-only output.
-Policy and security objects are detached and frozen. They have null prototypes,
+Policy and security objects are detached and frozen, including nested security
+requirements, alternatives, and scope arrays. Metadata records have null prototypes,
 so absent metadata stays absent when `Object.prototype` changes; use
 `Object.hasOwn` to check presence. No policy field enables retries or sets a
 numeric deadline automatically.
@@ -190,29 +195,90 @@ regenerate the complete output set and run application integration checks.
 
 ## Client surfaces and security
 
-POM recognizes `type: "http"`, `scheme: "bearer"` security schemes by their
-semantics, directly or through local aliases. Scheme comparison ignores case;
-`bearerFormat` is only an annotation. A supported bearer requirement names one
-declared scheme with an empty role array, such as `security: [{ WidgetSession: [] }]`.
-Generated bearer metadata preserves that declared name as
-`{ transport: "bearer", scheme: "WidgetSession" }`, including when it names an
-alias. Changing the required scheme changes generated output and is detected by
-`pom check`. Public requests expose only `{ transport: "none" }`.
+POM supports these security schemes directly or through local aliases:
+
+| OpenAPI declaration                                                    | Generated credential requirement            |
+| ---------------------------------------------------------------------- | ------------------------------------------- |
+| `type: "apiKey"`, `in: "header"`, `"query"`, or `"cookie"`, and `name` | `{ transport: "apiKey", scheme, in, name }` |
+| `type: "http"`, `scheme: "basic"`                                      | `{ transport: "basic", scheme }`            |
+| `type: "http"`, `scheme: "bearer"`                                     | `{ transport: "bearer", scheme }`           |
+| `type: "oauth2"`, with declared `flows`                                | `{ transport: "oauth2", scheme, scopes }`   |
+
+HTTP scheme comparison ignores case; `bearerFormat` is only an annotation.
+Every requirement preserves its exact declared component name as `scheme`,
+including an alias. API keys also preserve their declared location and name.
+Key names must be nonempty, with well-formed Unicode; header and cookie names
+must use HTTP token characters.
+Changing credential identity, key location/name, or required scopes changes
+generated output and is detected by `pom check`.
+
+OAuth2 supports `implicit`, `password`, `clientCredentials`, and
+`authorizationCode` flow declarations. Each flow must supply its applicable
+authorization/token URLs and a scope-description map; `refreshUrl` is optional.
+Relative URL references are accepted. Required scopes must appear in at least
+one of the scheme's flows. An empty requirement array means no scopes are
+required. Flow URLs and available scope descriptions are validated but are not
+emitted: the application owns provider configuration and token acquisition.
+Non-OAuth requirements must use empty arrays; nonempty role requirements remain
+explicitly unsupported, including in OpenAPI 3.1.
+
+An operation inherits document security when its own `security` field is absent.
+Its own `[]` or `[{}]` declares public access; absence at both levels also means
+no security requirement. Public requests expose `{ transport: "none" }`.
+A single requirement for a single scheme is exposed directly, for example
+`{ transport: "bearer", scheme: "WidgetSession" }`.
+
+Multiple requirement objects mean OR; multiple schemes in one object mean AND.
+POM retains these as `{ transport: "alternatives", alternatives }`, where the
+outer array contains alternatives and each inner array contains all credentials
+required for that alternative. An empty inner array represents anonymous access.
+For example:
+
+```json
+{
+  "security": [
+    { "WidgetKey": [], "WidgetOAuth": ["widgets:read"] },
+    { "WidgetSession": [] },
+    {}
+  ]
+}
+```
+
+The resulting `request.security` is:
+
+```ts
+{
+  transport: 'alternatives',
+  alternatives: [
+    [
+      { transport: 'apiKey', scheme: 'WidgetKey', in: 'header', name: 'X-Widget-Key' },
+      { transport: 'oauth2', scheme: 'WidgetOAuth', scopes: ['widgets:read'] },
+    ],
+    [{ transport: 'bearer', scheme: 'WidgetSession' }],
+    [],
+  ],
+}
+```
+
+This permits a key **and** an OAuth token, **or** a bearer token, **or** anonymous
+access. The application chooses an alternative and supplies every credential
+in it. Requirement and scope order is retained; it does not establish a
+credential-selection preference. Generated clients export `Security` and
+`SecurityRequirement` for application transports.
 
 Security-scheme aliases use `$ref: "#/components/securitySchemes/<name>"`.
 Component names match `[A-Za-z0-9._-]+`. In 3.1, references may add string
 `summary` and `description` annotations; these do not change credential
 requirements.
-Every chain must end at a supported bearer declaration. Missing targets,
+Every chain must end at a supported security declaration. Missing targets,
 cycles, malformed references and semantic siblings fail at their declaration,
 including unused schemes. External references and encoded or escaped component
 names are unsupported; the compiler never fetches security definitions.
 
-An operation inherits document security when its own `security` field is absent.
-Its own `[]` or `[{}]` declares public access; absence at both levels also means
-no security requirement. Alternatives, combined schemes, optional bearer access,
-and nonempty role requirements are rejected explicitly. The generated code never
-obtains credentials or sends Authorization headers.
+The generated code never obtains tokens, encodes passwords, inserts API keys,
+or sends credential headers, query parameters, or cookies. OpenID Connect,
+mutual TLS, HTTP schemes other than basic/bearer, and external security-scheme
+references remain unsupported with explicit diagnostics.
 
 Every operation must belong to at least one surface. Choose one membership
 owner: document `x-pom-policy.surfaces` with per-operation `x-pom.surfaces`, or a
@@ -283,7 +349,7 @@ validation, including operations excluded from output.
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; whole-segment path placeholders                                                                                                                                                                                                              |
 | Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; string and optional nullable string request headers; simple path/header and form query serialization |
 | Bodies      | Required or optional JSON/text bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON, text, or bodyless responses; string response headers; local component references and aliases                                                                                                            |
-| Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; acyclic local component references; restricted unions and maps described below                                                            |
+| Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; productive local component references; restricted unions and maps described below                                                         |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                  |
 | Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, `ipv6`, and `byte`; string `password` hint; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                             |
 
@@ -433,6 +499,9 @@ remain rejected. Unrelated `x-…` extension keywords require an explicit
 
 Supported schema composition:
 
+- [`allOf`](#allof-composition) supports single-branch wrappers and fixed-object
+  or scalar compositions, including constrained overlapping fields, under the
+  limits below.
 - `anyOf` has two branches: a schema and `null`, or `string` and `integer`.
   A `type: "null"` branch requires 3.1; 3.0 nullable schemas use `nullable: true`
   as described above.
@@ -482,7 +551,7 @@ never supply a missing response field or rescue an invalid response value.
 Component schemas, HTTP schemas, and policy field declarations share a
 per-document normalization budget of 1,000,000 work units. Each source schema
 visit consumes one unit, as does each literal value (`enum` or `const`), property
-name, required name, union branch-list entry, nullable type-array entry, and
+name, required name, composition branch-list entry, nullable type-array entry, and
 discriminator mapping entry. A branch consumes its list-entry unit and its own
 schema-visit units. Collection work is reserved before constructing results.
 Shared inline values count at every occurrence; opaque annotation payloads such
@@ -492,9 +561,13 @@ that exceeds the budget; component references reduce repeated inline work.
 This budget applies to JSON, YAML, and programmatic inputs. The YAML parser's
 whole-document expansion limit remains separate.
 
-Schemas support at most 128 structural levels, including structure behind
-references. Pure aliases add no levels. Each inline schema is limited to 32
-levels; use component references for deeper structures. Named types and typed
+`allOf` composition also bounds merged-field and scalar-assertion preprocessing
+to 1,000,000 work units per schema table. Shared references do not bypass this
+limit; excessive composition receives an actionable diagnostic before generation.
+
+Finite schema structure supports at most 128 structural levels, including
+structure behind references. Pure aliases add no levels. Each inline schema is
+limited to 32 levels; use component references for deeper structures. Named types and typed
 aggregate validators keep inference from expanding through every level.
 These limits count the normalized schema, including nullable wrappers. A nullable
 array or object uses one level for nullability and one for the container before
@@ -675,11 +748,129 @@ outputs change. For example, adding `format: 17` to the example's
 POM: components.schemas.WidgetId.format: expected a string
 ```
 
-External or recursive references, general unions and other type arrays, objects
-mixing fixed properties with dynamic entries,
+External references, nonproductive reference cycles, general unions and other
+type arrays, objects mixing fixed properties with dynamic entries,
 optional multipart request bodies, status ranges/default
-responses, non-bearer security schemes and external security-scheme references
+responses, OpenID Connect, mutual TLS, unsupported HTTP authentication schemes,
+non-OAuth role requirements and external security-scheme references
 remain unsupported.
+
+### allOf composition
+
+`allOf` requires a nonempty array of supported schemas. A single branch may wrap
+any existing supported shape; a wrapper around one component reference retains
+that reference's identity. Fixed-object compositions may combine inline schemas,
+local references, and nested compositions. Sibling object `properties` and
+`required` declarations participate in the same composition.
+Object fragments may omit `type` only when the composition also includes an
+explicit `type: "object"` assertion, directly or through a reference. Without
+that assertion, object keywords alone also admit primitives under OpenAPI; POM
+diagnoses that unsupported form instead of changing its meaning.
+Multiple scalar branches must have the same kind, except that `number` and
+`integer` may intersect.
+
+For example, a reusable base may declare shared fields and an operation-specific
+schema may add fields:
+
+```json
+{
+  "allOf": [
+    { "$ref": "#/components/schemas/WidgetBase" },
+    {
+      "type": "object",
+      "required": ["label"],
+      "properties": { "label": { "type": "string", "minLength": 1 } }
+    }
+  ]
+}
+```
+
+Every branch applies to the same value. Required fields accumulate, and a field
+declared by several branches must satisfy every declaration. Overlapping fixed
+objects compose recursively. Overlapping scalar constraints retain every rule,
+including independent patterns, formats, and `multipleOf` constraints;
+`number` with `integer` still requires an integer. Composition never uses the
+last branch as an override. Comparable bounds combine to their strongest
+restriction. Each distinct scalar assertion is checked once, including when
+several aliases or composition paths share the same ancestor; repeated
+assertions do not multiply diagnostics.
+Object `minProperties` and `maxProperties` bounds intersect over the full
+composed object, using the ordinary request/response counting behavior.
+
+Composition happens before request/response projection, so `readOnly` and
+`writeOnly` retain their ordinary directional behavior. Generated requests reject
+unknown fields against the combined field set, while responses strip additive
+fields. Parsed values remain detached, including nested composed objects.
+
+When the combined source declares no fields or required names and no closed
+branch, it remains an open object of JSON values. For example,
+`allOf: [{ type: "object" }, { minProperties: 1 }]` preserves arbitrary valid
+JSON members while requiring at least one member. Explicitly closed empty
+objects remain empty. This source decision precedes directional projection:
+a fixed object whose fields are later excluded by `readOnly` or `writeOnly`
+keeps its fixed shape and does not become an open map.
+
+`additionalProperties: false` belongs to the schema object where it is declared.
+POM accepts a closed branch only when that branch locally declares every field
+in the combined object. Extending a closed branch with another field receives an
+actionable unsupported diagnostic, even if the added field is optional. Omit
+`additionalProperties: false` from a base intended for extension; closing one
+branch does not close the union of all branches' fields.
+Supported closed compositions keep the ordinary response behavior of stripping
+unrelated additive fields.
+
+Explicit dynamic `additionalProperties: true` or a schema, including `{}`, cannot
+be combined with fixed fields in this stage. The same diagnostic applies through
+local aliases and nested compositions. A bare `{ "type": "object" }` remains
+neutral beside fixed fields. Pure `additionalProperties: true` maps may combine
+with property-count bounds and retain all their valid members. Schema-valued
+maps, including `additionalProperties: {}`, retain existing standalone and
+single-wrapper support; intersecting them with additional assertions remains
+unsupported.
+
+This stage does not support intersections involving typed dynamic maps, multiple
+array schemas, binary schemas, or unions with other schemas. An unconstrained
+object such as `{ "type": "object" }` adds no constraints when combined with a
+fixed object; an empty schema `{}` is neutral. A single branch can still wrap
+existing supported shapes.
+Unsupported or incompatible compositions fail before
+selection or output writes, including in unused components. General schema
+intersection remains unsupported. Recursion through a composed object's
+properties is supported; recursive object-merge expansion at the same value
+receives an explicit diagnostic.
+
+### Recursive schemas
+
+Local component references may form self-referential or mutually recursive
+schemas when each cycle descends through an object property, array item, or
+map value. For example, a tree may contain an optional parent or an array of
+children referring to the same tree component. Supported nullable wrappers,
+tagged unions, aliases, and directional properties retain their ordinary
+behavior around these references. Recursive maps retain their map-valued
+children; recursion does not broaden their types to arbitrary JSON.
+
+A cycle made only of aliases, union alternatives, or `allOf` branches never
+moves to a child value. POM rejects these nonproductive cycles before output
+selection, including in unused components. External references remain
+unsupported.
+
+Recursive validation accepts finite data and returns detached values. Reusing
+one input child in separate positions is allowed; each position receives its
+own parsed copy. A JavaScript object or array referring to an active ancestor
+fails validation instead of producing a cyclic output. The same checks apply
+to standalone validators, request builders, and response parsing.
+
+Each recursive traversal permits at most 128 descent levels, 512 active parser
+entries, and 100,000 visited values. Parser entries include nullable and union
+bindings that validate the same value without descending into a child.
+Each object property, array item, or map value adds one descent level; a child
+object inside an array property is two levels below its parent object.
+Excessive depth or work produces an ordinary validation error, or a
+protocol failure for an observed response. One allowance covers the complete
+value, including outer or inline containers and sibling recursive children.
+The limits bound expansion
+of shared acyclic inputs as well as ordinary trees. The compiler's separate
+schema and generated-expression limits still apply.
 
 ### Reusable components
 

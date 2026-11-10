@@ -33,6 +33,39 @@ export function benchmarkSeed(value: unknown, location = 'seed'): number {
   return value;
 }
 
+export function profileSettings<T extends { readonly id: string }>(
+  value: unknown,
+  defaults: readonly T[],
+  smoke: T,
+) {
+  const input = record(value, 'settings');
+  for (const key of Object.keys(input))
+    assert.ok(
+      ['seed', 'rounds', 'profiles'].includes(key),
+      `settings: unknown field ${key}; expected seed, rounds or profiles`,
+    );
+  const seed = benchmarkSeed(input.seed ?? 20261109);
+  const rounds = input.rounds ?? 3;
+  assert.ok(
+    typeof rounds === 'number' &&
+      Number.isSafeInteger(rounds) &&
+      rounds >= 1 &&
+      rounds <= 30,
+    'settings.rounds: expected 1..30',
+  );
+  const ids = input.profiles ?? defaults.map((profile) => profile.id);
+  assert.ok(
+    Array.isArray(ids) && ids.length > 0 && new Set(ids).size === ids.length,
+    'settings.profiles: expected unique profile IDs',
+  );
+  const profiles = ids.map((id: unknown) => {
+    const profile = [...defaults, smoke].find((profile) => profile.id === id);
+    assert.ok(profile, `settings.profiles: unknown profile: ${String(id)}`);
+    return profile;
+  });
+  return { seed, rounds, profiles };
+}
+
 export function benchmarkId(value: unknown, location: string): string {
   assert.ok(
     typeof value === 'string' && /^[a-zA-Z0-9_-]+$/.test(value),

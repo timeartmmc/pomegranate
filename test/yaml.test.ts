@@ -413,7 +413,12 @@ void test('YAML uses the existing semantic diagnostics, including unselected dec
     },
     (d) => {
       Object.assign(d.components.schemas, {
-        Unselected: { allOf: [{ type: 'string' }] },
+        Unselected: {
+          allOf: [
+            { type: 'array', items: { type: 'string' } },
+            { type: 'array', items: { type: 'string' } },
+          ],
+        },
       });
     },
     (d) => {

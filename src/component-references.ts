@@ -17,7 +17,12 @@ const labels = {
   examples: 'example',
 } as const;
 type Section = keyof typeof labels;
-type ReusableSection = 'parameters' | 'responses' | 'requestBodies' | 'headers';
+type ReusableSection =
+  | 'parameters'
+  | 'responses'
+  | 'requestBodies'
+  | 'headers'
+  | 'securitySchemes';
 
 function componentName(
   name: string,
@@ -49,7 +54,7 @@ export function localComponentReference(
 
 export function validateComponentAliases(
   references: ReadonlyMap<string, string | undefined>,
-  section: 'examples' | 'securitySchemes',
+  section: 'examples',
 ): void {
   const checked = new Set<string>();
   // Targets were checked at their declarations. These are pure alias chains;

@@ -13,3 +13,14 @@ export function shuffled<T>(values: readonly T[], next: () => number): T[] {
   }
   return order;
 }
+
+export function seededSchedule<T>(
+  cells: readonly T[],
+  rounds: number,
+  seed: number,
+) {
+  const next = random(seed);
+  return Array.from({ length: rounds }, (_, round) =>
+    shuffled(cells, next).map((cell) => ({ round, cell })),
+  ).flat();
+}

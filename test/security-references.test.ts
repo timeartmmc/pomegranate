@@ -48,7 +48,9 @@ void test('local bearer aliases retain exact generated output, input values and 
     actual,
   );
   assert.deepEqual(
-    normalizeSecuritySchemes(document.components.securitySchemes),
+    new Set(
+      normalizeSecuritySchemes(document.components.securitySchemes).keys(),
+    ),
     new Set([
       'WidgetSession',
       'SessionAlias',
@@ -187,7 +189,7 @@ const invalid: [string, (document: Fixture) => void, string, RegExp][] = [
       });
     },
     'WidgetSession.$ref',
-    /component name/,
+    /component security scheme names/,
   ],
   [
     'percent-encoded target',
@@ -197,7 +199,7 @@ const invalid: [string, (document: Fixture) => void, string, RegExp][] = [
       });
     },
     'WidgetSession.$ref',
-    /component name/,
+    /component security scheme names/,
   ],
   [
     'nested target path',
@@ -207,7 +209,7 @@ const invalid: [string, (document: Fixture) => void, string, RegExp][] = [
       });
     },
     'WidgetSession.$ref',
-    /component name/,
+    /component security scheme names/,
   ],
   [
     'undefined reference',
@@ -240,14 +242,14 @@ const invalid: [string, (document: Fixture) => void, string, RegExp][] = [
     /expected a string/,
   ],
   [
-    'nonbearer target',
+    'unsupported HTTP target',
     (document) => {
       Object.assign(document.components.securitySchemes, {
-        'Concrete.Session_1': { type: 'http', scheme: 'basic' },
+        'Concrete.Session_1': { type: 'http', scheme: 'digest' },
       });
     },
     'Concrete.Session_1',
-    /only HTTP bearer/,
+    /basic.*bearer/,
   ],
   [
     'terminal newline in component name',
@@ -255,7 +257,7 @@ const invalid: [string, (document: Fixture) => void, string, RegExp][] = [
       Object.assign(document.components.securitySchemes, { 'Bad\n': bearer });
     },
     'Bad\n',
-    /component name/,
+    /component security scheme names/,
   ],
 ];
 for (const [name, change, location, message] of invalid)
@@ -275,16 +277,12 @@ for (const [name, change, location, message] of invalid)
     assert.deepEqual(document, before);
   });
 
-void test('aliases keep unsupported security combinations and policy contradictions explicit', async () => {
-  for (const [security, message] of [
-    [[{ SessionAlias: [] }, {}], /alternatives/],
-    [[{ WidgetSession: [], OtherAlias: [] }], /combined/],
-    [[{ SessionAlias: ['editor'] }], /role requirements/],
-  ] satisfies [unknown, RegExp][]) {
-    const document = aliasFixture();
-    Object.assign(preparation(document), { security });
-    await assert.rejects(compile(document, selection), message);
-  }
+void test('aliases keep unsupported role requirements and policy contradictions explicit', async () => {
+  const roles = aliasFixture();
+  Object.assign(preparation(roles), {
+    security: [{ SessionAlias: ['editor'] }],
+  });
+  await assert.rejects(compile(roles, selection), /role requirements/);
   const document = aliasFixture();
   preparation(document)['x-pom'].auth = 'public';
   await assert.rejects(

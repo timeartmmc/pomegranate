@@ -237,6 +237,32 @@ void test('application transport resolves bearer schemes and readiness labels an
   assert.equal(publicResult.status, 204);
 });
 
+void test('the bearer-only example transport rejects other security before resolving credentials or sending', async () => {
+  const unexpected = async () => {
+    assert.fail(
+      'Unsupported credentials must not reach token resolution or fetch',
+    );
+  };
+  for (const security of [
+    { transport: 'basic', scheme: 'Basic' },
+    { transport: 'apiKey', scheme: 'Key', in: 'header', name: 'X-Key' },
+    { transport: 'oauth2', scheme: 'OAuth', scopes: ['read'] },
+    {
+      transport: 'alternatives',
+      alternatives: [[], [{ transport: 'bearer', scheme: 'Session' }]],
+    },
+  ] as const)
+    await assert.rejects(
+      execute(
+        { ...operations.checkHealth.build(), security },
+        unexpected,
+        unexpected,
+        'https://example.invalid',
+      ),
+      /only implements bearer and public access/,
+    );
+});
+
 void test('the example transport resolves relative requests for real Node fetch', async (t) => {
   const server = createServer((incoming, outgoing) => {
     assert.equal(incoming.url, '/api/health');

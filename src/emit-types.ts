@@ -8,6 +8,7 @@ import type {
   Standalone,
 } from './model.js';
 import { schemaType, typeSymbol } from './schema-types.js';
+import { recursiveSchemas, schemaReferences } from './schemas.js';
 import { byteBudget, sourceBudget } from './source-budget.js';
 
 type Variant = {
@@ -17,7 +18,6 @@ type Variant = {
   owners: Set<string>;
 };
 type TypeNode = Variant & {
-  id: number;
   symbol: string;
   file: string | undefined;
 };
@@ -37,22 +37,31 @@ export function renderTypes(
     request: new Map(),
     response: new Map(),
   };
-  function hasBinary(schema: Schema, direction: Direction): boolean {
+  const parents: Record<Direction, Map<string, Set<string>>> = {
+    request: new Map(),
+    response: new Map(),
+  };
+  const recursive = {
+    request: recursiveSchemas(descriptor.schemas.request).members,
+    response: recursiveSchemas(descriptor.schemas.response).members,
+  };
+  function hasBinary(schema: Schema): boolean {
     switch (schema.kind) {
       case 'binary':
         return true;
       case 'ref':
-        return binary[direction].get(schema.name)!;
+        return false;
       case 'object':
         return [...schema.properties.values()].some((value) =>
-          hasBinary(value, direction),
+          hasBinary(value),
         );
       case 'array':
-        return hasBinary(schema.items, direction);
+        return hasBinary(schema.items);
       case 'map':
-        return schema.values !== true && hasBinary(schema.values, direction);
+        return schema.values !== true && hasBinary(schema.values);
+      case 'intersection':
       case 'union':
-        return schema.branches.some((value) => hasBinary(value, direction));
+        return schema.branches.some(hasBinary);
       case 'boolean':
       case 'integer':
       case 'json':
@@ -62,12 +71,32 @@ export function renderTypes(
         return false;
     }
   }
-  for (const name of descriptor.schemaOrder)
-    for (const direction of ['request', 'response'] as const)
-      binary[direction].set(
-        name,
-        hasBinary(descriptor.schemas[direction].get(name)!, direction),
-      );
+  function propagate(
+    seeds: Iterable<string>,
+    edges: readonly ReadonlyMap<string, ReadonlySet<string>>[],
+  ): ReadonlySet<string> {
+    const found = new Set(seeds);
+    for (const name of found)
+      for (const graph of edges)
+        for (const parent of graph.get(name) ?? []) found.add(parent);
+    return found;
+  }
+  for (const direction of ['request', 'response'] as const) {
+    const direct: string[] = [];
+    for (const name of descriptor.schemaOrder) {
+      const schema = descriptor.schemas[direction].get(name)!;
+      if (hasBinary(schema)) direct.push(name);
+      for (const reference of schemaReferences(schema)) {
+        const entries =
+          parents[direction].get(reference.name) ?? new Set<string>();
+        entries.add(name);
+        parents[direction].set(reference.name, entries);
+      }
+    }
+    const reachable = propagate(direct, [parents[direction]]);
+    for (const name of descriptor.schemaOrder)
+      binary[direction].set(name, reachable.has(name));
+  }
 
   const key = (name: string, direction: Direction, target?: Client['target']) =>
     JSON.stringify([
@@ -113,6 +142,60 @@ export function renderTypes(
   for (const root of standalone)
     select(root.schemaOrder, root.direction, `standalone:${root.name}`);
 
+  // References retain their names through directional projection. A local type
+  // difference affects every ancestor, including every member of a recursive
+  // component. Without a reachable difference the two graphs describe the same
+  // type and can share an identity before either graph's bodies are emitted.
+  const different = propagate(
+    [...byName.keys()].filter((name) => {
+      const shape = (direction: Direction) =>
+        schemaType(
+          descriptor.schemas[direction].get(name)!,
+          direction,
+          'browser',
+          (child) => JSON.stringify(child),
+        );
+      return shape('request') !== shape('response');
+    }),
+    [parents.request, parents.response],
+  );
+  const aliases: Record<Direction, Map<string, string>> = {
+    request: new Map(),
+    response: new Map(),
+  };
+  function terminal(name: string, direction: Direction): string {
+    const path: string[] = [];
+    let current = name;
+    while (!aliases[direction].has(current)) {
+      const schema = descriptor.schemas[direction].get(current)!;
+      if (schema.kind !== 'ref') break;
+      path.push(current);
+      current = schema.name;
+    }
+    const target = aliases[direction].get(current) ?? current;
+    aliases[direction].set(current, target);
+    for (const alias of path) aliases[direction].set(alias, target);
+    return target;
+  }
+  const identities = new Map<string, number>();
+  const identity = (
+    name: string,
+    direction: Direction,
+    target?: Client['target'],
+  ) => {
+    const name_ = terminal(name, direction);
+    const value = JSON.stringify([
+      name_,
+      different.has(name_) ? direction : null,
+      binary[direction].get(name_) ? target : null,
+    ]);
+    let id = identities.get(value);
+    if (id === undefined) {
+      id = identities.size;
+      identities.set(value, id);
+    }
+    return id;
+  };
   const nodes = new Map<string, TypeNode>();
   const canonical: TypeNode[] = [];
   const accountShapes = sourceBudget();
@@ -129,24 +212,16 @@ export function renderTypes(
     const shapes = new Map<string, TypeNode>();
     for (const variant of byName.get(name) ?? []) {
       const schema = descriptor.schemas[variant.direction].get(name)!;
-      if (schema.kind === 'ref') {
-        // Reference siblings constrain values without changing their TS type.
-        // Reuse the target now: consumers skipping declaration checking must
-        // not recursively resolve thousands of aliases before reaching it.
-        const target = node(schema.name, variant.direction, variant.target);
-        for (const owner of variant.owners) target.owners.add(owner);
-        nodes.set(key(name, variant.direction, variant.target), target);
-        continue;
-      }
-      // Dependencies precede their users. Canonical child identities make this
-      // an exact type-shape comparison, including directional field projection
-      // and browser/native file types, without expanding reference graphs.
+      if (schema.kind === 'ref') continue;
+      // Assign every identity before rendering declarations. Child identities
+      // depend on graph reachability, not a dependency-first allocation order.
       const shape = schemaType(
         schema,
         variant.direction,
         variant.target,
         (child, direction) =>
-          `ref_${node(child, direction, variant.target).id}`,
+          `ref_${identity(child, direction, variant.target)}`,
+        recursive[variant.direction].has(name),
       );
       let shared = shapes.get(shape);
       if (!shared) {
@@ -154,7 +229,6 @@ export function renderTypes(
         shared = {
           ...variant,
           owners: new Set(),
-          id: canonical.length,
           symbol: typeSymbol(name, variant.direction),
           file: undefined,
         };
@@ -164,6 +238,16 @@ export function renderTypes(
       for (const owner of variant.owners) shared.owners.add(owner);
       nodes.set(key(name, variant.direction, variant.target), shared);
     }
+  }
+  for (const variant of variants.values()) {
+    const target = terminal(variant.name, variant.direction);
+    if (target === variant.name) continue;
+    // Constraint siblings do not change an alias's public TS type. Flatten the
+    // complete chain so published declarations never require recursive alias
+    // expansion before they reach a productive object, array or map identity.
+    const shared = node(target, variant.direction, variant.target);
+    for (const owner of variant.owners) shared.owners.add(owner);
+    nodes.set(key(variant.name, variant.direction, variant.target), shared);
   }
   const groups = new Map<string, TypeNode[]>();
   for (const entry of canonical) {
@@ -210,6 +294,7 @@ export function renderTypes(
           accountPart(source);
           return source;
         },
+        recursive[entry.direction].has(entry.name),
       );
       return admit(`export type ${entry.symbol} = ${value};`);
     });

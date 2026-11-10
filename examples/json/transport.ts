@@ -58,7 +58,10 @@ async function executeRaw(
     if (!token)
       throw new Error('The example transport requires a bearer token');
     authHeaders['Authorization'] = `Bearer ${token}`;
-  }
+  } else if (request.security.transport !== 'none')
+    throw new Error(
+      'The example transport only implements bearer and public access',
+    );
   // Append the contract path to the selected server's base path. Assign only
   // pathname so encoded path data stays separate from the request's query.
   const server = new URL(baseUrl);

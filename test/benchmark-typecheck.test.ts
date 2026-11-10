@@ -3,12 +3,12 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { seededSchedule } from '../bench/order.ts';
 import { nodeEnvironment, runLogged } from '../bench/process.ts';
 import { compile } from '../dist/index.js';
 import {
   collectTypecheck,
   typecheckDiagnostics,
-  typecheckSchedule,
   typecheckSettings,
 } from '../bench/typecheck.ts';
 import {
@@ -58,9 +58,9 @@ void test('typecheck diagnostic evidence requires supported numeric counters', (
 
 void test('typecheck scheduling replays a seed and visits every cell once per round', () => {
   const cells = ['a', 'b', 'c', 'd', 'e', 'f'];
-  const schedule = typecheckSchedule(cells, 3, 42);
-  assert.deepEqual(schedule, typecheckSchedule(cells, 3, 42));
-  assert.notDeepEqual(schedule, typecheckSchedule(cells, 3, 43));
+  const schedule = seededSchedule(cells, 3, 42);
+  assert.deepEqual(schedule, seededSchedule(cells, 3, 42));
+  assert.notDeepEqual(schedule, seededSchedule(cells, 3, 43));
   for (let round = 0; round < 3; round++)
     assert.deepEqual(
       schedule
@@ -73,15 +73,18 @@ void test('typecheck scheduling replays a seed and visits every cell once per ro
     typecheckSettings({ profiles: ['smoke'], rounds: 1 }).profiles,
     [typecheckSmoke],
   );
-  for (const settings of [
-    { profiles: [] },
-    { profiles: ['unknown'] },
-    { profiles: ['smoke', 'smoke'] },
-    { rounds: 0 },
-    { seed: -1 },
-    { policy: {} },
-  ])
-    assert.throws(() => typecheckSettings(settings));
+  for (const [settings, message] of [
+    [{ profiles: [] }, /settings\.profiles: expected unique profile IDs/],
+    [{ profiles: ['unknown'] }, /settings\.profiles: unknown profile: unknown/],
+    [
+      { profiles: ['smoke', 'smoke'] },
+      /settings\.profiles: expected unique profile IDs/,
+    ],
+    [{ rounds: 0 }, /settings\.rounds: expected 1\.\.30/],
+    [{ seed: -1 }, /seed: expected an integer between 0 and 4294967295/],
+    [{ policy: {} }, /settings: unknown field policy/],
+  ] as const)
+    assert.throws(() => typecheckSettings(settings), message);
 });
 
 void test('generated core consumers qualify meaningful inferred types and retain typecheck failures', async (t) => {
@@ -100,21 +103,19 @@ void test('generated core consumers qualify meaningful inferred types and retain
     }),
   );
   const logs = await temporary(t);
-  await collectTypecheck(root, typescript, join(logs, 'qualification'), false);
   const measurement = await collectTypecheck(
     root,
     typescript,
     join(logs, 'measurement'),
-    true,
   );
-  assert.ok(measurement && measurement.wallMs > 0);
+  assert.ok(measurement.wallMs > 0);
   assert.ok(measurement.compilerMemoryK > 0);
   await writeFile(
     join(root, 'consumer.ts'),
     typecheckConsumer(profile) + '\nconst broken: string = 42;\nvoid broken;\n',
   );
   await assert.rejects(
-    collectTypecheck(root, typescript, join(logs, 'broken'), false),
+    collectTypecheck(root, typescript, join(logs, 'broken')),
   );
   assert.match(
     await readFile(join(logs, 'broken.stdout.log'), 'utf8'),
@@ -131,7 +132,7 @@ void test('generated core consumers qualify meaningful inferred types and retain
     'export declare const requestSchemas: any;\nexport declare const responseSchemas: any;\n',
   );
   await assert.rejects(
-    collectTypecheck(root, typescript, join(logs, 'erased'), false),
+    collectTypecheck(root, typescript, join(logs, 'erased')),
   );
   assert.match(
     await readFile(join(logs, 'erased.stdout.log'), 'utf8'),
@@ -148,7 +149,7 @@ void test('measurement rejects malformed evidence and preserves stdout/stderr on
     `process.stdout.write('Check time: unsupported\\n');process.stderr.write('diagnostic');`,
   );
   await assert.rejects(
-    collectTypecheck(root, entry, join(root, 'missing'), true),
+    collectTypecheck(root, entry, join(root, 'missing')),
     /diagnostic format/,
   );
   assert.equal(
@@ -163,9 +164,7 @@ void test('measurement rejects malformed evidence and preserves stdout/stderr on
     entry,
     `process.stdout.write('error TS1234: synthetic failure');process.stderr.write('failed process');process.exit(2);`,
   );
-  await assert.rejects(
-    collectTypecheck(root, entry, join(root, 'failed'), true),
-  );
+  await assert.rejects(collectTypecheck(root, entry, join(root, 'failed')));
   assert.match(
     await readFile(join(root, 'failed.stdout.log'), 'utf8'),
     /synthetic failure/,
@@ -278,7 +277,7 @@ void test('type probes reject partial numeric and array element erasure', async 
       }),
     );
     await assert.rejects(
-      collectTypecheck(root, typescript, join(root, 'erased'), false),
+      collectTypecheck(root, typescript, join(root, 'erased')),
     );
     assert.match(
       await readFile(join(root, 'erased.stdout.log'), 'utf8'),

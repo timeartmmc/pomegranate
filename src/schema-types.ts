@@ -22,9 +22,10 @@ export function schemaType(
   direction: Direction,
   target?: Client['target'],
   reference: (name: string, direction: Direction) => string = typeSymbol,
+  recursive = false,
 ): string {
   const child = (value: Schema): string =>
-    schemaType(value, direction, target, reference);
+    schemaType(value, direction, target, reference, recursive);
   switch (schema.kind) {
     case 'json':
       return "import('./runtime.ts').JsonValue";
@@ -45,10 +46,23 @@ export function schemaType(
     }
     case 'array':
       return `Array<${child(schema.items)}>`;
-    case 'map':
-      return `Record<string, ${schema.values === true ? "import('./runtime.ts').JsonValue" : child(schema.values)}>`;
+    case 'map': {
+      const value =
+        schema.values === true
+          ? "import('./runtime.ts').JsonValue"
+          : child(schema.values);
+      // TypeScript permits recursive index signatures but rejects the same
+      // self-reference through the generic Record alias (TS2456).
+      return recursive
+        ? `{ [key: string]: ${value} }`
+        : `Record<string, ${value}>`;
+    }
     case 'union':
       return `(${schema.branches.map(child).join(' | ')})`;
+    case 'intersection':
+      return schema.literals
+        ? schema.literals.map((value) => jsonSource(value)).join(' | ')
+        : `(${schema.branches.map((branch) => `(${child(branch)})`).join(' & ')})`;
     case 'binary':
       if (target === undefined)
         fail(

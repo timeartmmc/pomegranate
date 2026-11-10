@@ -43,7 +43,7 @@ const commonBytes = {
   'policy-types.ts': 1353,
   'runtime.ts': 83717,
 };
-const baseline = {
+export const outputGrowthReferenceBytes = {
   small: {
     ...commonBytes,
     'client.consumer.operations.ts': 1451,
@@ -143,7 +143,7 @@ export function verifyOutputBudgets(cells: readonly Cell[]) {
     'all output-growth profiles must be present in their declared order',
   );
   for (const { profile, metrics } of cells) {
-    const reference = baseline[profile.id];
+    const reference = outputGrowthReferenceBytes[profile.id];
     assert.deepEqual(
       metrics.files.map(({ key }) => key).sort(),
       Object.keys(reference).sort(),
@@ -168,7 +168,7 @@ export function verifyOutputBudgets(cells: readonly Cell[]) {
   const [small, operations, schemas, combined] = cells;
   // Subtract fixed helpers and the independent growth along each axis. A per-
   // operation copy of the widened schema adds a positive interaction; savings
-  // are allowed. The baseline interaction is zero; one KiB permits small fixed
+  // are allowed. The reference interaction is zero; one KiB permits small fixed
   // representation changes without allowing a second whole schema copy.
   const interactionBytes =
     combined!.metrics.totalBytes -
@@ -207,23 +207,33 @@ export async function runOutputGrowth(
       const { sources, metrics } = inspectOutput(
         await compile(workload.document, workload.options),
       );
+      for (const [name, source] of Object.entries(sources))
+        await writeFile(join(directory, name), source, { flag: 'wx' });
+      await writeJson(join(directory, 'input-after-first.json'), workload);
       assert.deepEqual(workload, before, 'compilation must preserve input');
       const second = inspectOutput(
         await compile(workload.document, workload.options),
       );
+      const repeated = join(directory, 'repeat');
+      await mkdir(repeated);
+      for (const [name, source] of Object.entries(second.sources))
+        await writeFile(join(repeated, name), source, { flag: 'wx' });
+      await writeJson(join(directory, 'input-after-repeat.json'), workload);
       assert.deepEqual(
         workload,
         before,
         'repeated compilation must preserve input',
       );
-      assert.deepEqual(
-        second.sources,
-        sources,
-        'identical compilation must produce identical complete output',
-      );
+      for (const name of new Set([
+        ...Object.keys(sources),
+        ...Object.keys(second.sources),
+      ]))
+        assert.equal(
+          second.sources[name],
+          sources[name],
+          `identical compilation must produce identical complete output: ${name}`,
+        );
       stage = `qualification:${profile.id}`;
-      for (const [name, source] of Object.entries(sources))
-        await writeFile(join(directory, name), source, { flag: 'wx' });
       verifyOutputGrowth(
         profile,
         await import(pathToFileURL(join(directory, 'client.consumer.ts')).href),
@@ -283,7 +293,7 @@ export async function runOutputGrowth(
       generatedTypes: 'verified',
       sourceBudgets: 'passed',
       policy: outputGrowthPolicy,
-      referenceBytes: structuredClone(baseline),
+      referenceBytes: structuredClone(outputGrowthReferenceBytes),
       growth,
       cells,
     };

@@ -41,6 +41,8 @@ import {
   schemaNode,
 } from './schema-node.js';
 import { schemaAccess } from './directional.js';
+import { scalarIntersectionBase } from './intersections.js';
+import { schemaGraph } from './schema-graph.js';
 import {
   builtInFormat,
   expectedStringFormats,
@@ -322,6 +324,7 @@ export function normalizeSchema(
   nesting = 1,
   registered: FormatRegistry = new Map(),
   work?: WorkCounter,
+  intersectionMember = false,
 ): Schema {
   // Bound schema recursion before entering either JS or the native formatter.
   // Annotation values have their own iterative validation and do not add depth.
@@ -366,12 +369,20 @@ export function normalizeSchema(
       fail(`${location}.${name}`, 'expected a boolean');
   if (value.readOnly === true && value.writeOnly === true)
     fail(location, 'readOnly and writeOnly cannot both be true');
+  const shape = normalizeShape(
+    value,
+    location,
+    nesting,
+    registered,
+    work,
+    intersectionMember,
+  );
   const schema = {
     // Virtual nullable branches stay access-neutral. The source annotation
     // belongs to this declaration's outer node, including nullable wrappers.
-    ...normalizeShape(value, location, nesting, registered, work),
-    readOnly: value.readOnly === true,
-    writeOnly: value.writeOnly === true,
+    ...shape,
+    readOnly: value.readOnly === true || shape.readOnly,
+    writeOnly: value.writeOnly === true || shape.writeOnly,
   };
   // Defaults describe server behavior. Never make an omitted request field
   // present, or let a default rescue a missing required value.
@@ -398,6 +409,87 @@ function referenceName(input: unknown, location: string): string {
 
 const annotationKeys = [...schemaAnnotationKeys, 'readOnly', 'writeOnly'];
 const typedSchemaKeys = [...annotationKeys, 'type'];
+
+function normalizeIntersection(
+  value: Record<string, unknown>,
+  location: string,
+  nesting: number,
+  registered: FormatRegistry,
+  work?: WorkCounter,
+): SchemaDraft {
+  const raw = value.allOf;
+  if (!Array.isArray(raw) || raw.length === 0)
+    fail(`${location}.allOf`, 'expected a nonempty array of allOf branches');
+  work?.(raw.length, location);
+  const objectKeys = [
+    'properties',
+    'required',
+    'additionalProperties',
+    ...objectConstraints,
+  ];
+  const member = (input: unknown, path: string): Schema => {
+    const branch = record(input, path);
+    // Composition fragments commonly declare object assertions without type.
+    // Infer only this supported object vocabulary, never arbitrary JSON Schema.
+    const inferred =
+      !Object.hasOwn(branch, 'type') &&
+      !['$ref', 'allOf', 'anyOf', 'oneOf'].some((key) =>
+        Object.hasOwn(branch, key),
+      ) &&
+      objectKeys.some((key) => Object.hasOwn(branch, key));
+    const normalized = normalizeSchema(
+      inferred ? { ...branch, type: 'object' } : branch,
+      path,
+      nesting + 1,
+      registered,
+      work,
+      true,
+    );
+    if (!inferred) return normalized;
+    if (normalized.kind === 'object')
+      return { ...normalized, typeExplicit: false };
+    if (normalized.kind === 'map' && normalized.values === true)
+      return schemaNode({
+        kind: 'object',
+        properties: new Map(),
+        required: [],
+        typeExplicit: false,
+        additionalPropertiesExplicit: normalized.additionalPropertiesExplicit,
+        minProperties: normalized.minProperties,
+        maxProperties: normalized.maxProperties,
+        readOnly: normalized.readOnly,
+        writeOnly: normalized.writeOnly,
+      });
+    fail(
+      path,
+      'allOf object fragments with dynamic additionalProperties require an explicit type and are unsupported in intersections',
+    );
+  };
+  const branches = Array.from(arrayValues(raw), (branch, index) =>
+    member(branch, `${location}.allOf[${index}]`),
+  );
+  const siblings = Object.fromEntries(
+    Object.entries(value).filter(
+      ([key]) => key !== 'allOf' && !annotationKeys.includes(key),
+    ),
+  );
+  if (Object.keys(siblings).length > 0) {
+    if (
+      !Object.hasOwn(siblings, 'type') &&
+      !objectKeys.some((key) => Object.hasOwn(siblings, key)) &&
+      !Object.hasOwn(siblings, '$ref') &&
+      branches.length === 1 &&
+      branches[0]!.kind === 'ref'
+    ) {
+      // Constrained aliases retain the original reference as an independent
+      // assertion, so sibling patterns cannot replace the branch's own rules.
+      siblings.$ref = `#/components/schemas/${branches[0]!.name}`;
+    }
+    branches.push(member(siblings, location));
+  }
+  if (branches.length === 1) return branches[0]!;
+  return { kind: 'intersection', branches, location: `${location}.allOf` };
+}
 
 function normalizeUnion(
   value: Record<string, unknown>,
@@ -473,6 +565,7 @@ function normalizeObject(
   nesting: number,
   registered: FormatRegistry,
   work?: WorkCounter,
+  intersectionMember = false,
 ): SchemaDraft {
   keys(
     value,
@@ -527,7 +620,7 @@ function normalizeObject(
   if (new Set(required).size !== required.length)
     fail(`${location}.required`, 'duplicate required property');
   for (const name of required)
-    if (!normalized.has(name))
+    if (!intersectionMember && !normalized.has(name))
       fail(`${location}.required`, `unknown property ${JSON.stringify(name)}`);
   if (
     Object.hasOwn(value, 'additionalProperties') &&
@@ -540,6 +633,7 @@ function normalizeObject(
       );
     return {
       kind: 'map',
+      additionalPropertiesExplicit: true,
       ...limits,
       values:
         value.additionalProperties === true
@@ -559,11 +653,14 @@ function normalizeObject(
   // declares an object that must be empty.
   if (
     Object.keys(properties).length === 0 &&
-    !Object.hasOwn(value, 'additionalProperties')
+    !Object.hasOwn(value, 'additionalProperties') &&
+    required.length === 0
   )
     return { kind: 'map', values: true, ...limits };
   return {
     kind: 'object',
+    closed: value.additionalProperties === false,
+    additionalPropertiesExplicit: Object.hasOwn(value, 'additionalProperties'),
     properties: normalized,
     required: [...required].sort(),
     ...limits,
@@ -725,9 +822,17 @@ function normalizeShape(
   nesting: number,
   registered: FormatRegistry,
   work?: WorkCounter,
+  intersectionMember = false,
 ): Schema {
   return schemaNode(
-    normalizeShapeValue(ownRecord(value), location, nesting, registered, work),
+    normalizeShapeValue(
+      ownRecord(value),
+      location,
+      nesting,
+      registered,
+      work,
+      intersectionMember,
+    ),
   );
 }
 
@@ -737,9 +842,10 @@ function normalizeShapeValue(
   nesting: number,
   registered: FormatRegistry,
   work?: WorkCounter,
+  intersectionMember = false,
 ): SchemaDraft {
   if (Object.hasOwn(value, 'allOf'))
-    fail(`${location}.allOf`, 'allOf is not supported in this version');
+    return normalizeIntersection(value, location, nesting, registered, work);
   if (Object.hasOwn(value, '$ref')) {
     keys(
       value,
@@ -784,7 +890,14 @@ function normalizeShapeValue(
     return { kind: 'binary' };
   }
   if (kind === 'object')
-    return normalizeObject(value, location, nesting, registered, work);
+    return normalizeObject(
+      value,
+      location,
+      nesting,
+      registered,
+      work,
+      intersectionMember,
+    );
   if (kind === 'array') {
     keys(
       value,
@@ -830,6 +943,7 @@ export function schemaReferences(
       return schemaReferences(schema.items);
     case 'map':
       return schema.values === true ? [] : schemaReferences(schema.values);
+    case 'intersection':
     case 'union':
       return schema.branches.flatMap(schemaReferences);
     case 'object':
@@ -878,62 +992,31 @@ function measureSchema(
 ): number {
   const known = depths.get(schema);
   if (known !== undefined) return known;
-  if (schema.kind === 'ref') {
-    const aliases: Schema[] = [];
-    let target: Schema = schema;
-    let targetLocation = location;
-    while (target.kind === 'ref' && !depths.has(target)) {
-      if (!schemas.has(target.name))
-        fail(target.location, `unresolved reference ${target.name}`);
-      aliases.push(target);
-      targetLocation += ` -> components.schemas.${target.name}`;
-      target = schemas.get(target.name)!;
+  const graph = schemaGraph([schema], schemas, (value) => depths.has(value));
+  for (let index = 0; index < graph.groups.length; index++) {
+    const group = graph.groups[index]!;
+    let structure = 0;
+    let dependency = 0;
+    for (const node of group) {
+      const value = graph.nodes[node]!;
+      structure += depths.get(value) ?? (value.kind === 'ref' ? 0 : 1);
+      for (const target of graph.edges[node]!) {
+        const child = graph.nodes[target]!;
+        if (graph.groupFor.get(child) !== index)
+          dependency = Math.max(dependency, depths.get(child)!);
+      }
     }
-    const depth = measureSchema(target, schemas, targetLocation, depths);
-    for (const alias of aliases) depths.set(alias, depth);
-    return depth;
-  }
-  let depth = 1;
-  const child = (value: Schema, path: string) => {
-    depth = Math.max(depth, 1 + measureSchema(value, schemas, path, depths));
-  };
-  switch (schema.kind) {
-    case 'array':
-      child(schema.items, `${location}.items`);
-      break;
-    case 'map':
-      if (schema.values !== true)
-        child(schema.values, `${location}.additionalProperties`);
-      break;
-    case 'object':
-      for (const [name, value] of schema.properties)
-        child(value, `${location}.properties.${name}`);
-      break;
-    case 'union':
-      schema.branches.forEach((value, index) =>
-        child(value, schemaBranchLocation(schema, location, index)),
+    // A recursive region contributes its distinct structural nodes once. On a
+    // DAG this is the existing longest-path depth; aliases contribute no level.
+    const depth = structure + dependency;
+    if (depth > maximumSchemaNesting)
+      fail(
+        location,
+        `schema nesting exceeds the supported limit of ${maximumSchemaNesting} levels; reduce structural nesting, including recursive regions and referenced schemas`,
       );
-      break;
-    case 'json':
-    case 'binary':
-    case 'string':
-    case 'number':
-    case 'integer':
-    case 'boolean':
-    case 'null':
-      break;
-    default:
-      assertNever(schema);
+    for (const node of group) depths.set(graph.nodes[node]!, depth);
   }
-  // This is a structural runtime bound. Emitted expression depth and compiler
-  // inference are handled by flat typed bindings, without semantic cost weights.
-  if (depth > maximumSchemaNesting)
-    fail(
-      location,
-      `schema nesting exceeds the supported limit of ${maximumSchemaNesting} levels; reduce structural nesting, including referenced schemas`,
-    );
-  depths.set(schema, depth);
-  return depth;
+  return depths.get(schema)!;
 }
 
 function validateUnion(
@@ -1149,6 +1232,12 @@ function validateUsage(
       for (const [name, value] of schema.properties)
         visit(value, `${location}.properties.${name}`);
       return;
+    case 'intersection':
+      scalarIntersectionBase(schema, schemas);
+      schema.branches.forEach((value, index) =>
+        visit(value, `${schema.location}[${index}]`),
+      );
+      return;
     case 'union':
       schema.branches.forEach((value, index) => {
         const branchLocation = schemaBranchLocation(schema, location, index);
@@ -1191,7 +1280,19 @@ export function validateSchema(
   validateUsage(schema, schemas, location, usage, checked, cache.constraints);
 }
 
-export function orderSchemas(schemas: SchemaTable): readonly string[] {
+function sameValueReferences(
+  schema: Schema,
+): readonly Extract<Schema, { kind: 'ref' }>[] {
+  if (schema.kind === 'ref') return [schema];
+  if (schema.kind === 'intersection' || schema.kind === 'union')
+    return schema.branches.flatMap(sameValueReferences);
+  return [];
+}
+
+function dependencyOrder(
+  schemas: SchemaTable,
+  sameValue: boolean,
+): readonly string[] {
   const ordered: string[] = [];
   const visited = new Set<string>();
   const pending = new Set<string>();
@@ -1201,13 +1302,22 @@ export function orderSchemas(schemas: SchemaTable): readonly string[] {
   }[] = [];
   const enter = (name: string, location: string): void => {
     if (visited.has(name)) return;
-    if (pending.has(name))
-      fail(location, `recursive schemas are unsupported (${name})`);
+    if (pending.has(name)) {
+      if (sameValue)
+        fail(
+          location,
+          `recursive schemas must descend through an object property, array item or map value (${name}); same-value reference and composition cycles are unsupported`,
+        );
+      return;
+    }
     if (!schemas.has(name)) fail(location, `unresolved reference ${name}`);
     pending.add(name);
     stack.push({
       name,
-      targets: schemaReferences(schemas.get(name)!).values(),
+      targets: (sameValue
+        ? sameValueReferences(schemas.get(name)!)
+        : schemaReferences(schemas.get(name)!)
+      ).values(),
     });
   };
   // Component aliases add no value nesting, so their graph can be much deeper
@@ -1228,6 +1338,55 @@ export function orderSchemas(schemas: SchemaTable): readonly string[] {
   return ordered;
 }
 
+export function orderSchemas(schemas: SchemaTable): readonly string[] {
+  // Same-value applicators cannot make progress through a recursive instance.
+  // Productive cycles are permitted in the full graph; DAG order stays stable.
+  dependencyOrder(schemas, true);
+  return dependencyOrder(schemas, false);
+}
+
+// Renderers share immutable normalized tables across clients and standalone
+// roots. Retain one graph analysis per table without retaining old descriptors.
+type RecursiveSchemas = Readonly<{
+  members: ReadonlySet<string>;
+  reachable: ReadonlySet<string>;
+}>;
+const recursionByTable = new WeakMap<SchemaTable, RecursiveSchemas>();
+
+export function recursiveSchemas(schemas: SchemaTable): RecursiveSchemas {
+  const known = recursionByTable.get(schemas);
+  if (known) return known;
+  const graph = schemaGraph([...schemas.values()], schemas);
+  const recursiveGroups = new Set<number>();
+  const reachableGroups = new Set<number>();
+  for (let index = 0; index < graph.groups.length; index++) {
+    const group = graph.groups[index]!;
+    if (group.length > 1 || graph.edges[group[0]!]!.includes(group[0]!))
+      recursiveGroups.add(index);
+    // Groups are dependency-ordered. An acyclic wrapper must own the same
+    // traversal budget as the recursive values reachable beneath it.
+    if (
+      recursiveGroups.has(index) ||
+      group.some((node) =>
+        graph.edges[node]!.some((target) =>
+          reachableGroups.has(graph.groupFor.get(graph.nodes[target]!)!),
+        ),
+      )
+    )
+      reachableGroups.add(index);
+  }
+  const members = new Set<string>();
+  const reachable = new Set<string>();
+  for (const [name, schema] of schemas) {
+    const group = graph.groupFor.get(schema)!;
+    if (recursiveGroups.has(group)) members.add(name);
+    if (reachableGroups.has(group)) reachable.add(name);
+  }
+  const result = { members, reachable };
+  recursionByTable.set(schemas, result);
+  return result;
+}
+
 // A normalized schema table belongs to one descriptor and is never mutated.
 // Cache only terminal resolution: usage checks must still visit intermediate
 // sibling constraints. Weak keys release the cache with its table,
@@ -1235,7 +1394,9 @@ export function orderSchemas(schemas: SchemaTable): readonly string[] {
 const terminalSchemas = new WeakMap<SchemaTable, WeakMap<Schema, Schema>>();
 
 export function resolveSchema(schema: Schema, schemas: SchemaTable): Schema {
-  // orderSchemas rejects cycles before any contract context resolves a schema.
+  // Same-value reference cycles are rejected before resolving contract shapes.
+  if (schema.kind === 'intersection')
+    return scalarIntersectionBase(schema, schemas);
   if (schema.kind !== 'ref') return schema;
   let cache = terminalSchemas.get(schemas);
   if (!cache) {
@@ -1255,6 +1416,8 @@ export function resolveSchema(schema: Schema, schemas: SchemaTable): Schema {
     aliases.push(resolved);
     resolved = schemas.get(resolved.name)!;
   }
+  if (resolved.kind === 'intersection')
+    resolved = scalarIntersectionBase(resolved, schemas);
   for (const alias of aliases) cache.set(alias, resolved);
   return resolved;
 }

@@ -168,16 +168,16 @@ void test('absent document security and both explicit anonymous forms mean none'
 
 const unsupported: [string, (d: Fixture) => void, RegExp][] = [
   [
-    'bearer OR public',
+    'bearer OR public with a single-transport auth label',
     (d) => {
       Object.assign(preparation(d), {
         security: [{ WidgetSession: [] }, {}],
       });
     },
-    /security alternatives \(OR\)/,
+    /requires bearer transport.*requires alternatives/,
   ],
   [
-    'two bearer alternatives',
+    'two bearer alternatives with a single-transport auth label',
     (d) => {
       Object.assign(d.components.securitySchemes, {
         Other: { type: 'http', scheme: 'bearer' },
@@ -186,10 +186,10 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
         security: [{ WidgetSession: [] }, { Other: [] }],
       });
     },
-    /security alternatives \(OR\)/,
+    /requires bearer transport.*requires alternatives/,
   ],
   [
-    'two required bearer schemes',
+    'two required bearer schemes with a single-transport auth label',
     (d) => {
       Object.assign(d.components.securitySchemes, {
         Other: { type: 'http', scheme: 'bearer' },
@@ -198,7 +198,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
         security: [{ WidgetSession: [], Other: [] }],
       });
     },
-    /combined security schemes \(AND\)/,
+    /requires bearer transport.*requires alternatives/,
   ],
   [
     'nonempty bearer roles',
@@ -214,7 +214,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     (d) => {
       Object.assign(preparation(d), { security: [{ WidgetSession: [1] }] });
     },
-    /array of role names/,
+    /array of scope or role names/,
   ],
   [
     'null security override',
@@ -242,29 +242,29 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     (d) => {
       Object.assign(preparation(d), { security: [{ Missing: [] }] });
     },
-    /undeclared bearer security scheme/,
+    /undeclared security scheme/,
   ],
   [
-    'unused basic scheme',
+    'unused unsupported HTTP scheme',
     (d) => {
       Object.assign(d.components.securitySchemes, {
-        Unused: { type: 'http', scheme: 'basic' },
+        Unused: { type: 'http', scheme: 'digest' },
       });
     },
     /unsupported security scheme/,
   ],
   [
-    'unused API key scheme',
+    'unused malformed API key scheme',
     (d) => {
       Object.assign(d.components.securitySchemes, {
         Unused: {
           type: 'apiKey',
           name: 'X-Key',
-          in: 'header',
+          in: 'body',
         },
       });
     },
-    /security scheme type "apiKey" is not supported in this version/,
+    /expected header, query or cookie/,
   ],
   [
     'missing security scheme reference',
@@ -296,7 +296,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     (d) => {
       d['x-pom-policy'].auth.session.transport = 'cookie';
     },
-    /expected none or bearer/,
+    /expected none, bearer, basic, apiKey, oauth2 or alternatives/,
   ],
   [
     'legacy auth label array',
@@ -373,8 +373,10 @@ void test('unselected operations, unused schemas and overridden document securit
       record(value).security = [];
       record(record(value)['x-pom']).auth = 'public';
     }
-  Object.assign(document, { security: [{ WidgetSession: [] }, {}] });
-  await assert.rejects(selected(document), /security alternatives/);
+  Object.assign(document, {
+    security: [{ WidgetSession: ['unsupported'] }, {}],
+  });
+  await assert.rejects(selected(document), /role requirements are unsupported/);
 });
 
 void test('client selections reject unknown, duplicate, empty and unsafe names', async () => {

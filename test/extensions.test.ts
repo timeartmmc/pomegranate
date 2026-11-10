@@ -322,7 +322,7 @@ void test('unsupported standard semantics and invalid unused declarations still 
   });
   await assert.rejects(
     compile(document, selection),
-    /Identifier.allOf.*not supported in this version/,
+    /Identifier.allOf.*expected a nonempty array/,
   );
   const unused = extensionFixture();
   Object.assign(unused.components.parameters, {

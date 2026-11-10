@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
-import { cp, mkdir, readFile, realpath } from 'node:fs/promises';
+import { mkdir, readFile, realpath } from 'node:fs/promises';
 import { cpus, release } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { prepareArtifactSpecs, readArtifactPlan } from './artifacts.ts';
 import {
-  benchmarkSeed,
+  prepareArtifactSpecs,
+  readArtifactPlan,
+  verifyPreparedArtifacts,
+} from './artifacts.ts';
+import {
+  profileSettings,
   createRunDirectory,
   publishReport,
   readPlan,
@@ -14,8 +18,13 @@ import {
   writeFailure,
   writeJson,
 } from './controller.ts';
-import { benchmarkSources, installedTree } from './installed.ts';
-import { random, shuffled } from './order.ts';
+import {
+  benchmarkSources,
+  installedTree,
+  captureBenchmarkHarness,
+  verifyBenchmarkHarness,
+} from './installed.ts';
+import { seededSchedule } from './order.ts';
 import { nodeEnvironment, runLogged, runLoggedProcess } from './process.ts';
 import {
   typecheckCase,
@@ -27,36 +36,8 @@ import type { TypecheckProfile } from './cases/typecheck.ts';
 // Also used by installed-package verification: one owner for the documented minimum.
 export const minimumTypeScript = '5.7.3';
 
-export function typecheckSettings(value: unknown) {
-  const input = record(value, 'typecheck settings');
-  for (const key of Object.keys(input))
-    assert.ok(
-      ['seed', 'rounds', 'profiles'].includes(key),
-      `settings: unknown field ${key}; expected seed, rounds or profiles`,
-    );
-  const seed = benchmarkSeed(input.seed ?? 20261109);
-  const rounds = input.rounds ?? 3;
-  assert.ok(
-    typeof rounds === 'number' &&
-      Number.isSafeInteger(rounds) &&
-      rounds >= 1 &&
-      rounds <= 30,
-    'rounds: expected 1..30',
-  );
-  const ids = input.profiles ?? typecheckProfiles.map((profile) => profile.id);
-  assert.ok(
-    Array.isArray(ids) && ids.length > 0 && new Set(ids).size === ids.length,
-    'profiles: expected unique case IDs',
-  );
-  const profiles = ids.map((id: unknown) => {
-    const profile = [...typecheckProfiles, typecheckSmoke].find(
-      (profile) => profile.id === id,
-    );
-    assert.ok(profile, `unknown typecheck profile: ${String(id)}`);
-    return profile;
-  });
-  return { seed, rounds, profiles };
-}
+export const typecheckSettings = (value: unknown) =>
+  profileSettings(value, typecheckProfiles, typecheckSmoke);
 
 // Require the supported extendedDiagnostics vocabulary. Missing data is a failed
 // measurement, not a zero-cost sample. Memory is TS's own counter, never peak RSS.
@@ -91,25 +72,10 @@ export function typecheckDiagnostics(stdout: string) {
   return { checkMs, instantiations, compilerMemoryK };
 }
 
-// Fixed LCG and Fisher-Yates make the full serial schedule replayable from seed.
-export function typecheckSchedule<T>(
-  cells: readonly T[],
-  rounds: number,
-  seed: number,
-) {
-  const next = random(seed);
-  const schedule: { round: number; cell: T }[] = [];
-  for (let round = 0; round < rounds; round++) {
-    schedule.push(...shuffled(cells, next).map((cell) => ({ round, cell })));
-  }
-  return schedule;
-}
-
 export async function collectTypecheck(
   directory: string,
   typescript: string,
   log: string,
-  measured: boolean,
 ) {
   const args = [
     typescript,
@@ -119,7 +85,7 @@ export async function collectTypecheck(
     'false',
     '--locale',
     'en',
-    ...(measured ? ['--extendedDiagnostics'] : []),
+    '--extendedDiagnostics',
   ];
   const result = await runLoggedProcess(
     process.execPath,
@@ -129,9 +95,7 @@ export async function collectTypecheck(
     nodeEnvironment(),
     120_000,
   );
-  return measured
-    ? { wallMs: result.wallMs, ...typecheckDiagnostics(result.stdout) }
-    : null;
+  return { wallMs: result.wallMs, ...typecheckDiagnostics(result.stdout) };
 }
 
 export async function runTypecheck(
@@ -228,17 +192,8 @@ export async function runTypecheck(
     }
     // Copy the harness before generation; installed compilers cannot resolve a
     // sibling checkout or borrow its dependencies to compile the synthetic input.
-    const harness = join(root, 'harness');
-    await mkdir(harness);
-    await cp(
-      fileURLToPath(new URL('.', import.meta.url)),
-      join(harness, 'bench'),
-      { recursive: true },
-    );
-    await writeJson(join(harness, 'package.json'), {
-      private: true,
-      type: 'module',
-    });
+    stage = 'capture-harness';
+    const harness = await captureBenchmarkHarness(root);
     const cells = [];
     const projects: {
       directory: string;
@@ -276,7 +231,7 @@ export async function runTypecheck(
         for (const toolchain of toolchains) {
           stage = `qualify:${artifact.role}:${profile.id}:${toolchain.id}`;
           const log = join(consumer, `${profile.id}-${toolchain.id}-qualify`);
-          await collectTypecheck(directory, toolchain.entry, log, false);
+          await collectTypecheck(directory, toolchain.entry, log);
           const config = await runLogged(
             process.execPath,
             [
@@ -301,20 +256,16 @@ export async function runTypecheck(
         }
       }
     }
+    stage = 'schedule';
     await writeJson(join(root, 'qualified.json'), { projects, cells });
-    const schedule = typecheckSchedule(cells, settings.rounds, settings.seed);
+    const schedule = seededSchedule(cells, settings.rounds, settings.seed);
     await writeJson(join(root, 'schedule.json'), schedule);
     await mkdir(join(root, 'samples'));
     const observations = [];
     for (const [index, { round, cell }] of schedule.entries()) {
       stage = `measure:${index}:${cell.role}:${cell.profile}:${cell.toolchain}`;
       const log = join(root, 'samples', String(index).padStart(5, '0'));
-      const metrics = await collectTypecheck(
-        cell.directory,
-        cell.entry,
-        log,
-        true,
-      );
+      const metrics = await collectTypecheck(cell.directory, cell.entry, log);
       const observation = {
         index,
         round,
@@ -346,34 +297,11 @@ export async function runTypecheck(
         'TypeScript lock changed',
       );
     }
-    for (const artifact of preparation.artifacts) {
-      const consumer = join(root, 'prepared', artifact.role);
-      assert.equal(
-        sha256(await readFile(join(consumer, 'package-lock.json'))),
-        artifact.lockSha256,
-        'compiler lock changed',
-      );
-      assert.equal(
-        sha256(await readFile(join(consumer, 'compiler.tgz'))),
-        artifact.archive.sha256,
-        'compiler archive changed',
-      );
-      assert.equal(
-        (await installedTree(join(consumer, 'node_modules'))).sha256,
-        artifact.installedTreeSha256,
-        'compiler installation changed',
-      );
-    }
-    assert.deepEqual(
-      await benchmarkSources(),
-      controller,
-      'benchmark sources changed',
+    await verifyPreparedArtifacts(
+      join(root, 'prepared'),
+      preparation.artifacts,
     );
-    assert.deepEqual(
-      await benchmarkSources(join(harness, 'bench')),
-      controller,
-      'copied harness changed',
-    );
+    await verifyBenchmarkHarness(harness, controller);
     const report = {
       schemaVersion: 1,
       status: 'complete',

@@ -15,9 +15,53 @@ import {
   list,
   formats,
   text,
+  textParser,
 } from '../dist/runtime.js';
-import type { Invalid, Issues, Parse } from '../dist/runtime.js';
+import type { Invalid, Issues, Parse, StringRules } from '../dist/runtime.js';
 import { browserFile } from '../dist/runtime.browser.js';
+
+void test('string length bounds count Unicode code points across UTF-16 boundaries', () => {
+  const values = new Set(['']);
+  for (const unit of [
+    'a',
+    '😀',
+    '\ud800',
+    '\udc00',
+    'a😀',
+    '😀a',
+    '\udc00\ud800',
+  ])
+    for (let count = 1; count <= 9; count++) values.add(unit.repeat(count));
+  for (const minimum of [undefined, 0, 1, 2, 4, 8]) {
+    for (const maximum of [undefined, 0, 1, 2, 4, 8]) {
+      if (minimum !== undefined && maximum !== undefined && minimum > maximum)
+        continue;
+      const rules: StringRules = {
+        ...(minimum === undefined ? {} : { minLength: minimum }),
+        ...(maximum === undefined ? {} : { maxLength: maximum }),
+      };
+      const schemas = [
+        validator(textParser(rules)),
+        validator((input, issues) => text(input, issues, rules)),
+      ];
+      for (const value of values) {
+        const length = Array.from(value).length;
+        const expected =
+          (minimum === undefined || length >= minimum) &&
+          (maximum === undefined || length <= maximum);
+        for (const schema of schemas) {
+          const result = schema.safeParse(value);
+          assert.equal(
+            result.success,
+            expected,
+            JSON.stringify({ value, minimum, maximum }),
+          );
+          if (result.success) assert.equal(result.data, value);
+        }
+      }
+    }
+  }
+});
 
 void test('maximum string length prevents pattern and format execution without skipping checks on bounded values', (t) => {
   // oxlint-disable-next-line typescript/unbound-method -- Invoke the saved intrinsic with each original RegExp receiver below.

@@ -309,20 +309,20 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     (d) => {
       Object.assign(preparation(d), { security: [{ AnyBearerName: [] }] });
     },
-    /undeclared bearer security scheme/,
+    /undeclared security scheme/,
   ],
   [
     'document security',
     (d) => {
       Object.assign(d, { security: [{ AnyBearerName: [] }] });
     },
-    /undeclared bearer security scheme/,
+    /undeclared security scheme/,
   ],
   [
     'security schemes',
     (d) => {
       Object.assign(d.components.securitySchemes, {
-        Other: { type: 'http', scheme: 'basic' },
+        Other: { type: 'http', scheme: 'digest' },
       });
     },
     /unsupported security scheme/,
@@ -392,13 +392,10 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /unresolved reference/,
   ],
   [
-    'recursive reference',
+    'nonproductive recursive alias',
     (d) => {
       Object.assign(d.components.schemas, {
-        Widget: {
-          type: 'array',
-          items: { $ref: '#/components/schemas/Widget' },
-        },
+        Widget: { $ref: '#/components/schemas/Widget' },
       });
     },
     /recursive schemas/,

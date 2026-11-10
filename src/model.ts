@@ -31,6 +31,14 @@ export type SchemaDraft = {
   | { readonly kind: 'json' }
   | { readonly kind: 'binary' }
   | {
+      // Normalization folds object conjunctions before projection. Only scalar
+      // intersections retain branches in the validated descriptor.
+      readonly kind: 'intersection';
+      readonly branches: readonly Schema[];
+      readonly location: string;
+      readonly literals?: readonly Scalar[] | undefined;
+    }
+  | {
       readonly kind: 'ref';
       readonly name: string;
       readonly location: string;
@@ -40,6 +48,7 @@ export type SchemaDraft = {
     }
   | {
       readonly kind: 'map';
+      readonly additionalPropertiesExplicit?: boolean | undefined;
       readonly values: Schema | true;
       readonly minProperties?: number | undefined;
       readonly maxProperties?: number | undefined;
@@ -59,6 +68,11 @@ export type SchemaDraft = {
     }
   | {
       readonly kind: 'object';
+      // Preserve source closure and object-type assertions until composition;
+      // an omitted type in an object fragment must not narrow primitive values.
+      readonly closed?: boolean | undefined;
+      readonly typeExplicit?: boolean | undefined;
+      readonly additionalPropertiesExplicit?: boolean | undefined;
       readonly properties: ReadonlyMap<string, Schema>;
       readonly required: readonly string[];
       readonly forbidden?: readonly string[] | undefined;
@@ -103,15 +117,22 @@ export type Schema = {
 } & (
   | { readonly kind: 'json' | 'binary' }
   | {
+      readonly kind: 'intersection';
+      readonly branches: readonly Schema[];
+      readonly location: string;
+      readonly literals: readonly Scalar[] | undefined;
+    }
+  | {
       readonly kind: 'ref';
       readonly name: string;
       readonly location: string;
       readonly constraints: Constraints;
     }
-  | ({ readonly kind: 'map'; readonly values: Schema | true } & Pick<
-      Constraints,
-      'minProperties' | 'maxProperties'
-    >)
+  | ({
+      readonly kind: 'map';
+      readonly additionalPropertiesExplicit: boolean;
+      readonly values: Schema | true;
+    } & Pick<Constraints, 'minProperties' | 'maxProperties'>)
   | {
       readonly kind: 'union';
       readonly branches: readonly Schema[];
@@ -125,6 +146,9 @@ export type Schema = {
     }
   | ({
       readonly kind: 'object';
+      readonly closed: boolean;
+      readonly typeExplicit: boolean;
+      readonly additionalPropertiesExplicit: boolean;
       readonly properties: ReadonlyMap<string, Schema>;
       readonly required: readonly string[];
       readonly forbidden: readonly string[] | undefined;

@@ -19,16 +19,20 @@ import type {
   Schema,
   SchemaFormat,
 } from './model.js';
-import { hasConstraints, constraintRecord } from './schema-node.js';
+import { hasConstraints, constraintRecord, schemaNode } from './schema-node.js';
 import { hasUnicodeProperty, intersectConstraints } from './scalar-rules.js';
-import { parseSymbol, schemaType } from './schema-types.js';
+import { schemaType } from './schema-types.js';
 import { isRequired } from './required-index.js';
+import { scalarValidationPlan } from './intersections.js';
 import { stringFormatHelpers } from './formats.js';
 import {
   arrayConstraints as arrayRules,
   numberConstraints,
   objectConstraints as objectRules,
+  recursiveSchemas,
+  resolveSchema,
   schemaBranchLocation,
+  schemaReferences,
   stringConstraints as stringRules,
 } from './schemas.js';
 import { sourceBudget } from './source-budget.js';
@@ -58,7 +62,7 @@ function containerConstraints(
 
 // Resolve pure links once per normalized schema table. Path compression shares
 // suffixes without crossing a constrained alias or caching mutable input documents.
-// Normalization has already diagnosed missing targets and reference cycles.
+// Normalization has already diagnosed missing targets and same-value alias cycles.
 export function parserIdentities(
   schemas: SchemaTable,
 ): (name: string) => string {
@@ -118,6 +122,10 @@ export function schemaRenderer(
   const identities = {
     request: parserIdentities(schemas.request),
     response: parserIdentities(schemas.response),
+  };
+  const recursion = {
+    request: recursiveSchemas(schemas.request).reachable,
+    response: recursiveSchemas(schemas.response).reachable,
   };
   const containerBounds: Record<Direction, WeakMap<Schema, Constraints>> = {
     request: new WeakMap(),
@@ -197,75 +205,30 @@ export function schemaRenderer(
     return name;
   }
 
-  type Refinement = Readonly<{
-    terminal: string;
-    rules: string | null;
-    maxLength: number | undefined;
-  }>;
-  const refinements = {
-    request: new Map<string, Refinement>(),
-    response: new Map<string, Refinement>(),
+  const containerTerminals = {
+    request: new WeakMap<Schema, string>(),
+    response: new WeakMap<Schema, string>(),
   };
-  // Share each alias's own rules, rather than copying all earlier siblings into
-  // every parser. Cache by parser name: shared source nodes can belong to distinct
-  // component names and inline scopes, each owning its emitted constants.
-  function scalarRefinement(
+  function containerTerminal(
     value: Extract<Schema, { kind: 'ref' }>,
     direction: Direction,
-    name: string,
-  ): Refinement {
-    const cache = refinements[direction];
-    const pending: { value: Extract<Schema, { kind: 'ref' }>; name: string }[] =
-      [];
+  ): string {
+    const cache = containerTerminals[direction];
+    const pending: Schema[] = [];
     let current: Schema = value;
     let terminal = value.name;
-    let known = cache.get(name);
-    while (!known) {
-      if (current.kind !== 'ref') {
-        known = {
-          terminal,
-          rules: null,
-          maxLength: current.kind === 'string' ? current.maxLength : undefined,
-        };
-        cache.set(name, known);
+    while (current.kind === 'ref') {
+      const known = cache.get(current);
+      if (known !== undefined) {
+        terminal = known;
         break;
       }
-      pending.push({ value: current, name });
+      pending.push(current);
       terminal = current.name;
       current = schemas[direction].get(terminal)!;
-      name = parseSymbol(terminal, direction);
-      known = cache.get(name);
     }
-    const kind = schemas[direction].get(known.terminal)!.kind;
-    const keys = kind === 'string' ? stringRules : numberRules;
-    for (const entry of pending.reverse()) {
-      const own =
-        kind === 'string' || kind === 'number' || kind === 'integer'
-          ? rules(entry.value.constraints, keys)
-          : undefined;
-      if (own) {
-        const type = kind === 'string' ? 'StringRules' : 'NumberRules';
-        typeImports.add(type);
-        typeImports.add('RuleChain');
-        known = {
-          terminal: known.terminal,
-          rules: constant(
-            `refinements_${entry.name}`,
-            `{previous: ${known.rules ?? 'null'}, rule: ${own.source}}`,
-            `RuleChain<${type}>`,
-          ),
-          maxLength:
-            entry.value.constraints.maxLength === undefined
-              ? known.maxLength
-              : Math.min(
-                  known.maxLength ?? Infinity,
-                  entry.value.constraints.maxLength,
-                ),
-        };
-      }
-      cache.set(entry.name, known);
-    }
-    return known;
+    for (const reference of pending) cache.set(reference, terminal);
+    return terminal;
   }
 
   function objectChecks(
@@ -399,12 +362,17 @@ export function schemaRenderer(
       'if (source === invalid) return invalid;',
     ];
     if (!strict) sizeCheck(body);
+    // Required results have no symbol except Invalid. Checking its primitive
+    // kind also handles null | Invalid widening to symbol without
+    // strictNullChecks. Optional results must keep Absent distinct.
     const failures = fields.map((entry, index) => {
       const helper = use(entry.required ? 'field' : 'optionalField');
       body.push(
         `const v${index} = ${helper.source}(source, ${jsonSource(entry.name)}, ${entry.parse.source}, issues);`,
       );
-      return `v${index} === invalid`;
+      return entry.required
+        ? `typeof v${index} === "symbol"`
+        : `v${index} === invalid`;
     });
     if (strict) objectChecks(body, failures, name, fields, forbidden);
     if (failures.length)
@@ -534,6 +502,53 @@ export function schemaRenderer(
     type: string,
     exported: boolean,
   ): void {
+    // Pure aliases share their target's parser identity. Every other parser
+    // containing recursive values owns one traversal, including acyclic outer
+    // containers and inline HTTP schemas, so sibling values share one budget.
+    const deferred =
+      (value.kind !== 'ref' || hasConstraints(value.constraints)) &&
+      schemaReferences(value).some(({ name }) =>
+        recursion[direction].has(name),
+      );
+    const implementation = deferred ? `${name}_body` : name;
+    if (deferred) {
+      const array = value.kind === 'array';
+      if (array) typeImports.add('ArrayRules');
+      // Constructors capture a hoisted function before any recursive body is
+      // initialized. Arrays also forward the bounds supplied by refined aliases.
+      append(
+        functionDeclaration(
+          name,
+          type,
+          [
+            `return ${use('recursiveParse').source}(input, issues, ${implementation}${array ? ', rules' : ''});`,
+          ],
+          exported,
+          array ? ', rules?: ArrayRules' : '',
+        ),
+        location,
+      );
+    }
+    defineBody(
+      value,
+      direction,
+      location,
+      scope,
+      implementation,
+      type,
+      deferred ? false : exported,
+    );
+  }
+
+  function defineBody(
+    value: Schema,
+    direction: Direction,
+    location: string,
+    scope: string,
+    name: string,
+    type: string,
+    exported: boolean,
+  ): void {
     const child = (schema: Schema, path: string) =>
       part(schema, direction, path, scope);
     const binding = (initializer: string): void =>
@@ -544,6 +559,25 @@ export function schemaRenderer(
       args: readonly string[],
       generic = type,
     ): void => binding(`${use(helper).source}<${generic}>(${args.join(', ')})`);
+    const scalarPlan = (): void => {
+      const plan = scalarValidationPlan(value, schemas[direction]);
+      const base = child(plan.base, location);
+      const checks = plan.runtime.map((assertion) =>
+        child(
+          assertion.kind === 'pattern'
+            ? schemaNode({ kind: 'string', pattern: assertion.pattern })
+            : assertion.kind === 'format'
+              ? schemaNode({ kind: 'string', format: assertion.format })
+              : schemaNode({ kind: 'number', multipleOf: assertion.value }),
+          location,
+        ),
+      );
+      // The base checks the independently emitted scalar type and combined
+      // bounds. Shared parser parts apply each remaining unique assertion once.
+      binding(
+        `${use('scalarIntersection').source}(${base.source}, ${array(checks).source})`,
+      );
+    };
     switch (value.kind) {
       case 'json':
         return direct('jsonValue');
@@ -553,23 +587,18 @@ export function schemaRenderer(
         return direct(target === 'browser' ? 'browserFile' : 'nativeFile');
       case 'ref': {
         if (!hasConstraints(value.constraints)) return;
-        const refinement = scalarRefinement(value, direction, name);
-        if (refinement.rules !== null)
-          return construct(
-            schemas[direction].get(refinement.terminal)!.kind === 'string'
-              ? 'refinedText'
-              : 'refinedNumber',
-            [
-              reference(refinement.terminal, direction).source,
-              refinement.rules,
-              ...(refinement.maxLength === undefined
-                ? []
-                : [literal(refinement.maxLength).source]),
-            ],
-          );
-        // Flatten aliases before delegation. Rebuilding a terminal container's
-        // children here would expand shared bounded-reference graphs into trees.
-        const terminal = refinement.terminal;
+        const resolved = resolveSchema(value, schemas[direction]);
+        if (
+          resolved.kind === 'string' ||
+          resolved.kind === 'number' ||
+          resolved.kind === 'integer' ||
+          resolved.kind === 'boolean' ||
+          resolved.kind === 'null'
+        )
+          return scalarPlan();
+        // Container aliases keep one terminal constructor and their merged
+        // bounds; they never rebuild or replay the child graph.
+        const terminal = containerTerminal(value, direction);
         const terminalSchema = schemas[direction].get(terminal)!;
         const base = reference(terminal, direction).source;
         if (terminalSchema.kind === 'object' || terminalSchema.kind === 'map') {
@@ -641,6 +670,8 @@ export function schemaRenderer(
           fail(location, 'expected a two-branch union');
         return construct('unionParser', [left.source, right.source]);
       }
+      case 'intersection':
+        return scalarPlan();
       case 'object':
         return objectParser(
           name,

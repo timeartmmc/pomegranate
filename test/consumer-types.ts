@@ -39,7 +39,13 @@ const declaredPolicy: Policy = request.policy;
 const retryLabel: 'never' = request.policy.retry;
 const timeoutLabel: 'interactive' = request.policy.timeout;
 const authLabel: 'public' | 'session' | 'partnerStaff' = request.policy.auth;
-const transport: 'none' | 'bearer' = request.security.transport;
+const transport:
+  | 'none'
+  | 'bearer'
+  | 'basic'
+  | 'apiKey'
+  | 'oauth2'
+  | 'alternatives' = request.security.transport;
 // @ts-expect-error Public security has no credential scheme; narrow by transport first.
 void request.security.scheme;
 if (request.security.transport === 'bearer') {
@@ -47,7 +53,7 @@ if (request.security.transport === 'bearer') {
   void scheme;
   // @ts-expect-error Bearer scheme identity is immutable metadata.
   request.security.scheme = 'Changed';
-} else {
+} else if (request.security.transport === 'none') {
   // @ts-expect-error Public requests have no bearer scheme.
   void request.security.scheme;
 }

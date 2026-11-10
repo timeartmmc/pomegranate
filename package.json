@@ -41,6 +41,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json",
     "lint": "oxlint --deny-warnings --type-aware --type-check src examples/json test scripts bench",
     "bench:preflight": "bun run build && node bench/preflight.ts",
+    "bench:generate": "node bench/check-generation.ts",
     "bench:typecheck": "node bench/check-typecheck.ts",
     "bench:output": "bun run build && node bench/check-output.ts",
     "bench:prepare": "node bench/prepare.ts",

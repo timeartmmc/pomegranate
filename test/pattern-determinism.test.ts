@@ -164,7 +164,11 @@ void test('Unicode-property proofs and reference candidates are independent of c
     }
   }
   assert.equal(stableRuntimeEvaluations, 0);
-  assert.equal(referenceEvaluations, 4);
+  assert.equal(
+    referenceEvaluations,
+    0,
+    'stable patterns are proved while narrowing the finite literal candidates',
+  );
 });
 
 for (const [name, schema, reason] of [

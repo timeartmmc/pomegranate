@@ -17,7 +17,9 @@ type Node =
   | 'schema'
   | 'discriminator'
   | 'example'
-  | 'securityScheme';
+  | 'securityScheme'
+  | 'oauthFlows'
+  | 'oauthFlow';
 type Context =
   | Node
   | `map:${Node}`
@@ -78,13 +80,22 @@ const children: Readonly<Record<Node, Fields>> = {
     items: 'schema',
     additionalProperties: 'schema',
     anyOf: 'list:schema',
+    allOf: 'list:schema',
     oneOf: 'list:schema',
     discriminator: 'discriminator',
     externalDocs: 'annotation',
   },
   discriminator: {},
   example: {},
-  securityScheme: {},
+  securityScheme: { flows: 'oauthFlows' },
+  oauthFlows: {
+    implicit: 'oauthFlow',
+    password: 'oauthFlow',
+    clientCredentials: 'oauthFlow',
+    authorizationCode: 'oauthFlow',
+  },
+  // Scope map keys are application-defined identities, not extension keywords.
+  oauthFlow: {},
 };
 
 type Shape = Readonly<{

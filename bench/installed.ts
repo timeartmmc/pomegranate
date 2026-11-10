@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir, realpath } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
-import { benchmarkDirectory, record, sha256 } from './controller.ts';
+import { benchmarkDirectory, record, sha256, writeJson } from './controller.ts';
 
 type InstalledFile =
   | { path: string; sha256: string }
@@ -120,4 +120,31 @@ export async function installedIdentity(
     treeSha256: tree.sha256,
     files: tree.files,
   };
+}
+
+export async function captureBenchmarkHarness(root: string) {
+  const harness = join(root, 'harness');
+  await mkdir(harness);
+  await cp(benchmarkDirectory, join(harness, 'bench'), { recursive: true });
+  await writeJson(join(harness, 'package.json'), {
+    private: true,
+    type: 'module',
+  });
+  return harness;
+}
+
+export async function verifyBenchmarkHarness(
+  harness: string,
+  controller: Awaited<ReturnType<typeof benchmarkSources>>,
+) {
+  assert.deepEqual(
+    await benchmarkSources(),
+    controller,
+    'benchmark sources changed',
+  );
+  assert.deepEqual(
+    await benchmarkSources(join(harness, 'bench')),
+    controller,
+    'copied harness changed',
+  );
 }

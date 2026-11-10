@@ -858,7 +858,7 @@ export const ${operationScope(operation.id)}: ${defined.typeName} = /* @__PURE__
     export { operations } from './client.${moduleName(client.name)}.operations.ts';
     export type { RequestTypes, ResponseTypes } from './client.${moduleName(client.name)}.schemas.ts';
     export { RequestValidationError } from './runtime.ts';
-    export type { PreparedRequest, Policy, Security, Responses, ProtocolResult, ProtocolFailure, ObservedResponse, HeaderContext, MultipartField } from './runtime.ts';
+    export type { PreparedRequest, Policy, Security, SecurityRequirement, Responses, ProtocolResult, ProtocolFailure, ObservedResponse, HeaderContext, MultipartField } from './runtime.ts';
     ${
       client.execution
         ? `export { createClient, ResponseError } from './client.${moduleName(client.name)}.execute.ts';

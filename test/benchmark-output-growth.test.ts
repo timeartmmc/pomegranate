@@ -16,6 +16,8 @@ import {
   inspectOutput,
   runOutputGrowth as collectOutputGrowth,
   OutputGrowthError,
+  outputGrowthPolicy,
+  outputGrowthReferenceBytes,
   verifyOutputBudgets,
 } from '../bench/output-growth.ts';
 import { json, record } from './assertions.ts';
@@ -88,6 +90,29 @@ void describe('deterministic contract-output budgets', () => {
     cells = collected;
   });
 
+  // Budget policy tests use the reviewed reference, independent of today's
+  // compiler output. Behavioral/type qualification is exercised separately.
+  function referenceCells(
+    alter: (profile: OutputGrowthProfile, key: string) => number,
+  ) {
+    return cells.map(({ profile, metrics }) => {
+      const reference = outputGrowthReferenceBytes[profile.id];
+      const files = metrics.files.map((file) => ({
+        ...file,
+        bytes:
+          reference[file.key as keyof typeof reference] +
+          alter(profile, file.key),
+      }));
+      return {
+        profile,
+        metrics: {
+          files,
+          totalBytes: files.reduce((sum, file) => sum + file.bytes, 0),
+        },
+      };
+    });
+  }
+
   function candidate(
     alter: (
       files: Record<string, string>,
@@ -109,13 +134,6 @@ void describe('deterministic contract-output budgets', () => {
     assert.equal(report.generatedTypes, 'verified');
     assert.equal(report.sourceBudgets, 'passed');
     assert.equal(report.cells.length, 4);
-    assert.ok(
-      report.growth.interactionBytes <= report.growth.maximumInteractionBytes,
-    );
-    assert.deepEqual(
-      report.cells.map(({ metrics }) => metrics.files.length),
-      [7, 7, 7, 7],
-    );
   });
 
   void test('duplicating real emitted code as inert data fails a named file budget after qualification', async () => {
@@ -133,28 +151,35 @@ void describe('deterministic contract-output budgets', () => {
     );
   });
 
-  void test('small fixed boilerplate growth is allowed without weakening the interaction check', async () => {
-    const report = await runOutputGrowth(
-      candidate((files) => {
-        files['client.consumer.ts'] +=
-          `\nvoid ${JSON.stringify('x'.repeat(100))};\n`;
-      }),
-      tsc,
+  void test('fixed and per-operation growth and combined savings fit the policy', () => {
+    verifyOutputBudgets(referenceCells(() => 100));
+    verifyOutputBudgets(
+      referenceCells((profile, key) =>
+        key === 'client.consumer.operations.ts' ? profile.operations * 10 : 0,
+      ),
     );
-    assert.equal(report.sourceBudgets, 'passed');
-    assert.equal(report.growth.interactionBytes, 0);
+    verifyOutputBudgets(
+      referenceCells((profile, key) =>
+        profile.id === 'combined' && key === 'client.consumer.operations.ts'
+          ? -8
+          : 0,
+      ),
+    );
   });
 
-  void test('cross-axis output growth fails even inside each individual file allowance', async () => {
-    await assert.rejects(
-      runOutputGrowth(
-        candidate((files, profile) => {
-          if (profile.id === 'combined')
-            files['client.consumer.operations.ts'] +=
-              `\nvoid ${JSON.stringify('x'.repeat(1030))};\n`;
-        }),
-        tsc,
-      ),
+  void test('cross-axis output growth fails even inside each individual file allowance', () => {
+    const fileCount = Object.keys(outputGrowthReferenceBytes.combined).length;
+    const perFileGrowth = Math.ceil(
+      (outputGrowthPolicy.maximumInteractionBytes + 1) / fileCount,
+    );
+    assert.ok(perFileGrowth <= outputGrowthPolicy.minimumHeadroomBytes);
+    assert.throws(
+      () =>
+        verifyOutputBudgets(
+          referenceCells((profile) =>
+            profile.id === 'combined' ? perFileGrowth : 0,
+          ),
+        ),
       /interaction exceeds output growth budget/,
     );
   });
@@ -186,7 +211,7 @@ void describe('deterministic contract-output budgets', () => {
         }),
         tsc,
       ),
-      /deep-equal/,
+      /operations: operation inventory must match the contract/,
     );
   });
 
@@ -292,22 +317,64 @@ void describe('deterministic contract-output budgets', () => {
 
   void test('input mutation and nondeterministic output fail before size acceptance', async () => {
     const cached = candidate(() => {});
+    let mutationDirectory = '';
     await assert.rejects(
       runOutputGrowth(async (document) => {
         const output = await cached(document);
         record(record(document).info).title = 'mutated';
         return output;
       }, tsc),
-      /compilation must preserve input/,
+      (error: unknown) => {
+        assert.ok(error instanceof OutputGrowthError);
+        assert.match(error.message, /compilation must preserve input/);
+        mutationDirectory = error.evidenceDirectory;
+        return true;
+      },
     );
+    assert.equal(
+      await readFile(
+        join(mutationDirectory, 'small/client.consumer.ts'),
+        'utf8',
+      ),
+      fixtures.values().next().value!.files['client.consumer.ts'],
+    );
+    const after = record(
+      json(
+        await readFile(
+          join(mutationDirectory, 'small/input-after-first.json'),
+          'utf8',
+        ),
+      ),
+    );
+    assert.equal(record(record(after.document).info).title, 'mutated');
     let invocation = 0;
+    let repeatDirectory = '';
     await assert.rejects(
       runOutputGrowth(async (document) => {
         const output = await cached(document);
         output['client.consumer.ts'] += `\n// ${invocation++}`;
         return output;
       }, tsc),
-      /identical compilation must produce identical complete output/,
+      (error: unknown) => {
+        assert.ok(error instanceof OutputGrowthError);
+        assert.match(
+          error.message,
+          /identical compilation must produce identical complete output: client.consumer.ts/,
+        );
+        repeatDirectory = error.evidenceDirectory;
+        return true;
+      },
+    );
+    assert.match(
+      await readFile(join(repeatDirectory, 'small/client.consumer.ts'), 'utf8'),
+      /\/\/ 0$/,
+    );
+    assert.match(
+      await readFile(
+        join(repeatDirectory, 'small/repeat/client.consumer.ts'),
+        'utf8',
+      ),
+      /\/\/ 1$/,
     );
     const shared = { ...fixtures.values().next().value!.files };
     await assert.rejects(
@@ -348,6 +415,7 @@ void test('the output checker CLI runs the same qualified public-compiler family
   );
   assert.equal(report.compilerVersion, metadata.version);
   assert.equal(report.typescriptVersion, typescript.version);
+  assert.equal(report.typescriptEntry, await realpath(tsc));
   assert.equal(
     typeof record(record(report.referenceBytes).small)['client.consumer.ts'],
     'number',

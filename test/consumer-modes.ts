@@ -27,24 +27,59 @@ export function consumerModesFixture() {
       schema: '#/components/schemas/NullFields',
       usage,
     };
-  const content = {
-    'application/json': { schema: { $ref: '#/components/schemas/NullFields' } },
+  const operation = (name: string, operationId: string) => {
+    const content = {
+      'application/json': { schema: { $ref: `#/components/schemas/${name}` } },
+    };
+    return {
+      operationId,
+      'x-pom': {
+        auth: 'session',
+        retry: 'never',
+        timeout: 'interactive',
+        surfaces: ['consumer'],
+      },
+      requestBody: { required: true, content },
+      responses: { 200: { description: 'Synthetic null fields', content } },
+    };
   };
   Object.assign(document.paths, {
-    '/nulls': {
-      post: {
-        operationId: 'saveNulls',
-        'x-pom': {
-          auth: 'session',
-          retry: 'never',
-          timeout: 'interactive',
-          surfaces: ['consumer'],
-        },
-        requestBody: { required: true, content },
-        responses: { 200: { description: 'Synthetic null fields', content } },
-      },
-    },
+    '/nulls': { post: operation('NullFields', 'saveNulls') },
   });
+  schemas.NullValue = { type: 'null' };
+  schemas.NullAlias = { $ref: '#/components/schemas/NullValue' };
+  // Exercise both sides of the table/chunk boundary with direct, aliased and
+  // literal null-only fields. The consumer checks run on both TypeScript lines.
+  for (const width of [128, 129]) {
+    const name = `WideNull${width}`;
+    schemas[name] = {
+      type: 'object',
+      required: ['direct', 'reference', 'enumeration', 'constant'],
+      properties: Object.fromEntries(
+        Array.from({ length: width }, (_, index): [string, Schema] => {
+          if (index === 0) return ['direct', { type: 'null' }];
+          if (index === 1) return ['optional', { type: 'null' }];
+          if (index === 63)
+            return ['reference', { $ref: '#/components/schemas/NullAlias' }];
+          if (index === 64)
+            return ['enumeration', { type: ['string', 'null'], enum: [null] }];
+          if (index === width - 1)
+            return ['constant', { type: ['number', 'null'], const: null }];
+          return [`field${index}`, { type: 'string' }];
+        }),
+      ),
+    };
+    for (const usage of ['request', 'response'] as const)
+      standalone[`wide-null${width}-${usage}`] = {
+        schema: `#/components/schemas/${name}`,
+        usage,
+      };
+    Object.assign(document.paths, {
+      [`/nulls-${width}`]: {
+        post: operation(name, `saveWideNull${width}`),
+      },
+    });
+  }
   // Distinct chains exercise flattened rule dependencies, pure links and shared
   // ancestors in both directions, without depending on a random seed.
   for (let index = 0; index < 21; index++) {

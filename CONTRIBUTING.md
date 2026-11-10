@@ -155,7 +155,10 @@ versions with manifest paths for the compiler and TypeScript entries. A version
 describes the entry's enclosing package, including custom wrappers; it is `null`
 when version metadata is unavailable. Failed checks retain their scratch directory
 with inputs, available generated files and logs, and `failure.json`; the error
-names that directory. Successful checks remove scratch output.
+names that directory. Each profile retains its original `input.json`, first output,
+repeated output under `repeat/`, and `input-after-first.json` and
+`input-after-repeat.json` snapshots as those stages complete. Determinism failures
+name the differing generated file. Successful checks remove scratch output.
 
 Canonical installed-package verification runs the same family through a copied
 harness, the installed compiler and the consumer's TypeScript. These limits cover
@@ -222,6 +225,64 @@ in the run directory. Missing, duplicate or malformed diagnostic counters fail
 explicitly rather than becoming zero. Failed runs retain available evidence and
 `failure.json` and exit nonzero. Timings describe these synthetic workloads on the
 recorded machine/toolchain; they do not establish complete application performance.
+
+### Compiler generation cost
+
+Run the `compiler-generation` case, version 1, against the complete installed
+artifacts in the [artifact plan](#artifact-preparation):
+
+```sh
+bun run bench:generate .local/bench-plan.json .local/generation-run-001
+```
+
+The output directory must be new and its parent must exist. An optional third
+argument names a JSON settings file with `seed` (default 20261109), `rounds`
+(1–30, default 3), and unique `profiles` IDs: `operations-100`,
+`operations-1000`, `operations-10000`. All three profiles run by default.
+The separate `smoke` profile uses three operations and is the only profile
+run by canonical installed-package verification. No timing thresholds apply.
+
+These contracts reuse the typecheck case's shared object schema: one component,
+one extra string field, and JSON request/response bodies. Only operation count
+changes. The 10,000-operation case fits current compiler limits with this shared
+schema; it does not promise that every 10,000-operation contract fits.
+
+Installation, input preparation and qualification stay outside measurements.
+Qualification runs the read-only CLI drift check, independently checks every
+operation and schema name, and exercises builders and response parsers. Each
+measured output's complete file inventory and hashes, including its ownership
+manifest, must match qualified output. Cases run serially in seeded
+randomized artifact/profile/mode order in fresh Node workers.
+
+Both modes invoke the installed package's actual CLI entry. Cold runs start a
+fresh process. Warm runs perform one untimed full generation before the measured
+generation in that process; the compiler and formatter retain their module caches.
+Both invocations use fresh output directories. Node's persistent compile cache is
+disabled in both modes; OS filesystem caches are not flushed.
+
+The generation interval covers the CLI invocation: input/config reading, parsing,
+normalization, emission, formatting and writes, plus compiler loading in cold
+mode. `generationMs` excludes Node startup and worker setup. `processWallMs`
+records the entire fresh worker, including startup, setup, any warmup and evidence
+writing. `operationsPerSecond` is input operations × 1,000 / `generationMs`;
+it describes batch code generation, not API request throughput.
+
+`peakRssKiB` uses Node's `process.resourceUsage().maxRSS`: the worker's lifetime
+peak resident memory, including compiler loading, native formatter memory and
+any warmup. It is not a sampled heap value or a warm-only memory delta. See the
+[Node resource usage definition](https://nodejs.org/api/process.html#processresourceusage)
+for its KiB units. This is separate from TypeScript's reported memory counter.
+
+The run directory retains tool/host versions, dimensions, commands, artifact/source
+identities, raw stdout/stderr, worker receipts, source inventories and individual
+sample measurements. `qualified.json` owns the project inventories; `schedule.json`
+records each sample's round, artifact role, profile and mode. Inputs are hashed
+before qualification. Qualified outputs remain available; measured and warmup
+output copies are removed after both inventories match the qualified copy.
+Sample failures preserve their available inputs, outputs and logs; failed runs
+retain `failure.json`. Missing or malformed measurements fail explicitly. Keep
+plans and evidence in ignored `.local/`. These synthetic results do not establish
+application budgets or performance acceptance.
 
 ### Artifact preparation
 

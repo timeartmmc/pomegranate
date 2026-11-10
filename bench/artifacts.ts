@@ -352,3 +352,31 @@ export async function prepareArtifactSpecs(
     throw error;
   }
 }
+
+// Shared final audit for controllers which execute installed artifacts after
+// preparation. Archive bytes, dependency lock and installed code must all persist.
+export async function verifyPreparedArtifacts(
+  directory: string,
+  artifacts: Awaited<ReturnType<typeof prepareArtifacts>>['artifacts'],
+) {
+  for (const artifact of artifacts) {
+    const consumer = join(directory, artifact.role);
+    assert.equal(
+      sha256(await readFile(join(consumer, 'package-lock.json'))),
+      artifact.lockSha256,
+      'compiler lock changed',
+    );
+    assert.equal(
+      sha256(
+        await boundedFile(join(consumer, 'compiler.tgz'), maximumArchiveBytes),
+      ),
+      artifact.archive.sha256,
+      'compiler archive changed',
+    );
+    assert.equal(
+      (await installedTree(join(consumer, 'node_modules'))).sha256,
+      artifact.installedTreeSha256,
+      'compiler installation changed',
+    );
+  }
+}

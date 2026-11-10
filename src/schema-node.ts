@@ -54,10 +54,20 @@ export function schemaNode(input: SchemaDraft): Schema {
         location: value.location,
         constraints: value.constraints,
       };
+    case 'intersection':
+      return {
+        kind: value.kind,
+        ...access,
+        branches: value.branches,
+        location: value.location,
+        literals: value.literals,
+      };
     case 'map':
       return {
         kind: value.kind,
         ...access,
+        additionalPropertiesExplicit:
+          value.additionalPropertiesExplicit === true,
         values: value.values,
         minProperties: value.minProperties,
         maxProperties: value.maxProperties,
@@ -74,6 +84,10 @@ export function schemaNode(input: SchemaDraft): Schema {
       return {
         kind: value.kind,
         ...access,
+        closed: value.closed === true,
+        typeExplicit: value.typeExplicit !== false,
+        additionalPropertiesExplicit:
+          value.additionalPropertiesExplicit === true,
         properties: value.properties,
         required: value.required,
         forbidden: value.forbidden,

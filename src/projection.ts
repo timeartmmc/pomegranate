@@ -47,7 +47,8 @@ function closure(
     for (const { name } of schemaReferences(schema)) {
       if (needed.has(name)) continue;
       needed.add(name);
-      // buildDescriptor already resolved every reference and rejected cycles.
+      // The visited set retains productive recursive dependencies once; source
+      // validation already rejected unresolved or nonproductive references.
       pending.push(descriptor.schemas[direction].get(name)!);
     }
   }

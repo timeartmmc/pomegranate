@@ -406,7 +406,7 @@ void test('metadata never masks unsupported schema, policy or configuration sema
     ],
     [
       (d) => Object.assign(d.components.schemas.Widget, { allOf: [] }),
-      /allOf.*not supported in this version/,
+      /allOf.*expected a nonempty array/,
     ],
     [
       (d) => Object.assign(d.components.schemas.Widget, { default: undefined }),

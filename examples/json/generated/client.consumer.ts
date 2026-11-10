@@ -7,6 +7,7 @@ export type {
   PreparedRequest,
   Policy,
   Security,
+  SecurityRequirement,
   Responses,
   ProtocolResult,
   ProtocolFailure,

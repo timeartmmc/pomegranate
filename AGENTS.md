@@ -18,9 +18,10 @@ Read [README.md](README.md) for an introduction,
   implementation details. Fix demonstrated problems; require a concrete benefit
   for structural changes.
 - Preserve unrelated changes.
-- Delegate work only when explicitly requested.
+- Codex sessions running at ultra reasoning effort may delegate work when useful.
+  Do not delegate at other effort levels.
 - Do not commit, publish, or deploy without an explicit request.
-- Local coordination tracking is disabled. Do not recreate its records.
+- Use the local coordination board for agent status, findings, and shared operations.
 - Keep plans and working notes in ignored `.local/` storage.
   Never track or package them, or link to them from public documentation.
 
@@ -37,6 +38,13 @@ Read [README.md](README.md) for an introduction,
   development dependency.
 - Use one canonical metadata and generated format. Adapt consumers to it rather
   than retaining project-specific compiler branches or obsolete formats.
+- Broader OpenAPI support is a product goal, including broader `allOf` support.
+  Current vocabulary limits are implementation stages, not permanent architectural
+  boundaries. Revisit compiler representations and simplifying assumptions when
+  they obstruct correct support. Stage extensions with explicit diagnostics for
+  unsupported forms.
+- Prioritize OpenAPI 3.0+ interoperability and generated API use cases. A
+  general-purpose JSON Schema engine is not a separate product goal.
 - Improve POM's general usefulness, correctness, clarity, and interoperability.
   Require benefits proportional to permanent implementation, testing, and
   maintenance complexity. Prefer explicit limits and actionable diagnostics for

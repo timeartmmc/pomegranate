@@ -21,9 +21,12 @@ Document-level server configuration belongs to the application transport:
 applications select and expand endpoints and append the generated contract paths.
 
 Use one versioned policy format and generated API across applications. Keep
-application-specific behavior in adapters. OpenAPI security determines credential
-transport and preserves the required scheme's name; optional auth labels must
-agree with its transport. Policy fields declare
+application-specific behavior in adapters. OpenAPI security preserves inherited
+requirements, scheme identities, OAuth scopes, anonymous alternatives, and OR/AND
+structure. Optional auth labels must agree with the effective security transport,
+including its composite form. Applications select an allowed alternative and
+manage every credential; generated code never obtains or injects credentials.
+Policy fields declare
 types, enums, and requiredness; applications implement authorization, retries,
 and timeouts. Builders and executors share one generated policy declaration.
 Every operation must declare surface membership through either inline metadata
@@ -46,9 +49,21 @@ so inherited data cannot supply omitted metadata. Application payloads have thei
 separate structural field policy; do not normalize them as compiler settings.
 
 Validate source declarations before projecting request and response fields.
+Resolve supported `allOf` compositions before directional projection. Preserve
+every branch's constraints and explicit object closure; combining fields must
+not widen a closed branch or discard constraints on overlapping properties.
+Derive object construction after resolving openness, closure, fields, and bounds.
+Scalar validation plans combine bounds and literals and retain each unique
+pattern, format, and multiple assertion, independent of reference ancestry.
 Use those projected schema graphs for usage validation, dependency selection,
 types, parsers, and protocol bindings. Keep fixed-object identity when projection
 excludes every property.
+Support local reference cycles that descend through object properties, array
+items, or map values. Reject cycles that only revisit the same value through
+aliases, unions, or composition before selecting outputs. Recursive validators
+must bound depth and work, reject active-ancestor cycles, and preserve separate
+detached outputs for shared children in different positions. Generated recursive
+types and parsers must initialize safely without executing consumer data.
 Bound work within schema normalization and reserve collection work before
 constructing results. Opaque annotation payloads retain their own
 validation. Diagnose excessive work with guidance to reduce or split the input

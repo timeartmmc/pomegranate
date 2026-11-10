@@ -146,8 +146,8 @@ void test('mutual TLS is recognized but unsupported in 3.1 and receives a versio
         ? 'components.securitySchemes.TLS.type'
         : 'components.securitySchemes.TLS',
       message: version.startsWith('3.0.')
-        ? 'components.securitySchemes.TLS.type: mutualTLS is not supported in OpenAPI 3.0; only HTTP bearer schemes are supported'
-        : 'components.securitySchemes.TLS: security scheme type "mutualTLS" is not supported in this version; only HTTP bearer schemes are supported',
+        ? 'components.securitySchemes.TLS.type: mutualTLS is not supported in OpenAPI 3.0'
+        : 'components.securitySchemes.TLS: security scheme type "mutualTLS" is not supported in this version',
     });
     Object.assign(input.components, {
       securitySchemes: { TLS: { type: 'mutualTls' } },

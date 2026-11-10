@@ -76,8 +76,18 @@ export function normalizeVocabulary(
       safeKey(label, `${location}.auth.${label}`);
       const binding = record(auth[label], `${location}.auth.${label}`);
       keys(binding, ['transport'], `${location}.auth.${label}`);
-      if (binding.transport !== 'none' && binding.transport !== 'bearer')
-        fail(`${location}.auth.${label}.transport`, 'expected none or bearer');
+      if (
+        binding.transport !== 'none' &&
+        binding.transport !== 'bearer' &&
+        binding.transport !== 'basic' &&
+        binding.transport !== 'apiKey' &&
+        binding.transport !== 'oauth2' &&
+        binding.transport !== 'alternatives'
+      )
+        fail(
+          `${location}.auth.${label}.transport`,
+          'expected none, bearer, basic, apiKey, oauth2 or alternatives',
+        );
       return [label, binding.transport];
     });
   const rawFields = record(

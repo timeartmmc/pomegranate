@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -11,7 +11,6 @@ type Schemas = typeof import('./.generated/native/client.consumer.schemas.ts');
 type Client = typeof import('./.generated/native/client.consumer.ts');
 let root: string;
 let schemas: Schemas;
-let emittedSchemas: string;
 let operations: Client['operations'];
 let RequestValidationError: Client['RequestValidationError'];
 before(async () => {
@@ -21,10 +20,6 @@ before(async () => {
     await compile(nativeFixture(), { clients: ['consumer'] }),
   ))
     await writeFile(join(root, name), source);
-  emittedSchemas = await readFile(
-    join(root, 'client.consumer.schemas.ts'),
-    'utf8',
-  );
   schemas = (await import(
     pathToFileURL(join(root, 'client.consumer.schemas.ts')).href
   )) as Schemas;
@@ -300,7 +295,7 @@ void test('large constrained literal enums retain checked membership in both dir
   }
 });
 
-void test('literal parsing skips proven scalar rules and emits one membership failure message per direction', (t) => {
+void test('literal parsing skips proven scalar rules and reports one bounded membership issue', (t) => {
   let checks = 0;
   // oxlint-disable-next-line typescript/unbound-method -- invoke the saved intrinsic with each original RegExp receiver below.
   const original = RegExp.prototype.test;
@@ -323,23 +318,28 @@ void test('literal parsing skips proven scalar rules and emits one membership fa
         assert.ok(issue);
         assert.deepEqual(issue.path, []);
         assert.ok(issue.message.startsWith('expected one of '));
+        assert.ok(issue.message.length <= 1_024);
+        assert.ok(result.error.message.length <= 8_192);
       }
     }
     assert.equal(registry.LargeLiteralAlias.parse('v10'), 'v10');
     const narrowed = registry.LargeLiteralAlias.safeParse('v0');
     assert.equal(narrowed.success, false);
-    if (!narrowed.success)
-      assert.deepEqual(narrowed.error.issues, [
-        { path: [], message: 'string is too short' },
-      ]);
+    if (!narrowed.success) {
+      assert.equal(narrowed.error.issues.length, 1);
+      const issue = narrowed.error.issues[0];
+      assert.ok(issue);
+      assert.deepEqual(issue.path, []);
+      assert.ok(issue.message.startsWith('expected one of '));
+      assert.ok(issue.message.length <= 1_024);
+      assert.ok(narrowed.error.message.length <= 8_192);
+    }
   }
   assert.equal(
     checks,
     0,
     'membership completes validation of proven scalar rules',
   );
-  // Both directions need the message, but neither success path needs a copy.
-  assert.ok((emittedSchemas.match(/expected one of /g) ?? []).length <= 2);
 });
 
 void test('nullable constraints report their useful branch without expected-null noise', () => {

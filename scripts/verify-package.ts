@@ -89,6 +89,21 @@ import {
   queryCsvConsumer,
 } from '../test/query-csv-fixture.ts';
 import {
+  securityFixture,
+  securitySelection,
+  securityConsumer,
+} from '../test/security-fixture.ts';
+import {
+  allOfFixture,
+  allOfSelection,
+  allOfConsumer,
+} from '../test/allof-fixture.ts';
+import {
+  recursionFixture,
+  recursionSelection,
+  recursionConsumer,
+} from '../test/recursion-fixture.ts';
+import {
   openapi30Fixture,
   openapi30Selection,
   openapi30Consumer,
@@ -282,6 +297,9 @@ try {
     'ip-comment-fixture.ts',
     'property-count-fixture.ts',
     'query-csv-fixture.ts',
+    'security-fixture.ts',
+    'allof-fixture.ts',
+    'recursion-fixture.ts',
     'openapi30-fixture.ts',
     'tolerance-fixture.ts',
     'any-json-fixture.ts',
@@ -408,6 +426,104 @@ try {
   assert.equal(record(typecheckReport.case).id, 'core-typecheck');
   assert.ok(Array.isArray(typecheckReport.observations));
   assert.equal(typecheckReport.observations.length, 6);
+  console.log(
+    'Typecheck benchmark smoke passed: installed artifacts, qualified consumers and both TypeScript toolchains',
+  );
+  const generationSettings = join(scratch, 'generation-settings.json');
+  await writeFile(
+    generationSettings,
+    JSON.stringify({ rounds: 1, profiles: ['smoke'] }),
+  );
+  const generationReport = record(
+    json(
+      (
+        await run(
+          process.execPath,
+          [
+            join(benchmarkHarness, 'bench/check-generation.ts'),
+            benchmarkPlan,
+            join(scratch, 'generation-benchmark'),
+            generationSettings,
+          ],
+          scratch,
+        )
+      ).stdout,
+    ),
+  );
+  assert.equal(generationReport.status, 'complete');
+  assert.ok(Array.isArray(generationReport.observations));
+  assert.equal(generationReport.observations.length, 6);
+  assert.deepEqual(
+    new Set(generationReport.observations.map((value) => record(value).mode)),
+    new Set(['cold', 'warm']),
+  );
+  const generationRoot = join(scratch, 'generation-benchmark');
+  for (const entry of generationReport.observations) {
+    const sample = join(
+      generationRoot,
+      'samples',
+      String(record(entry).index).padStart(5, '0'),
+    );
+    for (const name of ['measured', 'warmup'])
+      await assert.rejects(stat(join(sample, name)), { code: 'ENOENT' });
+    for (const name of [
+      'sample.json',
+      'worker-result.json',
+      'worker.stdout.log',
+      'worker.stderr.log',
+    ])
+      assert.ok((await stat(join(sample, name))).isFile());
+  }
+  assert.ok(Array.isArray(generationReport.projects));
+  for (const project of generationReport.projects)
+    assert.ok(
+      (
+        await stat(
+          join(String(record(project).directory), 'qualification/measured'),
+        )
+      ).isDirectory(),
+    );
+
+  // Simulate a worker rewriting valid input without changing its generated API.
+  // Qualification must not silently adopt those bytes as the input identity.
+  const rewritingHarness = join(scratch, 'rewriting-harness');
+  await cp(benchmarkHarness, rewritingHarness, { recursive: true });
+  const rewritingWorker = join(rewritingHarness, 'bench/generation-worker.ts');
+  await writeFile(
+    rewritingWorker,
+    `{
+  const fs = await import('node:fs/promises');
+  const config = JSON.parse(await fs.readFile(process.argv[3], 'utf8'));
+  await fs.writeFile(config.openapi, JSON.stringify(JSON.parse(await fs.readFile(config.openapi, 'utf8'))));
+}
+${await readFile(rewritingWorker, 'utf8')}`,
+  );
+  const rewritingRun = join(scratch, 'rewriting-benchmark');
+  await assert.rejects(
+    run(
+      process.execPath,
+      [
+        join(rewritingHarness, 'bench/check-generation.ts'),
+        benchmarkPlan,
+        rewritingRun,
+        generationSettings,
+      ],
+      scratch,
+    ),
+    /generation input changed/,
+  );
+  assert.equal(
+    record(json(await readFile(join(rewritingRun, 'failure.json'), 'utf8')))
+      .stage,
+    'identity-check',
+  );
+  await assert.rejects(stat(join(rewritingRun, 'report.json')), {
+    code: 'ENOENT',
+  });
+  console.log(
+    'Generation benchmark smoke passed: installed CLI, input integrity, qualified output, sample cleanup, cold/warm workers and peak RSS evidence',
+  );
+
   const outputGrowth = record(
     json(
       (
@@ -598,6 +714,9 @@ try {
     'ip-comment-generated/*.ts',
     'property-count-generated/*.ts',
     'query-csv-generated/*.ts',
+    'security-generated/*.ts',
+    'allof-generated/*.ts',
+    'recursion-generated/*.ts',
     'openapi30-generated/*.ts',
     'tolerance-generated/*.ts',
     'any-json-generated/*.ts',
@@ -866,6 +985,9 @@ try {
       propertyCountConsumer,
     ],
     ['query-csv', queryCsvFixture(), queryCsvSelection, queryCsvConsumer],
+    ['security', securityFixture(), securitySelection, securityConsumer],
+    ['allof', allOfFixture(), allOfSelection, allOfConsumer],
+    ['recursion', recursionFixture(), recursionSelection, recursionConsumer],
     ['openapi30', openapi30Fixture(), openapi30Selection, openapi30Consumer],
     ['tolerance', toleranceFixture(), toleranceSelection, toleranceConsumer],
     ['any-json', anyJsonFixture(), anyJsonSelection, anyJsonConsumer],
@@ -1880,6 +2002,27 @@ try {
     import * as queryCsvClient from './query-csv-generated/client.consumer.ts';
     import {verifyQueryCsv} from './verification/query-csv-fixture.ts';
     verifyQueryCsv(queryCsvClient);
+    import * as securityClient from './security-generated/client.consumer.ts';
+    import {verifySecurity} from './verification/security-fixture.ts';
+    verifySecurity(securityClient);
+    import * as allOfClient from './allof-generated/client.consumer.ts';
+    import * as allOfInput from './allof-generated/standalone.input.ts';
+    import * as allOfOutput from './allof-generated/standalone.output.ts';
+    import * as allOfClosed from './allof-generated/standalone.closed.ts';
+    import * as allOfScalar from './allof-generated/standalone.scalar.ts';
+    import {verifyAllOf} from './verification/allof-fixture.ts';
+    verifyAllOf(allOfClient, allOfInput, allOfOutput, allOfClosed, allOfScalar);
+    import * as recursionClient from './recursion-generated/client.consumer.ts';
+    import * as recursionSchemas from './recursion-generated/client.consumer.schemas.ts';
+    import * as recursionRequest from './recursion-generated/standalone.request.ts';
+    import * as recursionResponse from './recursion-generated/standalone.response.ts';
+    import * as recursionMutual from './recursion-generated/standalone.mutual.ts';
+    import * as recursionArray from './recursion-generated/standalone.array.ts';
+    import * as recursionMap from './recursion-generated/standalone.map.ts';
+    import * as recursionNullable from './recursion-generated/standalone.nullable.ts';
+    import * as recursionExpression from './recursion-generated/standalone.expression.ts';
+    import {verifyRecursion} from './verification/recursion-fixture.ts';
+    verifyRecursion(recursionClient, recursionSchemas, {request:recursionRequest,response:recursionResponse,mutual:recursionMutual,array:recursionArray,map:recursionMap,nullable:recursionNullable,expression:recursionExpression});
     import * as openapi30Client from './openapi30-generated/client.consumer.ts';
     import * as openapi30Request from './openapi30-generated/standalone.request.ts';
     import * as openapi30Response from './openapi30-generated/standalone.response.ts';
@@ -2025,6 +2168,27 @@ try {
     import * as queryCsvClient from './.build/query-csv-generated/client.consumer.js';
     import {verifyQueryCsv} from './verification/query-csv-fixture.ts';
     verifyQueryCsv(queryCsvClient);
+    import * as securityClient from './.build/security-generated/client.consumer.js';
+    import {verifySecurity} from './verification/security-fixture.ts';
+    verifySecurity(securityClient);
+    import * as allOfClient from './.build/allof-generated/client.consumer.js';
+    import * as allOfInput from './.build/allof-generated/standalone.input.js';
+    import * as allOfOutput from './.build/allof-generated/standalone.output.js';
+    import * as allOfClosed from './.build/allof-generated/standalone.closed.js';
+    import * as allOfScalar from './.build/allof-generated/standalone.scalar.js';
+    import {verifyAllOf} from './verification/allof-fixture.ts';
+    verifyAllOf(allOfClient, allOfInput, allOfOutput, allOfClosed, allOfScalar);
+    import * as recursionClient from './.build/recursion-generated/client.consumer.js';
+    import * as recursionSchemas from './.build/recursion-generated/client.consumer.schemas.js';
+    import * as recursionRequest from './.build/recursion-generated/standalone.request.js';
+    import * as recursionResponse from './.build/recursion-generated/standalone.response.js';
+    import * as recursionMutual from './.build/recursion-generated/standalone.mutual.js';
+    import * as recursionArray from './.build/recursion-generated/standalone.array.js';
+    import * as recursionMap from './.build/recursion-generated/standalone.map.js';
+    import * as recursionNullable from './.build/recursion-generated/standalone.nullable.js';
+    import * as recursionExpression from './.build/recursion-generated/standalone.expression.js';
+    import {verifyRecursion} from './verification/recursion-fixture.ts';
+    verifyRecursion(recursionClient, recursionSchemas, {request:recursionRequest,response:recursionResponse,mutual:recursionMutual,array:recursionArray,map:recursionMap,nullable:recursionNullable,expression:recursionExpression});
     import * as openapi30Client from './.build/openapi30-generated/client.consumer.js';
     import * as openapi30Request from './.build/openapi30-generated/standalone.request.js';
     import * as openapi30Response from './.build/openapi30-generated/standalone.response.js';

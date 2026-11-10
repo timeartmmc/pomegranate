@@ -64,8 +64,6 @@ function lowerSchema(
   value: Record<string, unknown>,
   location: string,
 ): Record<string, unknown> {
-  if (Object.hasOwn(value, 'allOf'))
-    fail(`${location}.allOf`, 'allOf is not supported in this version');
   for (const key of openApi31SchemaKeys)
     if (Object.hasOwn(value, key))
       fail(`${location}.${key}`, 'unsupported OpenAPI 3.0 schema keyword');
@@ -94,8 +92,10 @@ function lowerSchema(
     if (value.nullable && typeof value.type !== 'string')
       fail(
         `${location}.nullable`,
-        Object.hasOwn(value, 'anyOf') || Object.hasOwn(value, 'oneOf')
-          ? 'nullable: true requires an explicit type in the same schema; for a composition, remove nullable and wrap the supported anyOf or discriminated oneOf in an outer anyOf with the null-only branch { type: "string", nullable: true, enum: [null] }'
+        Object.hasOwn(value, 'anyOf') ||
+          Object.hasOwn(value, 'oneOf') ||
+          Object.hasOwn(value, 'allOf')
+          ? 'nullable: true requires an explicit type in the same schema; for a composition, remove nullable and wrap the supported composition in an outer anyOf with the null-only branch { type: "string", nullable: true, enum: [null] }'
           : 'nullable: true requires an explicit type in the same schema',
       );
     if (value.nullable && typeof value.type === 'string')

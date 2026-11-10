@@ -77,8 +77,8 @@ method reads instance state, pass an arrow function or
 `adapter.execute.bind(adapter)`. POM captures the callback; it does not bind it
 to the configuration object.
 
-The application resolves the API origin, credentials for `request.security.scheme`
-on bearer requests, and declared policy labels,
+The application resolves the API origin, credentials for the declared
+[security requirements](REFERENCE.md#client-surfaces-and-security), and policy labels,
 validates merged headers with `request.validateHeaders`, serializes the prepared
 body and forwards the signal to its transport. JSON and text requests expose
 `request.contentType` for the transport's Content-Type header. For text, append a

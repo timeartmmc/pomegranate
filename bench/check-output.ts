@@ -8,14 +8,14 @@ import { benchmarkSources } from './installed.ts';
 import { runOutputGrowth } from './output-growth.ts';
 
 assert.ok(
-  process.argv.length >= 2 && process.argv.length <= 4,
+  process.argv.length <= 4,
   'usage: node bench/check-output.ts [local-compiler-entry] [typescript-entry]',
 );
 const compilerEntry = process.argv[2]
   ? pathToFileURL(await realpath(process.argv[2])).href
   : import.meta.resolve('pomegranate-compiler');
 const controller = await benchmarkSources();
-const typeScriptEntry = process.argv[3]
+const typescriptEntry = process.argv[3]
   ? await realpath(process.argv[3])
   : fileURLToPath(
       new URL('bin/tsc', import.meta.resolve('typescript/package.json')),
@@ -27,21 +27,23 @@ async function packageMetadata(entry: string) {
   // prevent the supplied compiler or TypeScript entry from executing.
   if (manifest === undefined || basename(manifest) !== 'package.json')
     return { manifest: null, version: null };
+  let resolvedManifest: string | null = null;
   try {
-    const input = await readJson(manifest, 64 * 1024);
+    resolvedManifest = await realpath(manifest);
+    const input = await readJson(resolvedManifest, 64 * 1024);
     const metadata = record(input.value);
     return {
       manifest: input.path,
       version: typeof metadata.version === 'string' ? metadata.version : null,
     };
   } catch {
-    return { manifest, version: null };
+    return { manifest: resolvedManifest, version: null };
   }
 }
 const { manifest: compilerPackageManifest, version: compilerVersion } =
   await packageMetadata(compilerEntry);
 const { manifest: typescriptPackageManifest, version: typescriptVersion } =
-  await packageMetadata(pathToFileURL(typeScriptEntry).href);
+  await packageMetadata(pathToFileURL(typescriptEntry).href);
 const module: unknown = await import(compilerEntry);
 const compile = record(module).compile;
 assert.ok(typeof compile === 'function', 'compiler must export compile()');
@@ -51,12 +53,12 @@ const report = await runOutputGrowth(async (document, options) => {
     options,
   ]);
   return value;
-}, typeScriptEntry);
+}, typescriptEntry);
 assert.deepEqual(
   await benchmarkSources(),
   controller,
   'output benchmark sources changed during collection',
 );
 process.stdout.write(
-  `${JSON.stringify({ ...report, compilerEntry, compilerVersion, compilerPackageManifest, typeScriptEntry, typescriptVersion, typescriptPackageManifest, controller, node: process.version }, null, 2)}\n`,
+  `${JSON.stringify({ ...report, compilerEntry, compilerVersion, compilerPackageManifest, typescriptEntry, typescriptVersion, typescriptPackageManifest, controller, node: process.version }, null, 2)}\n`,
 );

@@ -391,11 +391,11 @@ for (const [name, mutate, pattern] of [
     /supported anyOf/,
   ],
   [
-    'map recursive reference',
+    'nonproductive schema alias cycle',
     (d) => {
-      d.components.schemas.ShapeMap.additionalProperties = {
-        $ref: '#/components/schemas/ShapeMap',
-      };
+      Object.assign(d.components.schemas, {
+        ShapeMap: { $ref: '#/components/schemas/ShapeMap' },
+      });
     },
     /recursive/,
   ],

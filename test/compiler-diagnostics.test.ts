@@ -30,18 +30,8 @@ function document(Value: Schema, schemas: Record<string, Schema> = {}) {
   };
 }
 
-void test('planned authentication schemes explain current support before inspecting scheme-specific fields', async () => {
+void test('unsupported authentication schemes fail before inspecting scheme-specific fields', async () => {
   for (const scheme of [
-    { type: 'apiKey', in: 'header', name: 'X-Key' },
-    {
-      type: 'oauth2',
-      flows: {
-        clientCredentials: {
-          tokenUrl: 'https://auth.example.invalid/token',
-          scopes: {},
-        },
-      },
-    },
     {
       type: 'openIdConnect',
       openIdConnectUrl:
@@ -53,7 +43,7 @@ void test('planned authentication schemes explain current support before inspect
     await assert.rejects(compile(input, selection), {
       name: 'ContractError',
       location: 'components.securitySchemes.Future',
-      message: `components.securitySchemes.Future: security scheme type "${scheme.type}" is not supported in this version; only HTTP bearer schemes are supported`,
+      message: `components.securitySchemes.Future: security scheme type "${scheme.type}" is not supported in this version`,
     });
   }
 });
@@ -66,16 +56,11 @@ void test('an unrecognized security type is diagnosed before its siblings withou
     name: 'ContractError',
     location: 'components.securitySchemes.Future.type',
     message:
-      'components.securitySchemes.Future.type: unrecognized security scheme type; recognized spellings are "http", "apiKey", "oauth2", "openIdConnect" and "mutualTLS"; only HTTP bearer schemes are supported',
+      'components.securitySchemes.Future.type: unrecognized security scheme type; recognized spellings are "http", "apiKey", "oauth2", "openIdConnect" and "mutualTLS"',
   });
-  // Correct the spelling only; API-key semantics remain explicitly unsupported.
+  // Correcting the type spelling enables the declared API-key semantics.
   scheme.type = 'apiKey';
-  await assert.rejects(compile(input, selection), {
-    name: 'ContractError',
-    location: 'components.securitySchemes.Future',
-    message:
-      'components.securitySchemes.Future: security scheme type "apiKey" is not supported in this version; only HTTP bearer schemes are supported',
-  });
+  await compile(input, selection);
 });
 
 void test('surface typo diagnostics list bounded declared choices and the listed selection compiles', async () => {
@@ -174,17 +159,17 @@ void test('format advice does not suggest string registration for container or b
       );
 });
 
-void test('3.0 nullable allOf reports unsupported composition before suggesting an explicit type', async () => {
+void test('3.0 nullable allOf requires an explicit type rather than changing the referenced type', async () => {
   const input = document(
     { nullable: true, allOf: [{ $ref: '#/components/schemas/Text' }] },
     { Text: { type: 'string' } },
   );
   input.openapi = '3.0.4';
-  await assert.rejects(compile(input, selection), {
-    name: 'ContractError',
-    location: 'components.schemas.Value.allOf',
-    message:
-      'components.schemas.Value.allOf: allOf is not supported in this version',
+  await assert.rejects(compile(input, selection), (error) => {
+    assert.ok(error instanceof ContractError);
+    assert.equal(error.location, 'components.schemas.Value.nullable');
+    assert.match(error.message, /nullable: true requires an explicit type/);
+    return true;
   });
 });
 
@@ -279,7 +264,7 @@ void test('nesting advice distinguishes inline splitting from the structural lim
       assert.equal(error.location, 'components.schemas.Layer0128');
       assert.match(
         error.message,
-        /reduce structural nesting, including referenced schemas/,
+        /reduce structural nesting, including recursive regions and referenced schemas/,
       );
       assert.doesNotMatch(error.message, /use component references/);
       return true;
@@ -392,16 +377,13 @@ void test('configuration typo diagnostics name supported keys and corrected opti
   await assert.rejects(stat(join(root, 'generated')), { code: 'ENOENT' });
 });
 
-void test('allOf diagnostics identify composition with and without an explicit type', async () => {
-  for (const schema of [
-    { allOf: [{ type: 'string' }, { type: 'string' }] },
-    { type: 'string', allOf: [{ type: 'string' }] },
-  ])
+void test('allOf diagnostics identify unsupported composition with and without an explicit type', async () => {
+  for (const schema of [{ allOf: [] }, { type: 'string', allOf: [] }])
     await assert.rejects(compile(document(schema), selection), {
       name: 'ContractError',
       location: 'components.schemas.Value.allOf',
       message:
-        'components.schemas.Value.allOf: allOf is not supported in this version',
+        'components.schemas.Value.allOf: expected a nonempty array of allOf branches',
     });
 });
 

@@ -1,134 +1,174 @@
 import {
   annotations,
+  arrayValues,
   fail,
   keys,
   record,
-  safeKey,
   stringArray,
-  validComponentName,
+  text,
+  validHeaderName,
+  wellFormedUnicode,
 } from './diagnostics.js';
-import {
-  localComponentReference,
-  validateComponentAliases,
-} from './component-references.js';
-import type { Security } from './runtime.js';
+import { normalizeComponents } from './component-references.js';
+import type { Security, SecurityRequirement } from './runtime.js';
+
+type SecurityScheme =
+  | Readonly<{ transport: 'basic' | 'bearer' }>
+  | Readonly<{
+      transport: 'apiKey';
+      in: 'header' | 'query' | 'cookie';
+      name: string;
+    }>
+  | Readonly<{ transport: 'oauth2'; scopes: ReadonlySet<string> }>;
+
+const flowUrls = {
+  implicit: ['authorizationUrl'],
+  password: ['tokenUrl'],
+  clientCredentials: ['tokenUrl'],
+  authorizationCode: ['authorizationUrl', 'tokenUrl'],
+} as const;
+
+function oauthScopes(input: unknown, location: string): ReadonlySet<string> {
+  const flows = record(input, location);
+  keys(flows, Object.keys(flowUrls), location);
+  const scopes = new Set<string>();
+  for (const name of Object.keys(flows)) {
+    const path = `${location}.${name}`;
+    const flow = record(flows[name], path);
+    const urls = flowUrls[name as keyof typeof flowUrls];
+    keys(flow, [...urls, 'refreshUrl', 'scopes'], path);
+    // OpenAPI permits relative URLs. These declarations describe application
+    // authentication setup; the compiler neither resolves nor fetches them.
+    for (const url of urls) text(flow[url], `${path}.${url}`);
+    if (Object.hasOwn(flow, 'refreshUrl'))
+      text(flow.refreshUrl, `${path}.refreshUrl`);
+    const declared = record(flow.scopes, `${path}.scopes`);
+    for (const [scope, description] of Object.entries(declared)) {
+      if (typeof description !== 'string')
+        fail(`${path}.scopes.${scope}`, 'expected a string scope description');
+      scopes.add(scope);
+    }
+  }
+  return scopes;
+}
 
 export function normalizeSecuritySchemes(
   input: unknown,
   dialect: '3.0' | '3.1' = '3.1',
-): ReadonlySet<string> {
-  const location = 'components.securitySchemes';
-  const schemes = record(input, location);
-  const references = new Map<string, string | undefined>();
-  for (const [name, rawScheme] of Object.entries(schemes)) {
-    safeKey(name, `${location}.${name}`);
-    if (!validComponentName(name))
-      fail(`${location}.${name}`, 'unsupported security scheme component name');
-    const scheme = record(rawScheme, `${location}.${name}`);
-    if (Object.hasOwn(scheme, '$ref')) {
-      keys(scheme, ['$ref', 'summary', 'description'], `${location}.${name}`);
-      annotations(scheme, `${location}.${name}`);
-      const target = localComponentReference(
-        scheme.$ref,
-        'securitySchemes',
-        `${location}.${name}.$ref`,
-      );
-      safeKey(target, `${location}.${name}.$ref`);
-      if (!validComponentName(target))
-        fail(
-          `${location}.${name}.$ref`,
-          'unsupported security scheme component name',
-        );
-      if (!Object.hasOwn(schemes, target))
-        fail(
-          `${location}.${name}.$ref`,
-          `unresolved security scheme reference ${target}`,
-        );
-      references.set(name, target);
-      continue;
-    }
+): ReadonlyMap<string, SecurityScheme> {
+  return normalizeComponents(input, 'securitySchemes', (scheme, location) => {
     if (scheme.type === 'mutualTLS' && dialect === '3.0')
+      fail(`${location}.type`, 'mutualTLS is not supported in OpenAPI 3.0');
+    if (scheme.type === 'openIdConnect' || scheme.type === 'mutualTLS')
       fail(
-        `${location}.${name}.type`,
-        'mutualTLS is not supported in OpenAPI 3.0; only HTTP bearer schemes are supported',
+        location,
+        `security scheme type "${scheme.type}" is not supported in this version`,
       );
-    if (
-      scheme.type === 'apiKey' ||
-      scheme.type === 'oauth2' ||
-      scheme.type === 'openIdConnect' ||
-      scheme.type === 'mutualTLS'
-    )
+    if (!['http', 'apiKey', 'oauth2'].includes(scheme.type as string))
       fail(
-        `${location}.${name}`,
-        `security scheme type "${scheme.type}" is not supported in this version; only HTTP bearer schemes are supported`,
+        `${location}.type`,
+        `unrecognized security scheme type; recognized spellings are "http", "apiKey", "oauth2", "openIdConnect"${dialect === '3.1' ? ' and "mutualTLS"' : ''}`,
       );
-    if (scheme.type !== 'http')
+    if (scheme.type === 'apiKey') {
+      keys(scheme, ['type', 'in', 'name', 'description'], location);
+      annotations(scheme, location);
+      if (
+        scheme.in !== 'header' &&
+        scheme.in !== 'query' &&
+        scheme.in !== 'cookie'
+      )
+        fail(`${location}.in`, 'expected header, query or cookie');
+      const name = text(scheme.name, `${location}.name`);
+      if (
+        (scheme.in === 'header' || scheme.in === 'cookie') &&
+        !validHeaderName(name)
+      )
+        fail(`${location}.name`, `invalid API key ${scheme.in} name`);
+      if (!wellFormedUnicode(name))
+        fail(
+          `${location}.name`,
+          'API key names must contain well-formed Unicode',
+        );
+      return { transport: 'apiKey', in: scheme.in, name };
+    }
+    if (scheme.type === 'oauth2') {
+      keys(scheme, ['type', 'flows', 'description'], location);
+      annotations(scheme, location);
+      return {
+        transport: 'oauth2',
+        scopes: oauthScopes(scheme.flows, `${location}.flows`),
+      };
+    }
+    keys(scheme, ['type', 'scheme', 'bearerFormat', 'description'], location);
+    annotations(scheme, location);
+    const transport =
+      typeof scheme.scheme === 'string' ? scheme.scheme.toLowerCase() : '';
+    if (transport !== 'basic' && transport !== 'bearer')
       fail(
-        `${location}.${name}.type`,
-        `unrecognized security scheme type; recognized spellings are "http", "apiKey", "oauth2", "openIdConnect"${dialect === '3.1' ? ' and "mutualTLS"' : ''}; only HTTP bearer schemes are supported`,
+        location,
+        'unsupported security scheme; expected HTTP basic or bearer',
       );
-    keys(
-      scheme,
-      ['type', 'scheme', 'bearerFormat', 'description'],
-      `${location}.${name}`,
-    );
-    annotations(scheme, `${location}.${name}`);
-    if (
-      typeof scheme.scheme !== 'string' ||
-      scheme.scheme.toLowerCase() !== 'bearer'
-    )
-      fail(
-        `${location}.${name}`,
-        'unsupported security scheme; only HTTP bearer schemes are supported',
-      );
-    if (
-      Object.hasOwn(scheme, 'bearerFormat') &&
-      typeof scheme.bearerFormat !== 'string'
-    )
-      fail(`${location}.${name}.bearerFormat`, 'expected a string annotation');
+    if (Object.hasOwn(scheme, 'bearerFormat')) {
+      if (transport !== 'bearer')
+        fail(`${location}.bearerFormat`, 'bearerFormat requires HTTP bearer');
+      if (typeof scheme.bearerFormat !== 'string')
+        fail(`${location}.bearerFormat`, 'expected a string annotation');
+    }
     // bearerFormat is documentation, not a token parser or provider selector.
-    references.set(name, undefined);
-  }
-  validateComponentAliases(references, 'securitySchemes');
-  return new Set(references.keys());
+    return { transport };
+  });
 }
 
 export function normalizeSecurity(
   input: unknown,
-  bearerSchemes: ReadonlySet<string>,
+  schemes: ReadonlyMap<string, SecurityScheme>,
   location: string,
 ): Security {
   if (!Array.isArray(input))
     fail(location, 'expected an array of security requirements');
   if (input.length === 0) return { transport: 'none' };
-  // Multiple requirement objects mean OR, and multiple schemes in one object
-  // mean AND. Neither can be reduced to one required transport without losing
-  // credential-selection or optional-auth semantics. See OAS 3.1.0 §4.8.30.
-  if (input.length !== 1)
-    fail(
-      location,
-      'unsupported security alternatives (OR); declare one bearer requirement or an explicit public override',
-    );
-  const requirement = record(
-    Object.hasOwn(input, 0) ? input[0] : undefined,
-    `${location}[0]`,
-  );
-  const names = Object.keys(requirement);
-  if (names.length === 0) return { transport: 'none' };
-  if (names.length !== 1)
-    fail(location, 'unsupported combined security schemes (AND)');
-  const name = names[0]!;
-  if (!bearerSchemes.has(name))
-    fail(`${location}[0].${name}`, 'undeclared bearer security scheme');
-  const roles = requirement[name];
-  if (!stringArray(roles))
-    fail(`${location}[0].${name}`, 'expected an array of role names');
-  if (roles.length !== 0)
-    fail(
-      `${location}[0].${name}`,
-      'nonempty security role requirements are unsupported',
-    );
-  // Keep the requirement's declared name, including aliases. Transport alone
-  // loses the identity applications need to select the operation's credential.
-  return { transport: 'bearer', scheme: name };
+  const alternatives = Array.from(arrayValues(input), (raw, index) => {
+    const path = `${location}[${index}]`;
+    const requirement = record(raw, path);
+    return Object.keys(requirement).map((name): SecurityRequirement => {
+      const memberLocation = `${path}.${name}`;
+      const scheme = schemes.get(name);
+      if (!scheme) fail(memberLocation, 'undeclared security scheme');
+      const scopes = requirement[name];
+      if (!stringArray(scopes))
+        fail(memberLocation, 'expected an array of scope or role names');
+      if (scheme.transport === 'oauth2') {
+        for (const scope of scopes)
+          if (!scheme.scopes.has(scope))
+            fail(
+              memberLocation,
+              `undeclared OAuth2 scope ${JSON.stringify(scope)}`,
+            );
+        return { transport: 'oauth2', scheme: name, scopes: [...scopes] };
+      }
+      if (scopes.length !== 0)
+        fail(
+          memberLocation,
+          'nonempty security role requirements are unsupported',
+        );
+      // Keep the declared identity, including aliases. The terminal component
+      // describes credentials but does not replace the application's selector.
+      if (scheme.transport === 'apiKey')
+        return {
+          transport: 'apiKey',
+          scheme: name,
+          in: scheme.in,
+          name: scheme.name,
+        };
+      return { transport: scheme.transport, scheme: name };
+    });
+  });
+  // Arrays are OR; members within each array are AND. An empty conjunction is
+  // anonymous access, including when it coexists with authenticated branches.
+  if (alternatives.length === 1) {
+    const only = alternatives[0]!;
+    if (only.length === 0) return { transport: 'none' };
+    if (only.length === 1) return only[0]!;
+  }
+  return { transport: 'alternatives', alternatives };
 }
