@@ -1306,9 +1306,12 @@ response that `default` validates is a `success` carrying the `default` body.
 Declare `2XX` to keep `default` for errors. Every operation needs a response
 that can succeed: a 2xx status, `2XX`, or `default`.
 
-Generated result types list the statuses each declaration can receive. Checking
-`result.status === 200` narrows to the `200` declaration, and a status without
-its own declaration narrows to the range or `default` that receives it.
+Generated result types describe each declaration's status coverage. A content-bearing
+range or `default` can conservatively list 204, 205, or 304, although a response
+matching that declaration at those statuses becomes a protocol failure. After
+excluding protocol failures, checking `result.status === 200` narrows to an
+explicit `200` declaration; a status without its own declaration narrows to the
+range or `default` that receives it.
 
 A 204, 205, or 304 response has no content. Declaring content for one of
 these exact statuses fails compilation. A range or `default` may declare

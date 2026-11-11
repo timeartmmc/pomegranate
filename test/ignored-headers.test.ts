@@ -85,9 +85,14 @@ void test('ignored header parameters are not declared headers but keep their dec
       (document) => {
         preparation(document).parameters.push(header(name));
       },
-      /^transportHeaders: undeclared request header/,
+      /^transportHeaders: request header .* is undeclared or ignored by OpenAPI$/,
       { ...selection, transportHeaders: [name] },
     );
+  await rejects(
+    () => {},
+    /request header "x-not-declared" is undeclared or ignored by OpenAPI$/,
+    { ...selection, transportHeaders: ['X-Not-Declared'] },
+  );
   await rejects((document) => {
     preparation(document).parameters.push({
       ...header('Accept'),

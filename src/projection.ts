@@ -78,7 +78,7 @@ export function selectClients(
     if (!declared.has(name))
       fail(
         'transportHeaders',
-        `undeclared request header ${JSON.stringify(name)}`,
+        `request header ${JSON.stringify(name)} is undeclared or ignored by OpenAPI`,
       );
   const operationIds = new Set(
     descriptor.operations.map((operation) => operation.id),

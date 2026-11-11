@@ -595,12 +595,21 @@ void test('bounded multipart optional file arrays require an effective nonempty 
   ];
   for (const input of invalid) {
     const before = structuredClone(input);
+    const schema =
+      input.paths['/upload'].post.requestBody.content['multipart/form-data']
+        .schema;
+    const source =
+      'paths./upload.post.requestBody.content.multipart/form-data.schema';
     await assert.rejects(compile(input, options), (error) => {
       assert.ok(error instanceof ContractError);
       assert.equal(
         error.location,
-        'paths./upload.post.requestBody.content.multipart/form-data.schema.properties.files',
+        Object.hasOwn(schema, 'properties')
+          ? `${source}.properties.files`
+          : source,
       );
+      if (!Object.hasOwn(schema, 'properties'))
+        assert.match(error.message, /field "files"/);
       assert.match(error.message, message);
       return true;
     });

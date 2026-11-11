@@ -273,6 +273,7 @@ function contentDefinitions(
                 schema,
                 context.projection.schemas.request,
                 schemaLocation,
+                media.schema,
               )
             : undefined,
       };
@@ -545,10 +546,16 @@ function multipartFields(
   schema: Schema,
   schemas: SchemaTable,
   location: string,
+  source: unknown,
 ): readonly MultipartField[] {
   const object = resolveSchema(schema, schemas);
   if (object.kind !== 'object')
     fail(location, 'multipart requires a fixed object of text and file fields');
+  const original = record(source, location);
+  const declared =
+    original.properties === undefined
+      ? undefined
+      : record(original.properties, `${location}.properties`);
   let bounded =
     object.minProperties !== undefined || object.maxProperties !== undefined;
   for (let target = schema; !bounded && target.kind === 'ref';) {
@@ -558,20 +565,27 @@ function multipartFields(
     target = schemas.get(target.name)!;
   }
   return [...object.properties].map(([name, field]) => {
-    if (!validHeaderName(name))
+    // References and required-only fragments can introduce fields that this
+    // source node does not declare. Anchor those errors at the real schema.
+    const fieldLocation =
+      declared && Object.hasOwn(declared, name)
+        ? `${location}.properties.${name}`
+        : location;
+    const fieldError = (message: string): never =>
       fail(
-        `${location}.properties.${name}`,
-        'multipart field names must be HTTP tokens',
+        fieldLocation,
+        fieldLocation === location
+          ? `${message} (field ${JSON.stringify(name)})`
+          : message,
       );
+    if (!validHeaderName(name))
+      fieldError('multipart field names must be HTTP tokens');
     const resolved = resolveSchema(field, schemas);
     const multiple =
       resolved.kind === 'array' &&
       resolveSchema(resolved.items, schemas).kind === 'binary';
     if (resolved.kind !== 'string' && resolved.kind !== 'binary' && !multiple)
-      fail(
-        `${location}.properties.${name}`,
-        'multipart fields require strings, files or arrays of files',
-      );
+      fieldError('multipart fields require strings, files or arrays of files');
     // Files have no JSON value equality, so a file-array uniqueness assertion
     // could not be enforced. Reject it here or through a constrained alias.
     if (multiple) {
@@ -582,10 +596,7 @@ function multipartFields(
         target.kind === 'ref' ||
         (target.kind === 'array' && target.uniqueItems)
       )
-        fail(
-          `${location}.properties.${name}`,
-          'uniqueItems is unsupported for multipart file arrays',
-        );
+        fieldError('uniqueItems is unsupported for multipart file arrays');
     }
     const required = isRequired(object.required, name);
     if (bounded && multiple && !required) {
@@ -598,8 +609,7 @@ function multipartFields(
       // cannot participate in property counts; require a representable value
       // when present, with undefined/omission still meaning no field.
       if (!nonempty)
-        fail(
-          `${location}.properties.${name}`,
+        fieldError(
           'multipart property-count bounds require optional file arrays to declare minItems >= 1',
         );
     }

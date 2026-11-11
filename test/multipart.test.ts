@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { compile } from '../dist/index.js';
+import { compile, ContractError } from '../dist/index.js';
 import { invalidOptions } from './assertions.ts';
 import {
   multipartFixture,
@@ -14,6 +14,54 @@ import {
 } from './multipart-fixture.ts';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+void test('multipart diagnostics point to existing schema declarations', async () => {
+  const location =
+    'paths./upload.post.requestBody.content.multipart/form-data.schema';
+  const samples = [
+    { schema: { type: 'object', required: ['id'] }, at: location },
+    { schema: { $ref: '#/components/schemas/RequiredOnly' }, at: location },
+    {
+      schema: { type: 'object', properties: { id: { type: 'integer' } } },
+      at: `${location}.properties.id`,
+    },
+  ];
+  for (const { schema, at } of samples) {
+    const input = {
+      openapi: '3.1.2',
+      info: { title: 'Synthetic multipart diagnostics', version: '1' },
+      components: {
+        schemas: { RequiredOnly: { type: 'object', required: ['id'] } },
+      },
+      paths: {
+        '/upload': {
+          post: {
+            operationId: 'upload',
+            requestBody: {
+              required: true,
+              content: { 'multipart/form-data': { schema } },
+            },
+            responses: { 204: { description: 'OK' } },
+          },
+        },
+      },
+    };
+    await assert.rejects(
+      compile(input, {
+        clients: ['consumer'],
+        surfaces: { consumer: ['upload'] },
+        targets: { consumer: 'browser' },
+      }),
+      (error) => {
+        assert.ok(error instanceof ContractError);
+        assert.equal(error.location, at);
+        assert.match(error.message, /multipart fields require/);
+        assert.ok(error.message.includes('id'));
+        return true;
+      },
+    );
+  }
+});
+
 void test('multipart builders preserve browser/native files and field cardinality through application serialization', async (t) => {
   const cache = join(repo, 'node_modules/.cache');
   await mkdir(cache, { recursive: true });
