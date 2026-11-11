@@ -953,6 +953,14 @@ alternative that cannot combine with the other branches, such as
 `integer` with a `string` conjunct, fails compilation rather than disappearing.
 Constraints beside a referenced union are unsupported.
 
+An intersection supports at most one discriminated `oneOf` factor, including
+through aliases and nested compositions. Combining several receives an explicit
+unsupported diagnostic. A factor whose branches require distinct literal tags
+can instead use `anyOf` without its discriminator: the tags make its branches
+disjoint, so `anyOf` and `oneOf` accept the same values. Keep those tags required
+and present after request/response projection in every direction that uses the
+schema.
+
 This stage does not support intersections involving typed dynamic maps, multiple
 array schemas, or binary schemas. A nullable type beside or within a
 multi-branch composition is a union with null, and every branch would also need

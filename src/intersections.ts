@@ -600,6 +600,13 @@ export function createIntersectionNormalizer(
     const unions = targets.flatMap(({ schema }, position) =>
       schema.kind === 'union' ? [{ union: schema, position }] : [],
     );
+    // Tagged dispatch needs object branches. Multiplying tagged factors would
+    // instead nest one tagged union inside another's mapped branches.
+    if (unions.filter(({ union }) => union.discriminator).length > 1)
+      fail(
+        location,
+        'allOf cannot intersect multiple discriminated oneOf schemas in this version; use anyOf for a factor whose required, distinct literal tags make its branches disjoint',
+      );
     const factor =
       unions.find(
         ({ union }) => !union.discriminator && !union.sourceLiterals,

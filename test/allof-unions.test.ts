@@ -358,6 +358,103 @@ void test('allOf union distribution diagnoses contradictions, untagged object on
   }
 });
 
+void test('allOf diagnoses multiple discriminated factors and supports a disjoint anyOf rewrite', async (t) => {
+  for (const openapi of ['3.0.4', '3.1.2']) {
+    const mode: Schema = {
+      oneOf: [ref('X'), ref('Y')],
+      discriminator: {
+        propertyName: 'mode',
+        mapping: { x: ref('X').$ref, y: ref('Y').$ref },
+      },
+    };
+    const schemas = {
+      X: fixed({ mode: { type: 'string', enum: ['x'] } }, ['mode']),
+      Y: fixed({ mode: { type: 'string', enum: ['y'] } }, ['mode']),
+      Mode: mode,
+      Alias: ref('Mode'),
+    };
+    for (const branches of [
+      [ref('Tagged'), ref('Mode')],
+      [ref('Mode'), ref('Tagged')],
+      [ref('Tagged'), ref('Alias')],
+      [ref('Tagged'), { allOf: [ref('Mode')] }],
+      [ref('Tagged'), mode],
+    ])
+      await assert.rejects(
+        compile(contract(openapi, { ...schemas, Value: { allOf: branches } }), {
+          clients: [],
+          // Unselected declarations still receive the composition diagnostic.
+          standalone: { a: { schema: ref('A').$ref, usage: 'request' } },
+        }),
+        (error) => {
+          assert.ok(error instanceof ContractError);
+          assert.equal(error.location, 'components.schemas.Value.allOf');
+          assert.match(
+            error.message,
+            /cannot intersect multiple discriminated oneOf/,
+          );
+          assert.match(error.message, /anyOf.*required, distinct literal tags/);
+          return true;
+        },
+      );
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(
+        contract(openapi, {
+          ...schemas,
+          Value: {
+            allOf: [{ anyOf: [ref('A'), ref('B')] }, ref('Mode')],
+          },
+          // Tags at different child values do not form an intersection.
+          Separate: fixed({ kind: ref('Tagged'), mode: ref('Mode') }),
+          Repeated: { allOf: [ref('Tagged'), ref('Tagged')] },
+        }),
+        {
+          clients: [],
+          standalone: {
+            request: { schema: ref('Value').$ref, usage: 'request' },
+            response: { schema: ref('Value').$ref, usage: 'response' },
+            separate: { schema: ref('Separate').$ref, usage: 'request' },
+            repeated: { schema: ref('Repeated').$ref, usage: 'request' },
+          },
+        },
+      ),
+    );
+    const load = async (name: string) =>
+      (await importGenerated<StandaloneModule>(root, `standalone.${name}.ts`))
+        .schema;
+    const request = await load('request');
+    const response = await load('response');
+    for (const value of [
+      { kind: 'a', a: 1 },
+      { kind: 'b', b: 's' },
+    ])
+      for (const mode of ['x', 'y']) {
+        const combined = { ...value, mode };
+        assert.deepEqual(request.parse(combined), combined);
+        assert.deepEqual(
+          response.parse({ ...combined, extra: true }),
+          combined,
+        );
+      }
+    for (const value of [
+      { kind: 'a', a: 1 },
+      { kind: 'c', a: 1, mode: 'x' },
+      { kind: 'a', a: 1, mode: 'z' },
+      { kind: 'a', mode: 'x' },
+    ]) {
+      assert.equal(request.safeParse(value).success, false);
+      assert.equal(response.safeParse(value).success, false);
+    }
+    const separate = { kind: { kind: 'a', a: 1 }, mode: { mode: 'x' } };
+    assert.deepEqual((await load('separate')).parse(separate), separate);
+    assert.deepEqual((await load('repeated')).parse({ kind: 'b', b: 's' }), {
+      kind: 'b',
+      b: 's',
+    });
+  }
+});
+
 void test('allOf distribution keeps unsupported annotations on union alternatives visible', async () => {
   for (const openapi of ['3.0.4', '3.1.2'])
     for (const annotation of ['readOnly', 'writeOnly'] as const)
