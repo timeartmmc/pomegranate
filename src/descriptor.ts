@@ -43,7 +43,11 @@ import {
   normalizeOperationPolicy,
   normalizeVocabulary,
 } from './policy.js';
-import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
+import {
+  normalizeSecurity,
+  normalizeSecuritySchemes,
+  sendsAuthorization,
+} from './security.js';
 import { mediaDecoder, mediaToken } from './runtime.js';
 import { projectSchemas } from './directional.js';
 import { normalizeOpenApi30, openApi30Diagnostic } from './openapi30.js';
@@ -125,19 +129,31 @@ function normalizeFor(
   return schema;
 }
 
+// OAS 3.1.1 §4.8.12: header parameters with these names are ignored. Media
+// declarations and security already describe them, and the transport sends them.
+const ignoredRequestHeaders = new Set([
+  'accept',
+  'content-type',
+  'authorization',
+]);
+
+function ignoredHeader(parameter: Parameter): boolean {
+  return (
+    parameter.in === 'header' &&
+    ignoredRequestHeaders.has(parameter.name.toLowerCase())
+  );
+}
+
 // Endpoint declarations must survive browser Fetch unchanged. These fields
 // belong to the transport, including value-dependent method overrides and the
 // User-Agent field that Chromium still filters. See Fetch §2.2.2.
 const transportRequestHeaders = new Set([
-  'accept',
   'accept-charset',
   'accept-encoding',
   'access-control-request-headers',
   'access-control-request-method',
-  'authorization',
   'connection',
   'content-length',
-  'content-type',
   'cookie',
   'cookie2',
   'date',
@@ -602,7 +618,9 @@ function uniqueParameters(
 ): void {
   const seen = new Set<string>();
   for (const parameter of parameters) {
-    const key = `${parameter.in}:${parameter.in === 'header' ? parameter.name.toLowerCase() : parameter.name}`;
+    // Headers that are sent collide on the wire whatever their case. Nothing
+    // is sent for an ignored header, so it keeps OpenAPI's case-sensitive identity.
+    const key = `${parameter.in}:${parameter.in === 'header' && !ignoredHeader(parameter) ? parameter.name.toLowerCase() : parameter.name}`;
     if (seen.has(key)) fail(location, `duplicate parameter ${key}`);
     seen.add(key);
   }
@@ -637,6 +655,7 @@ function operationParameters(
   context: SchemaContext,
   examples: ReadonlySet<string>,
   components: ReadonlyMap<string, Parameter>,
+  security: Operation['security'],
   path: string,
   location: string,
 ): readonly Parameter[] {
@@ -656,8 +675,23 @@ function operationParameters(
     inherited.map((parameter) => [key(parameter), parameter]),
   );
   for (const parameter of own) merged.set(key(parameter), parameter);
-  const parameters = [...merged.values()];
-  uniqueParameters(parameters, `${location}.parameters`);
+  const declared = [...merged.values()];
+  uniqueParameters(declared, `${location}.parameters`);
+  // Ignored headers were validated like every other declaration. Dropping an
+  // Authorization parameter is safe only when security already sends that
+  // header; otherwise it may be the contract's only description of a credential.
+  const ignored = declared.filter(ignoredHeader);
+  if (
+    ignored.some(({ name }) => name.toLowerCase() === 'authorization') &&
+    !sendsAuthorization(security)
+  )
+    fail(
+      `${location}.parameters`,
+      "an Authorization header parameter is ignored, as OpenAPI requires, but this operation's security sends no Authorization credentials; declare them as a security scheme",
+    );
+  const parameters = declared.filter(
+    (parameter) => !ignored.includes(parameter),
+  );
   const placeholders = [...path.matchAll(/\{([^}]+)\}/g)].map(
     (match) => match[1]!,
   );
@@ -944,6 +978,7 @@ function normalizeOperation(
     schemas,
     examples,
     context.parameterComponents,
+    security,
     path,
     location,
   );

@@ -346,7 +346,7 @@ const invalid: [
     'inherited reserved header',
     (document) => {
       document.paths['/items/{itemId}'].parameters.push({
-        name: 'Authorization',
+        name: 'Host',
         in: 'header',
         schema: { type: 'string' },
       });

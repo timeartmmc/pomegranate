@@ -424,7 +424,7 @@ const invalid: [string, (document: Fixture) => void, string, RegExp][] = [
     'unused reserved header',
     (d) => {
       Object.assign(d.components.parameters.Unused!, {
-        name: 'Authorization',
+        name: 'Host',
         in: 'header',
         schema: { type: 'string' },
       });

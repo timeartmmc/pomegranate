@@ -119,6 +119,23 @@ export function normalizeSecuritySchemes(
   });
 }
 
+// Whether any requirement places credentials in the Authorization header:
+// HTTP basic and bearer, OAuth2 bearer tokens, and a header API key of that name.
+export function sendsAuthorization(security: Security): boolean {
+  const requirements =
+    security.transport === 'none'
+      ? []
+      : security.transport === 'alternatives'
+        ? security.alternatives.flat()
+        : [security];
+  return requirements.some(
+    (requirement) =>
+      requirement.transport !== 'apiKey' ||
+      (requirement.in === 'header' &&
+        requirement.name.toLowerCase() === 'authorization'),
+  );
+}
+
 export function normalizeSecurity(
   input: unknown,
   schemes: ReadonlyMap<string, SecurityScheme>,

@@ -1126,6 +1126,16 @@ contracts reject transport-owned request headers such as `Host`, `Origin`, and
 `Proxy-*`/`Sec-*` names. Response declarations reject `Set-Cookie` and
 `Set-Cookie2`, which browser Fetch hides.
 
+Header parameters named `Accept`, `Content-Type`, or `Authorization`, in any
+letter case, are ignored, as OpenAPI requires. Their declarations are still
+validated, but they are absent from builder inputs, generated header checks,
+and `transportHeaders`; the transport sends those headers. An ignored
+`Authorization` parameter must not be the only description of a credential.
+The operation's effective security has to send the Authorization header:
+HTTP basic or bearer, OAuth2, or a header API key named `Authorization`, in at
+least one alternative. Otherwise POM reports the parameter; declare the
+credential as a security scheme.
+
 Form query arrays use repeated keys (`tag=one&tag=two`) when `explode` is omitted
 or `true`. With `explode: false` and `style: "form"` (or an omitted `style`), an
 array uses comma-separated values under one key. Items are percent-encoded

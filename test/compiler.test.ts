@@ -12,15 +12,12 @@ const compile = (document: unknown) =>
   compileDocument(document, { clients: ['consumer', 'staff'] });
 
 for (const name of [
-  'accept',
   'accept-charset',
   'accept-encoding',
   'access-control-request-headers',
   'access-control-request-method',
-  'authorization',
   'connection',
   'content-length',
-  'content-type',
   'cookie',
   'cookie2',
   'date',
@@ -560,7 +557,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     'reserved request header',
     (d) => {
       preparation(d).parameters.push({
-        name: 'Authorization',
+        name: 'Cookie',
         in: 'header',
         schema: { type: 'string' },
       });
