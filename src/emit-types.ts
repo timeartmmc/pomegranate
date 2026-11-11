@@ -17,7 +17,6 @@ type Variant = {
   name: string;
   direction: Direction;
   target: Client['target'];
-  owners: Set<string>;
 };
 type TypeNode = Omit<Variant, 'name'> & {
   schema: Schema;
@@ -86,9 +85,8 @@ function schemaShapes(
   return shape;
 }
 
-// Public component types and private shared inline types use the same ownership
-// grouping. Inline names never enter the public schema inventories or normalized
-// source tables; they only give shared type graphs stable emission identities.
+// Public components and shared inline types have canonical emission identities.
+// Their actual emitted dependencies determine consumer closures and modules.
 export function renderTypes(
   descriptor: Descriptor,
   clients: readonly Client[],
@@ -161,38 +159,25 @@ export function renderTypes(
   function select(
     names: readonly string[],
     direction: Direction,
-    owner: string,
     target?: Client['target'],
   ): void {
     for (const name of names) {
       const identity = key(name, direction, target);
       let variant = variants.get(identity);
       if (!variant) {
-        variant = { name, direction, target, owners: new Set() };
+        variant = { name, direction, target };
         variants.set(identity, variant);
         const entries = byName.get(name) ?? [];
         entries.push(variant);
         byName.set(name, entries);
       }
-      variant.owners.add(owner);
     }
   }
   for (const client of clients) {
-    select(
-      client.requestSchemas,
-      'request',
-      `client:${client.name}`,
-      client.target,
-    );
-    select(
-      client.responseSchemas,
-      'response',
-      `client:${client.name}`,
-      client.target,
-    );
+    select(client.requestSchemas, 'request', client.target);
+    select(client.responseSchemas, 'response', client.target);
   }
-  for (const root of standalone)
-    select(root.schemaOrder, root.direction, `standalone:${root.name}`);
+  for (const root of standalone) select(root.schemaOrder, root.direction);
   // Sharing follows the selected graphs. An unused composition may share
   // normalized nodes with these roots but must not alter their representation.
   const operations = new Set(clients.flatMap((client) => client.operations));
@@ -300,7 +285,6 @@ export function renderTypes(
           target: variant.target,
           schema,
           recursive: cyclic,
-          owners: new Set(),
           symbol: typeSymbol(name, variant.direction),
           file: undefined,
           location: `components.schemas.${name}`,
@@ -308,7 +292,6 @@ export function renderTypes(
         canonical.push(entry);
         shapes.set(signature, entry);
       }
-      for (const owner of variant.owners) entry.owners.add(owner);
       nodes.set(key(name, variant.direction, variant.target), entry);
     }
   }
@@ -321,7 +304,6 @@ export function renderTypes(
     // Constraint siblings preserve a component's public TypeScript identity.
     // Flatten aliases to the productive declaration before emitting bodies.
     const entry = node(terminal, variant.direction, variant.target);
-    for (const owner of variant.owners) entry.owners.add(owner);
     nodes.set(key(variant.name, variant.direction, variant.target), entry);
   }
   // A selected component can itself be a shared inline node. Reuse its type
@@ -344,19 +326,18 @@ export function renderTypes(
     namedTypes.set(schema, entries);
   }
   const privateTypes = new Map<number, TypeNode>();
-  const visitedOwners = new Map<string, WeakSet<Schema>>();
-  function assignOwners(
+  const visitedInline = new Map<string, WeakSet<Schema>>();
+  function selectInline(
     root: Schema,
     direction: Direction,
     target: Client['target'],
-    owner: string,
     location: string,
   ): void {
-    const context = JSON.stringify([direction, target, owner]);
-    let visited = visitedOwners.get(context);
+    const context = JSON.stringify([direction, target]);
+    let visited = visitedInline.get(context);
     if (!visited) {
       visited = new WeakSet();
-      visitedOwners.set(context, visited);
+      visitedInline.set(context, visited);
     }
     const pending = [root];
     while (pending.length > 0) {
@@ -366,17 +347,16 @@ export function renderTypes(
       if (shared[direction].has(schema)) {
         const cyclic = recursiveNodes[direction].has(schema);
         const signature = shape(schema, direction, target, cyclic);
-        let entry =
+        const known =
           namedTypes.get(schema)?.get(signature) ?? privateTypes.get(signature);
-        if (!entry) {
+        if (!known) {
           // '$' cannot occur in a source component name, so these symbols cannot
           // collide with the independent public component symbols.
-          entry = {
+          const entry: TypeNode = {
             direction,
             target,
             schema,
             recursive: cyclic,
-            owners: new Set(),
             symbol: `type_$inline${privateTypes.size}`,
             file: undefined,
             location,
@@ -384,37 +364,32 @@ export function renderTypes(
           canonical.push(entry);
           privateTypes.set(signature, entry);
         }
-        entry.owners.add(owner);
       }
       for (const child of schemaChildren(schema)) pending.push(child);
     }
   }
   for (const variant of variants.values())
-    for (const owner of variant.owners)
-      assignOwners(
-        descriptor.schemas[variant.direction].get(variant.name)!,
-        variant.direction,
-        variant.target,
-        owner,
-        `components.schemas.${variant.name}`,
-      );
+    selectInline(
+      descriptor.schemas[variant.direction].get(variant.name)!,
+      variant.direction,
+      variant.target,
+      `components.schemas.${variant.name}`,
+    );
   for (const client of clients)
     for (const direction of ['request', 'response'] as const)
       for (const operation of client.operations)
         for (const root of operationSchemas(operation, direction))
-          assignOwners(
+          selectInline(
             root,
             direction,
             client.target,
-            `client:${client.name}`,
             `paths.${operation.path}.${operation.method.toLowerCase()}`,
           );
   for (const root of standalone)
-    assignOwners(
+    selectInline(
       root.schema,
       root.direction,
       undefined,
-      `standalone:${root.name}`,
       `standalone.${root.name}`,
     );
   function privateType(
@@ -433,13 +408,18 @@ export function renderTypes(
       namedTypes.get(schema)?.get(signature) ?? privateTypes.get(signature)
     );
   }
-  // A canonical declaration can serve several directions while retaining the
-  // inline aliases chosen for its first direction. Propagate its owners over
-  // those actual type links before grouping files; otherwise a shared module
-  // can import a narrower module containing another client's private types.
-  const dependencies = new Map<TypeNode, ReadonlySet<TypeNode>>();
-  for (const entry of canonical) {
+  // Use the type visitor for both declarations and facade roots. A declaration
+  // renders its own body; a root may instead reference a shared inline alias.
+  function references(
+    root: Schema,
+    direction: Direction,
+    target: Client['target'],
+    recursive = false,
+    declaration = false,
+  ): ReadonlySet<TypeNode> {
     const links = new Set<TypeNode>();
+    const alias = !declaration && privateType(root, direction, target);
+    if (alias) return new Set([alias]);
     const visited = new Set<Schema>();
     const visit = (schema: Schema): void => {
       if (visited.has(schema)) return;
@@ -448,52 +428,78 @@ export function renderTypes(
       // intersections whose emitted type can omit their retained source graph.
       schemaType(
         schema,
-        entry.direction,
-        entry.target,
+        direction,
+        target,
         (name, direction) => {
-          links.add(node(name, direction, entry.target));
+          links.add(node(name, direction, target));
           return '';
         },
-        entry.recursive,
+        recursive,
         (child) => {
-          const alias = privateType(child, entry.direction, entry.target);
+          const alias = privateType(child, direction, target);
           if (alias) links.add(alias);
           else visit(child);
           return '';
         },
       );
     };
-    visit(entry.schema);
-    dependencies.set(entry, links);
+    visit(root);
+    return links;
   }
-  const pendingOwners = [...canonical];
-  const queuedOwners = new Set(canonical);
-  while (pendingOwners.length > 0) {
-    const entry = pendingOwners.pop()!;
-    queuedOwners.delete(entry);
-    for (const dependency of dependencies.get(entry)!) {
-      let changed = false;
-      for (const owner of entry.owners)
-        if (!dependency.owners.has(owner)) {
-          dependency.owners.add(owner);
-          changed = true;
-        }
-      if (changed && !queuedOwners.has(dependency)) {
-        pendingOwners.push(dependency);
-        queuedOwners.add(dependency);
-      }
+  const dependencies = new Map(
+    canonical.map((entry) => [
+      entry,
+      references(
+        entry.schema,
+        entry.direction,
+        entry.target,
+        entry.recursive,
+        true,
+      ),
+    ]),
+  );
+  const consumers = new Map(
+    canonical.map((entry) => [entry, new Set<string>()]),
+  );
+  function selectClosure(id: string, roots: Iterable<TypeNode>): void {
+    const needed = new Set(roots);
+    for (const entry of needed) {
+      consumers.get(entry)!.add(id);
+      for (const dependency of dependencies.get(entry)!) needed.add(dependency);
     }
   }
+  for (const client of clients) {
+    const roots = new Set<TypeNode>();
+    for (const direction of ['request', 'response'] as const) {
+      const names =
+        direction === 'request'
+          ? client.requestSchemas
+          : client.responseSchemas;
+      for (const name of names) roots.add(node(name, direction, client.target));
+      for (const operation of client.operations)
+        for (const schema of operationSchemas(operation, direction))
+          for (const entry of references(schema, direction, client.target))
+            roots.add(entry);
+    }
+    selectClosure(`client:${client.name}`, roots);
+  }
+  for (const root of standalone)
+    selectClosure(`standalone:${root.name}`, [
+      ...root.schemaOrder.map((name) => node(name, root.direction, undefined)),
+      ...references(root.schema, root.direction, undefined),
+    ]);
   const groups = new Map<string, TypeNode[]>();
   for (const entry of canonical) {
-    const owners = JSON.stringify([...entry.owners].sort());
-    // Dependency owner sets only grow. Grouping by ownership preserves each
-    // surface's type closure without introducing imports between client APIs.
-    // Digests avoid case-folding collisions in file inventories.
-    entry.file = `schema-types.${createHash('sha256').update(owners).digest('hex')}.ts`;
-    const members = groups.get(owners) ?? [];
+    const selected = consumers.get(entry)!;
+    // Canonicalization can leave an alternate direction's inline alias unused.
+    if (selected.size === 0) continue;
+    const users = JSON.stringify([...selected].sort());
+    // Equal consumer closures can share a file without pulling private names
+    // across clients. Membership is derived once from actual emitted links.
+    entry.file = `schema-types.${createHash('sha256').update(users).digest('hex')}.ts`;
+    const members = groups.get(users) ?? [];
     members.push(entry);
-    groups.set(owners, members);
+    groups.set(users, members);
   }
   const reference = (entry: TypeNode) =>
     `import('./${entry.file!}').${entry.symbol}`;

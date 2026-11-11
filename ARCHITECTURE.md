@@ -75,6 +75,11 @@ Client modules must not import another client's operations or schemas. Shared
 runtime code is independent of surface membership. Surfaces govern generated
 imports; servers remain responsible for authorization.
 
+Canonical type discovery is independent of consumer membership. Derive each
+client and standalone module's type closure once from actual emitted type links,
+then group declarations with the same consumers. This keeps shared type bodies
+without importing unrelated declarations through a shared module.
+
 Keep contract types independent of validator inference. Generated named parsers
 declare independent output types, checked against return bodies or typed
 constructor tables. Fixed-object construction and literal membership use narrow

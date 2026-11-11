@@ -111,14 +111,20 @@ void test('component type identities compose at depth 128 across standalone, cli
   ]);
 });
 
-void test('shared type modules retain each output closure and group by membership', async () => {
+void test('shared type bodies retain each output closure without duplicating component identities', async () => {
   const document = typeIdentityFixture();
   const files = await compile(document, typeIdentitySelection);
-  assert.equal(
-    Object.keys(files).filter((name) => name.startsWith('schema-types.'))
-      .length,
-    2,
-  );
+  const sources = Object.values(files).join('\n');
+  for (const name of Object.keys(document.components.schemas)) {
+    const declarations = sources.match(
+      new RegExp(`export type type_${name}_(?:request|response)\\s*=`, 'g'),
+    );
+    assert.equal(
+      declarations?.length ?? 0,
+      name === 'Private' ? 0 : 1,
+      `${name} must retain one canonical body across all selected entry points`,
+    );
+  }
   function reachable(name: string, seen = new Set<string>()): string {
     if (seen.has(name)) return '';
     seen.add(name);
