@@ -120,6 +120,8 @@ export function mediaFixture(modern = true) {
         },
         TextAlias: ref('Text'),
         ConstrainedAlias: ref('Constrained'),
+        Empty: {},
+        EmptyAlias: ref('Empty'),
       } satisfies Record<string, Schema>,
     },
     paths: {
@@ -151,7 +153,7 @@ export function mediaFixture(modern = true) {
       '/unicode-text': {
         post: operation(
           'unicodeText',
-          entries({ 'text/plain': { type: 'string' } }),
+          entries({ 'text/plain': ref('EmptyAlias') }),
         ),
       },
       '/read': {
@@ -420,6 +422,9 @@ export const mediaConsumer = `
 import { operations, createClient } from './client.consumer.ts';
 import type { Executor, PreparedRequest } from './client.consumer.ts';
 import { createQueries } from './client.consumer.queries.ts';
+const freeText:string=operations.unicodeText.build({body:'free text'}).body;
+const freeResponse=operations.unicodeText.parseResponse({status:200,headers:{'content-type':'text/plain'},body:freeText});
+if(freeResponse.kind==='success') { const value:string=freeResponse.data; void value; }
 operations.text.build({body:'hello'});
 operations.optional.build();
 operations.optional.build({body:''});

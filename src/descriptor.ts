@@ -49,7 +49,8 @@ import {
   sendsAuthorization,
 } from './security.js';
 import { mediaDecoder, mediaToken } from './runtime.js';
-import { projectSchemas } from './directional.js';
+import { projectSchemas, schemaAccess } from './directional.js';
+import { schemaNode } from './schema-node.js';
 import { normalizeOpenApi30, openApi30Diagnostic } from './openapi30.js';
 import { isRequired } from './required-index.js';
 import { responseKey, successResponses } from './response-status.js';
@@ -248,7 +249,7 @@ function contentDefinitions(
       // (OAS 3.1.1 §4.8.14): any JSON value, or any string where the body is
       // always text. Multipart parts need their declared fields.
       const unconstrained = kind === 'text' ? { type: 'string' } : {};
-      const schema = normalizeFor(
+      let schema = normalizeFor(
         Object.hasOwn(media, 'schema') || kind === 'multipart'
           ? media.schema
           : unconstrained,
@@ -257,12 +258,23 @@ function contentDefinitions(
         direction,
         kind === 'multipart' ? 'multipart' : direction,
       );
-      if (
-        kind === 'text' &&
-        resolveSchema(schema, context.projection.schemas[direction]).kind !==
-          'string'
-      )
-        fail(schemaLocation, 'text/plain requires a nonnullable string schema');
+      if (kind === 'text') {
+        const schemas = context.projection.schemas[direction];
+        const resolved = resolveSchema(schema, schemas);
+        // Full source/usage validation precedes this decoder-specific view.
+        // Empty schemas permit strings; keep JSON components unchanged for
+        // other media while exposing the actual text decoder's string type.
+        if (resolved.kind === 'json')
+          schema = schemaNode({
+            kind: 'string',
+            ...schemaAccess(schema, schemas),
+          });
+        else if (resolved.kind !== 'string')
+          fail(
+            schemaLocation,
+            'text/plain requires a nonnullable string schema',
+          );
+      }
       return {
         kind,
         contentType,

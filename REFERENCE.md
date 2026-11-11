@@ -434,7 +434,10 @@ declaration: an observed Content-Type that itself contains a wildcard, such as
 
 A media entry may omit `schema`. JSON media then accepts any JSON value,
 exactly like the [empty schema](#supported-vocabulary) `{}`, and `text/plain`
-accepts any string, in requests and responses. A range without a schema
+accepts any string, in requests and responses. An explicit empty schema, or an
+alias to one, also accepts any string under `text/plain` and generates a string
+type for that media use. Other JSON uses of the same component stay unconstrained.
+A range without a schema
 accepts whatever its decoder produces. Multipart bodies require a schema.
 
 Successful and declared-error results expose `contentType`, the validated

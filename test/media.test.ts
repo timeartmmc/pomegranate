@@ -27,6 +27,74 @@ import type { Executor, Success } from '../src/execution-runtime.ts';
 import type { QueryFactory } from '../src/query-runtime.ts';
 import type { OperationCall } from '../src/call-runtime.ts';
 
+void test('plain text empty schemas and aliases retain string decoder types', async (t) => {
+  const document = (media: Record<string, unknown>) => ({
+    openapi: '3.1.2',
+    info: { title: 'Synthetic unconstrained text', version: '1' },
+    components: {
+      schemas: { Empty: {}, Alias: { $ref: '#/components/schemas/Empty' } },
+    },
+    paths: {
+      '/text': {
+        post: {
+          operationId: 'write',
+          requestBody: { required: true, content: { 'text/plain': media } },
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'text/plain': media,
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Alias' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const options = { clients: ['consumer'], surfaces: { consumer: ['write'] } };
+  const expected = await compile(document({}), options);
+  for (const media of [
+    { schema: {} },
+    { schema: { description: 'Unconstrained' } },
+    { schema: { $ref: '#/components/schemas/Alias' } },
+    { schema: { allOf: [{}] } },
+  ]) {
+    const input = document(media),
+      before = structuredClone(input);
+    const files = await compile(input, options);
+    assert.deepEqual(input, before);
+    assert.deepEqual(files, expected);
+    const root = await generatedTestWorkspace(t, files);
+    const { operations, RequestValidationError } =
+      await importGenerated<MediaClient>(root, 'client.consumer.ts');
+    const operation = operations.write;
+    assert.ok(operation);
+    for (const value of ['', 'hello', '{"count":1}']) {
+      const built = operation.build({ body: value });
+      assert.ok(built.bodyKind === 'text');
+      assert.equal(built.body, value);
+      const result = operation.parseResponse({
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+        body: value,
+      });
+      assert.equal(result.kind, 'success');
+      if (result.kind === 'success') assert.equal(result.data, value);
+    }
+    assert.throws(() => operation.build({ body: 1 }), RequestValidationError);
+    const json = operation.parseResponse({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: '{"count":1}',
+    });
+    assert.equal(json.kind, 'success');
+    if (json.kind === 'success') assert.deepEqual(json.data, { count: 1 });
+  }
+});
+
 void test('request selection and complete response media maps are deterministic across dialects and ordering', async () => {
   const files = await compile(mediaFixture(), mediaSelection);
   for (const modern of [true, false]) {
@@ -437,6 +505,11 @@ void test('raw and scoped execution preserve response representations in envelop
 void test('nonpreferred representations and unsupported media still validate before generation', async () => {
   for (const [media, schema] of [
     ['text/plain', { type: 'integer' }],
+    ['text/plain', { type: 'object' }],
+    ['text/plain', { type: ['string', 'null'] }],
+    ['text/plain', { $ref: '#/components/schemas/EmptyAlias', maxLength: 2 }],
+    ['text/plain', { description: 1 }],
+    ['text/plain', { readOnly: true }],
     ['application/vnd.zeta+json', { type: 'string', minLength: -1 }],
     [
       'multipart/form-data',
@@ -466,11 +539,13 @@ void test('nonpreferred representations and unsupported media still validate bef
     });
     assert.deepEqual(input, before);
   }
-  const response = mediaFixture();
-  Object.assign(response.paths['/preferred'].post.responses[200].content, {
-    'text/plain': { schema: { type: 'integer' } },
-  });
-  await assert.rejects(compile(response, mediaSelection), ContractError);
+  for (const schema of [{ type: 'integer' }, { writeOnly: true }]) {
+    const response = mediaFixture();
+    Object.assign(response.paths['/preferred'].post.responses[200].content, {
+      'text/plain': { schema },
+    });
+    await assert.rejects(compile(response, mediaSelection), ContractError);
+  }
   const duplicate = mediaFixture();
   Object.assign(duplicate.paths['/preferred'].post.requestBody.content, {
     'Application/JSON': { schema: { type: 'string' } },
