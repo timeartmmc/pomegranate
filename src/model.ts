@@ -224,9 +224,14 @@ export type ContractResponse = {
     | { readonly kind: 'none' }
     | {
         readonly kind: 'content';
+        // A media range is 'observed': the type that arrives selects JSON or
+        // text decoding for its schema.
         readonly content: ReadonlyMap<
           string,
-          { readonly kind: 'json' | 'text'; readonly schema: Schema }
+          {
+            readonly kind: 'json' | 'text' | 'observed';
+            readonly schema: Schema;
+          }
         >;
       };
   readonly headers: readonly ResponseHeader[];

@@ -110,10 +110,14 @@ export function validatePagination(
       );
     // Any declared representation can arrive. Pagination accessors must be valid
     // for all of them before a query can cache or traverse a successful page.
+    // Under a media range, only JSON can satisfy the object schema checked below.
     for (const [contentType, representation] of response.body.content) {
       const path = `${responsePath}.content.${contentType}`;
-      if (representation.kind !== 'json')
-        fail(path, 'every infinite-query success must have a JSON object body');
+      if (representation.kind === 'text')
+        reject(
+          path,
+          'every infinite-query success must have a JSON object body',
+        );
       const body = resolveSchema(representation.schema, responseSchemas);
       if (body.kind !== 'object')
         reject(

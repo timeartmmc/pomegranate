@@ -397,7 +397,7 @@ function prepareResponses(
             )
               jsonParse = parse;
             contentTypes.push(
-              `readonly ${propertyKey(media)}: ResponseMedia<typeof ${parse.source}${representation.kind === 'text' ? ", 'text'" : ''}>;`,
+              `readonly ${propertyKey(media)}: ResponseMedia<typeof ${parse.source}${representation.kind === 'json' ? '' : `, '${representation.kind}'`}>;`,
             );
             return [
               media,

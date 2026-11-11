@@ -388,7 +388,8 @@ and [3.1 migration guide](https://learn.openapis.org/upgrading/v3.0-to-v3.1.html
 OpenAPI 2.0 and 3.2 are unsupported.
 
 Request and response content supports `application/json`, concrete media types
-with a `+json` suffix, and `text/plain`; requests also support multipart as below.
+with a `+json` suffix, and `text/plain`; requests also support multipart as below,
+and responses also support media ranges.
 One representation is selected for each request. Request preference
 is `application/json`, then other `+json` types sorted by their lowercase names,
 then `text/plain`, then multipart. Request selection is independent of
@@ -397,20 +398,41 @@ unsupported media types and schemas still fail compilation.
 The multipart requiredness restriction applies only when multipart is selected;
 an optional JSON or text request may also declare a valid multipart alternative.
 
-Content-map keys must be concrete media types without parameters or wildcards.
-Case-insensitive duplicates fail. JSON suffixes select JSON decoding, but do not
-make different media types interchangeable. Responses retain every supported
-declaration for each status, range, and `default`. The observed Content-Type selects its declared
-schema and one JSON or text decoder. Valid parameters such as `charset=utf-8`
-are accepted when matching that media type. Missing, malformed, duplicate or
+Content-map keys are media types without parameters. Request keys must be
+concrete; wildcard request media is rejected. Response keys may also be the
+ranges `type/*` and `*/*`. Other wildcard spellings, such as `*/json` or
+`application/*+json`, are rejected. Case-insensitive duplicates fail. JSON
+suffixes select JSON decoding, but do not make different media types
+interchangeable. Responses retain every supported declaration for each status,
+range, and `default`. The observed Content-Type selects its declared schema
+and one JSON or text decoder. Valid parameters such as `charset=utf-8` are
+accepted when matching that media type. Missing, malformed, duplicate or
 undeclared Content-Type produces a protocol failure without decoding or trying
 another schema; there is no body sniffing or fallback. Applications own Accept
 negotiation. Unsupported media declarations still fail compilation.
 
+Only the most specific response key applies to an observed type: the concrete
+type, then its `type/*` range, then `*/*`. Under a range, the observed
+Content-Type selects the decoder: JSON for `application/json` and `+json`
+types, text for `text/plain`. The range's schema validates the decoded value,
+so an object schema under `*/*` accepts a JSON object and rejects plain text.
+Any other observed type, such as `image/png` or `text/html`, is a protocol
+failure, even when a wider range is also declared. A range is only ever a
+declaration: an observed Content-Type that itself contains a wildcard, such as
+`application/*+json`, is invalid evidence and never reaches a range or decoder.
+
+A media entry may omit `schema`. JSON media then accepts any JSON value,
+exactly like the [empty schema](#supported-vocabulary) `{}`, and `text/plain`
+accepts any string, in requests and responses. A range without a schema
+accepts whatever its decoder produces. Multipart bodies require a schema.
+
 Successful and declared-error results expose `contentType`, the validated
 lowercase media type without parameters. It is a literal discriminator tied to
-`data`; checking it narrows the corresponding generated body type. Bodyless
-results have `contentType: undefined` and `data: undefined`. Original observed
+`data`; checking it narrows the corresponding generated body type. A range
+reports the observed type, typed as a pattern such as `` `text/${string}` ``.
+A concrete `contentType` check cannot exclude a range that covers that type,
+so the narrowed `data` keeps both declarations' types when their schemas
+differ. Bodyless results have `contentType: undefined` and `data: undefined`. Original observed
 header values remain available in `headers`. All representation schemas enter
 the selected client's transitive projection.
 

@@ -291,7 +291,7 @@ void test('unused body definitions eagerly retain requiredness, content, schema 
     ],
     [
       { content: { 'application/json': {}, 'multipart/form-data': {} } },
-      '.content.application/json.schema',
+      '.content.multipart/form-data.schema',
       /expected an object/,
     ],
     [

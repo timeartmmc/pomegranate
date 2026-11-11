@@ -44,6 +44,7 @@ import {
   normalizeVocabulary,
 } from './policy.js';
 import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
+import { mediaDecoder, mediaToken } from './runtime.js';
 import { projectSchemas } from './directional.js';
 import { normalizeOpenApi30, openApi30Diagnostic } from './openapi30.js';
 import { isRequired } from './required-index.js';
@@ -173,11 +174,16 @@ function optionalBoolean(
 }
 
 type ContentDefinition = {
-  kind: 'json' | 'text' | 'multipart';
+  kind: 'json' | 'text' | 'multipart' | 'observed';
   contentType: string;
   schema: Schema;
   fields: readonly MultipartField[] | undefined;
 };
+
+// Only a response media range may use the wildcard, as a whole subtype or as
+// both parts. The runtime applies the same concrete token to observed evidence.
+const concreteMedia = new RegExp(`^${mediaToken}/${mediaToken}$`);
+const mediaRange = new RegExp(`^(?:\\*|${mediaToken})/\\*$`);
 
 function contentDefinitions(
   input: unknown,
@@ -194,40 +200,42 @@ function contentDefinitions(
     .map((name): ContentDefinition => {
       const path = `${location}.${name}`;
       const contentType = name.toLowerCase();
-      if (
-        !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(
-          name,
-        ) ||
-        contentType.includes('*')
-      )
+      // A request sends one concrete representation. A response range leaves
+      // the decoder to the type that arrives (OAS 3.1.1 §4.8.17).
+      const range = direction === 'response' && mediaRange.test(name);
+      if (!range && !concreteMedia.test(name))
         fail(
           path,
-          'expected a concrete media type without parameters or wildcards',
+          direction === 'response'
+            ? 'expected a media type, or a type/* or */* range, without parameters'
+            : 'expected a concrete media type without parameters or wildcards',
         );
       if (seen.has(contentType))
         fail(path, 'duplicate case-insensitive media type');
       seen.add(contentType);
-      const subtype = contentType.slice(contentType.indexOf('/') + 1);
-      const kind =
-        contentType === 'application/json' ||
-        (subtype.length > 5 && subtype.endsWith('+json'))
-          ? 'json'
-          : contentType === 'text/plain'
-            ? 'text'
-            : direction === 'request' && contentType === 'multipart/form-data'
-              ? 'multipart'
-              : undefined;
+      const kind = range
+        ? 'observed'
+        : (mediaDecoder(contentType) ??
+          (direction === 'request' && contentType === 'multipart/form-data'
+            ? 'multipart'
+            : undefined));
       if (kind === undefined)
         fail(
           path,
-          'unsupported keyword; supported media types are application/json, concrete +json types, text/plain and multipart requests',
+          'unsupported keyword; supported media types are application/json, concrete +json types, text/plain, multipart requests and response media ranges',
         );
       const media = record(content[name], path);
       keys(media, ['schema', ...exampleKeys], path);
       exampleAnnotations(media, path, examples);
       const schemaLocation = `${path}.schema`;
+      // A Media Type Object without a schema leaves its payload unconstrained
+      // (OAS 3.1.1 §4.8.14): any JSON value, or any string where the body is
+      // always text. Multipart parts need their declared fields.
+      const unconstrained = kind === 'text' ? { type: 'string' } : {};
       const schema = normalizeFor(
-        media.schema,
+        Object.hasOwn(media, 'schema') || kind === 'multipart'
+          ? media.schema
+          : unconstrained,
         schemaLocation,
         context,
         direction,
@@ -687,6 +695,10 @@ function normalizeRequestBody(
       'request',
     ),
   );
+  // Ranges are admitted only in responses. The shared helper's return type
+  // also covers them, so narrow it before building the request body.
+  if (selected.kind === 'observed')
+    fail(`${location}.content`, 'request media ranges are unsupported');
   // Multipart requiredness constrains the generated request, not alternatives
   // that have already been validated but were not selected.
   if (selected.kind === 'multipart' && !required)

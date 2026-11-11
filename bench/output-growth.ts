@@ -39,11 +39,13 @@ export class OutputGrowthError extends Error {
 // Change the policy version when changing these limits; never rebaseline blindly.
 // Version 4 re-records runtime.ts after reviewing recursive traversal, scalar
 // allOf plans, security snapshots, general unions and bounded JSON uniqueness.
+// Version 5 re-records it after reviewing status range and default result
+// types and lookup, response media ranges and server override snapshots.
 const commonBytes = {
   'client.consumer.ts': 424,
   'endpoint-runtime.ts': 4640,
   'policy-types.ts': 1353,
-  'runtime.ts': 93632,
+  'runtime.ts': 99609,
 };
 export const outputGrowthReferenceBytes = {
   small: {
@@ -73,12 +75,12 @@ export const outputGrowthReferenceBytes = {
 };
 export const outputGrowthPolicy = Object.freeze({
   id: 'shared-contract-output-budgets',
-  version: 4,
+  version: 5,
   referenceCompiler: 'da32f73',
   // Later references name their reviewed generated source by content.
   rerecordedReferences: Object.freeze({
     'runtime.ts':
-      'sha256:aafc1a31b3f00429cc8af87db805dc5fd8fbb81f2a7689494903c08b8aed885d',
+      'sha256:5539ac0ba5f8e323c6067b34e2f261fdf49f853ff5bd63ad09ac7fbb72df2577',
   }),
   bytes:
     'complete generated TypeScript UTF-8 source, including runtime helpers and comments',

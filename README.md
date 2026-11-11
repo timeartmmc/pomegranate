@@ -84,7 +84,7 @@ Choose the integration needed by the application:
 ## Supported contracts
 
 POM supports JSON, plain text, and multipart requests; exact, range, and default
-response statuses;
+response statuses; response media ranges;
 API keys, HTTP basic/bearer, OAuth2 scopes, and public or optional access;
 security alternatives and combinations; selected client surfaces; and a
 restricted schema vocabulary that includes unconstrained JSON, `anyOf` and

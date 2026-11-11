@@ -142,9 +142,10 @@ schema. The check compares repeated compilation, exercises generated operations
 and validators, and typechecks a standalone consumer before accepting source sizes.
 
 The policy in `bench/output-growth.ts` pins the complete file inventory and
-reference UTF-8 source sizes from compiler `da32f73`. Policy version 4 re-records
+reference UTF-8 source sizes from compiler `da32f73`. Policy version 5 re-records
 only `runtime.ts`, identified by its source digest, after review of its recursive
-validation, `allOf`, security, union and uniqueness growth. Each file receives the
+validation, `allOf`, security, union, uniqueness, status-fallback, media-range
+and server-override growth. Each file receives the
 larger of 512 extra bytes or `ceil(reference bytes * 5 / 100)` extra bytes, so
 small boilerplate edits fit without changing the reference. The combined
 operation/schema growth may exceed the sum of the separate growth axes by at

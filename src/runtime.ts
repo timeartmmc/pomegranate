@@ -1937,13 +1937,16 @@ export type ResponseHeader<
   P extends Parse<string>,
   Required extends boolean = false,
 > = Readonly<{ required: Required; schema: P }>;
+// A media range such as text/* or */* is 'observed': the type that arrives
+// selects its decoder.
+type MediaKind = 'json' | 'text' | 'observed';
 export type ResponseMedia<
   P extends Parse<unknown>,
-  Kind extends 'json' | 'text' = 'json',
+  Kind extends MediaKind = 'json',
 > = Readonly<{ bodyKind: Kind; schema: P }>;
 type HeaderSpec = ResponseHeader<Parse<string>, boolean>;
 type ResponseContent = Readonly<
-  Record<string, ResponseMedia<Parse<unknown>, 'json' | 'text'>>
+  Record<string, ResponseMedia<Parse<unknown>, MediaKind>>
 >;
 export type ContentResponse<
   Content extends ResponseContent,
@@ -1976,6 +1979,10 @@ export type Responses = Readonly<Record<number, ResponseSpec>> &
   Readonly<Partial<Record<StatusRange | 'default', ResponseSpec>>>;
 
 type Data<R> = R extends { schema: Parse<infer T> } ? T : undefined;
+// A media range reports the observed type that it matched.
+type Observed<M extends string> = M extends `${infer Type}/*`
+  ? `${Type extends '*' ? string : Type}/${string}`
+  : M;
 type CommonResponseData = Readonly<{
   contentType: string | undefined;
   data: unknown;
@@ -1991,7 +1998,7 @@ type ResponseData<S extends ResponseSpec> = CommonResponseData &
         }
       ? {
           [M in keyof C & string]: Readonly<{
-            contentType: M;
+            contentType: Observed<M>;
             data: Data<C[M]>;
           }>;
         }[keyof C & string]
@@ -2271,12 +2278,17 @@ function encodeComponent(value: string): string {
 const tokenCharacters = "!#$%&'*+.^_`|~0-9A-Za-z-";
 const invalidHeaderName = new RegExp(`[^${tokenCharacters}]`);
 const token = `[${tokenCharacters}]+`;
+// A concrete media type has no wildcard, although the token grammar allows the
+// character: only a declared response range may use it. Contract keys and
+// observed evidence share this rule, so a wildcard-shaped Content-Type is
+// never matched against a range or decoded.
+export const mediaToken: string = `[${tokenCharacters.replace('*', '')}]+`;
 const quotedParameter = String.raw`"(?:[^"\\]|\\.)*"`;
 // RFC 9110 sections 5.6.6 and 8.3: match one complete media type, including
 // quoted parameter data. Each segment owns its trailing whitespace so empty
 // parameters do not introduce overlapping whitespace repetitions.
 const contentType = new RegExp(
-  `^(${token}/${token})[\\t ]*(?:;[\\t ]*(?:${token}=(?:${token}|${quotedParameter})[\\t ]*)?)*$`,
+  `^(${mediaToken}/${mediaToken})[\\t ]*(?:;[\\t ]*(?:${token}=(?:${token}|${quotedParameter})[\\t ]*)?)*$`,
   'i',
 );
 
@@ -2400,6 +2412,29 @@ function declaredResponse(
       : undefined;
 }
 
+// The bodies this runtime decodes: JSON, including structured +json suffixes,
+// and plain text. The compiler admits concrete media declarations by this rule.
+export function mediaDecoder(mediaType: string): 'json' | 'text' | undefined {
+  if (mediaType === 'text/plain') return 'text';
+  const subtype = mediaType.slice(mediaType.indexOf('/') + 1);
+  return mediaType === 'application/json' ||
+    (subtype.length > 5 && subtype.endsWith('+json'))
+    ? 'json'
+    : undefined;
+}
+
+// Only the most specific key applies: the observed type, then its type/*
+// range, then */* (OAS 3.1.1 §4.8.17).
+function declaredMedia(content: ResponseContent, mediaType: string) {
+  for (const key of [
+    mediaType,
+    `${mediaType.slice(0, mediaType.indexOf('/'))}/*`,
+    '*/*',
+  ])
+    if (Object.hasOwn(content, key)) return content[key];
+  return undefined;
+}
+
 function responseParser<R extends Responses>(
   operationId: string,
   responses: R,
@@ -2457,13 +2492,23 @@ function responseParser<R extends Responses>(
           ? undefined
           : contentType.exec(field)?.[1]?.toLowerCase();
       const media =
-        essence !== undefined && Object.hasOwn(spec.content, essence)
-          ? spec.content[essence]
-          : undefined;
+        essence === undefined
+          ? undefined
+          : declaredMedia(spec.content, essence);
+      const decoder =
+        media?.bodyKind === 'observed'
+          ? mediaDecoder(essence!)
+          : media?.bodyKind;
       if (media === undefined)
         addIssue(issues, {
           part: 'content-type',
           message: 'expected a single valid declared response media type',
+        });
+      else if (decoder === undefined)
+        addIssue(issues, {
+          part: 'content-type',
+          message:
+            'a declared media range accepts only JSON and text/plain response media types',
         });
       else {
         // A media type selects exactly one decoder and validator. Guessing or
@@ -2471,7 +2516,7 @@ function responseParser<R extends Responses>(
         selectedContentType = essence;
         let decoded: unknown = body;
         let decodedSuccessfully = true;
-        if (media.bodyKind === 'json') {
+        if (decoder === 'json') {
           try {
             decoded = JSON.parse(body) as unknown;
           } catch {
