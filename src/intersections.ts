@@ -10,6 +10,7 @@ import type {
 import {
   constraintNames,
   constraintRecord,
+  hasConstraints,
   propertyOrder,
   schemaNode,
   unionKeyword,
@@ -460,6 +461,7 @@ export function createIntersectionNormalizer(
     const pending: Schema[] = [input];
     const branches: Schema[] = [];
     const seen = new Set<Schema>();
+    const references = new Set<string>();
     let access: Access = { readOnly: false, writeOnly: false };
     // Flatten same-instance composition before checking required-only fragments.
     // Each source branch was normalized already, so deduplication loses no checks.
@@ -480,6 +482,13 @@ export function createIntersectionNormalizer(
             : normalize(current, location);
         const target = resolve(branch, location);
         access = accessFlags(access, target, location);
+        // Repeating the same unrefined component adds no assertion. Keep the
+        // reference (including its alias chain), and accumulate access first.
+        // Different names or use-site constraints can carry distinct checks.
+        if (branch.kind === 'ref' && !hasConstraints(branch.constraints)) {
+          if (references.has(branch.name)) continue;
+          references.add(branch.name);
+        }
         if (target.schema.kind !== 'json') branches.push(branch);
       }
     }

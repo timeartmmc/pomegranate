@@ -20,11 +20,19 @@ export function allOfFixture() {
     components: {
       schemas: {
         Identifier: { type: 'string', pattern: '^W-' },
+        Labels: {
+          type: 'array',
+          items: { type: 'string', minLength: 1 },
+          uniqueItems: true,
+          maxItems: 2,
+        },
+        LabelAlias: { $ref: '#/components/schemas/Labels', minItems: 1 },
         Base: {
           type: 'object',
           required: ['id', 'count', 'details', 'serverOnly', 'clientOnly'],
           properties: {
             id: { $ref: '#/components/schemas/Identifier' },
+            labels: { $ref: '#/components/schemas/LabelAlias' },
             count: { type: 'integer', minimum: 0, multipleOf: 2 },
             details: {
               type: 'object',
@@ -44,6 +52,7 @@ export function allOfFixture() {
               type: 'object',
               properties: {
                 id: { type: 'string', pattern: '^[A-Z0-9-]+$' },
+                labels: { $ref: '#/components/schemas/LabelAlias' },
                 count: { type: 'number', maximum: 24, multipleOf: 3 },
                 details: {
                   type: 'object',
@@ -150,6 +159,7 @@ export function verifyAllOf(
   const operation = present(client.operations.compose);
   const input = {
     id: 'W-10',
+    labels: ['a'],
     count: 6,
     details: { label: 'synthetic', active: true },
     tag: 'widget',
@@ -164,6 +174,9 @@ export function verifyAllOf(
   assert.notEqual(parsed, input);
   for (const changed of [
     { ...input, id: 'OTHER' },
+    { ...input, labels: [] },
+    { ...input, labels: ['a', 'a'] },
+    { ...input, labels: [''] },
     { ...input, id: 'W-lowercase' },
     { ...input, count: 2 },
     { ...input, count: 3 },
@@ -182,6 +195,7 @@ export function verifyAllOf(
   }
   const response = {
     id: input.id,
+    labels: input.labels,
     count: input.count,
     details: { ...input.details, additive: true },
     tag: input.tag,
@@ -191,6 +205,7 @@ export function verifyAllOf(
   };
   const expected = {
     id: input.id,
+    labels: input.labels,
     count: input.count,
     details: { ...input.details },
     tag: input.tag,

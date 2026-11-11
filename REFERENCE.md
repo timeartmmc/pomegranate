@@ -849,6 +849,10 @@ any existing supported shape; a wrapper around one component reference retains
 that reference's identity. Fixed-object compositions may combine inline schemas,
 local references, and nested compositions. Sibling object `properties` and
 `required` declarations participate in the same composition.
+Repeated references to the same component without use-site constraints are
+idempotent, including when an inherited property is redeclared. Constraints on
+that component or its aliases remain active. This does not add general array or
+map intersection support or compare separately written inline schemas for equality.
 Object fragments may omit `type` only when the composition also includes an
 explicit `type: "object"` assertion, directly or through a reference. Without
 that assertion, object keywords alone also admit primitives under OpenAPI; POM

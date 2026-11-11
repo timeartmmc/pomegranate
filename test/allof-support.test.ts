@@ -124,6 +124,194 @@ const value = () => ({
   tags: ['tag'],
 });
 
+void test('identical component references can redeclare inherited container and union properties', async (t) => {
+  const cases: readonly { shape: Schema; valid: unknown; invalid: unknown }[] =
+    [
+      {
+        shape: {
+          type: 'array',
+          items: { type: 'string', minLength: 1 },
+          minItems: 1,
+          uniqueItems: true,
+        },
+        valid: ['a'],
+        invalid: ['a', 'a'],
+      },
+      {
+        shape: {
+          type: 'object',
+          additionalProperties: { type: 'integer', minimum: 0 },
+        },
+        valid: { key: 1 },
+        invalid: { key: -1 },
+      },
+      {
+        shape: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }] },
+        valid: null,
+        invalid: '',
+      },
+      {
+        shape: {
+          anyOf: [
+            { type: 'string', minLength: 1 },
+            { type: 'integer', minimum: 0 },
+          ],
+        },
+        valid: 2,
+        invalid: false,
+      },
+      {
+        shape: {
+          type: 'object',
+          properties: {
+            value: { type: 'integer', minimum: 0 },
+            next: ref('Tag'),
+          },
+          required: ['value'],
+        },
+        valid: { value: 1, next: { value: 2 } },
+        invalid: { value: -1 },
+      },
+    ];
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const { shape, valid, invalid } of cases) {
+      const schemas = {
+        Tag:
+          valid === null
+            ? openapi.startsWith('3.0.')
+              ? { type: 'string', nullable: true, minLength: 1 }
+              : { type: ['string', 'null'], minLength: 1 }
+            : shape,
+        TagAlias: ref('Tag'),
+        Base: {
+          type: 'object',
+          properties: { tags: ref('TagAlias') },
+          required: ['tags'],
+        },
+        Combined: {
+          allOf: [
+            ref('Base'),
+            { type: 'object', properties: { tags: ref('TagAlias') } },
+          ],
+        },
+      };
+      const input = { ...document(schemas), openapi };
+      const before = structuredClone(input);
+      const files = await compile(input, selection);
+      assert.deepEqual(input, before);
+      const simplified = {
+        ...document({
+          ...schemas,
+          Combined: { allOf: [ref('Base'), { type: 'object' }] },
+        }),
+        openapi,
+      };
+      assert.deepEqual(files, await compile(simplified, selection));
+      const root = await generatedTestWorkspace(t, files);
+      const client = await importGenerated<RuntimeClient>(
+        root,
+        'client.consumer.ts',
+      );
+      for (const usage of ['request', 'response']) {
+        const { schema } = await importGenerated<StandaloneModule>(
+          root,
+          `standalone.${usage}.ts`,
+        );
+        assert.deepEqual(schema.parse({ tags: valid }), { tags: valid });
+        assert.equal(schema.safeParse({ tags: invalid }).success, false);
+      }
+      const operation = entry(client.operations, 'save');
+      assert.deepEqual(operation.build({ body: { tags: valid } }).body, {
+        tags: valid,
+      });
+      const response = operation.parseResponse({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tags: valid }),
+      });
+      assert.equal(response.kind, 'success');
+      if (response.kind === 'success')
+        assert.deepEqual(response.data, { tags: valid });
+    }
+});
+
+void test('reference idempotence preserves constraints and access annotations', async (t) => {
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(
+      document({
+        Text: { type: 'string' },
+        Prefix: { $ref: '#/components/schemas/Text', pattern: '^a' },
+        Both: { $ref: '#/components/schemas/Prefix', pattern: 'z$' },
+        Suffix: { $ref: '#/components/schemas/Text', pattern: 'z$' },
+        Combined: { allOf: [ref('Suffix'), ref('Both'), ref('Both')] },
+      }),
+      selection,
+    ),
+  );
+  const { schema } = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.request.ts',
+  );
+  assert.equal(schema.parse('az'), 'az');
+  for (const value of ['z', 'a'])
+    assert.equal(schema.safeParse(value).success, false);
+
+  const directional = await generatedTestWorkspace(
+    t,
+    await compile(
+      document({
+        Tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        Combined: {
+          type: 'object',
+          properties: {
+            tags: { allOf: [ref('Tags'), { ...ref('Tags'), readOnly: true }] },
+          },
+          required: ['tags'],
+        },
+      }),
+      selection,
+    ),
+  );
+  const request = (
+    await importGenerated<StandaloneModule>(
+      directional,
+      'standalone.request.ts',
+    )
+  ).schema;
+  const response = (
+    await importGenerated<StandaloneModule>(
+      directional,
+      'standalone.response.ts',
+    )
+  ).schema;
+  assert.deepEqual(request.parse({}), {});
+  assert.equal(request.safeParse({ tags: ['x'] }).success, false);
+  assert.deepEqual(response.parse({ tags: ['x'] }), { tags: ['x'] });
+  assert.equal(response.safeParse({ tags: [] }).success, false);
+
+  const pure = ref('Tags');
+  const constrained = { ...pure, minItems: 2 };
+  for (const branches of [
+    [pure, constrained],
+    [constrained, pure],
+  ])
+    await assert.rejects(
+      compile(
+        document({
+          Tags: { type: 'array', items: { type: 'string' } },
+          Combined: { allOf: branches },
+        }),
+        selection,
+      ),
+      (error) => {
+        assert.ok(error instanceof ContractError);
+        assert.match(error.message, /combined arrays/);
+        return true;
+      },
+    );
+});
+
 void test('allOf folds object branches and sibling declarations without losing reference identity or mutating JSON/YAML inputs', async (t) => {
   const input = document(commonSchemas());
   const before = structuredClone(input);
