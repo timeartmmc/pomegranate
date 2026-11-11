@@ -94,7 +94,7 @@ export type JsonResponse<
   H extends Headers = {},
 > = ContentResponse<{ readonly 'application/json': ResponseMedia<P> }, H>;
 export type ResponseStatuses<
-  S extends number,
+  S extends keyof Responses,
   Entry extends Responses[number],
 > = Readonly<Record<S, Entry>>;
 
@@ -134,9 +134,11 @@ export function optionalHeader<P extends Parse<string>>(
   return { schema, required: false };
 }
 
-// The emitter supplies exact own data maps partitioned into non-2xx and 2xx
-// statuses. The constraint also rejects visible overlap; structural TS types
-// alone cannot establish closed runtime key sets for arbitrary external maps.
+// The emitter supplies exact own data maps partitioned by response key: 2xx
+// statuses and 2XX are the successes; every other key, including default, is
+// shared with the errors. The constraint also rejects visible overlap;
+// structural TS types alone cannot establish closed runtime key sets for
+// arbitrary external maps.
 export function mergeResponses<
   E extends Responses,
   S extends Responses & Partial<Record<keyof E, never>>,

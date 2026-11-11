@@ -22,8 +22,10 @@ import type {
   Descriptor,
   Direction,
   Operation,
+  ResponseKey,
   Standalone,
 } from './model.js';
+import { successKey, successResponses } from './response-status.js';
 import { parseSymbol, schemaType, typeSymbol } from './schema-types.js';
 import { sourceBudget } from './source-budget.js';
 
@@ -230,7 +232,7 @@ type PreparedResponse = {
   uses: number;
   shared: Expression | undefined;
 };
-type ResponseEntries = readonly (readonly [number, PreparedResponse])[];
+type ResponseEntries = readonly (readonly [ResponseKey, PreparedResponse])[];
 type ErrorProfile = {
   readonly entries: ResponseEntries;
   readonly type: string;
@@ -290,7 +292,7 @@ function responseType(
 ): string | undefined {
   if (!entries.length) return undefined;
   emission.types.add('ResponseStatuses');
-  const groups = new Map<string, number[]>();
+  const groups = new Map<string, ResponseKey[]>();
   for (const [status, response] of entries) {
     const statuses = groups.get(response.type) ?? [];
     statuses.push(status);
@@ -299,7 +301,7 @@ function responseType(
   return [...groups]
     .map(
       ([type, statuses]) =>
-        `ResponseStatuses<${statuses.join(' | ')}, ${type}>`,
+        `ResponseStatuses<${statuses.map(jsonSource).join(' | ')}, ${type}>`,
     )
     .join(' & ');
 }
@@ -309,8 +311,8 @@ function prepareResponses(
   renderer: SchemaRenderer,
   emission: EndpointEmission,
 ): PreparedResponses {
-  const entries: (readonly [number, PreparedResponse])[] =
-    operation.responses.map((response) => {
+  const entries: ResponseEntries = operation.responses.map(
+    (response): ResponseEntries[number] => {
       const prefix = `${operationScope(operation.id)}_response_${response.status}`;
       const headerTypes: string[] = [];
       const headers = object(
@@ -405,15 +407,18 @@ function prepareResponses(
           `${operation.id}.responses.${response.status}`,
         ),
       ];
-    });
-  const success = entries.filter(([status]) => status < 300);
+    },
+  );
+  // Error maps repeat across operations and are shared. A default belongs with
+  // them: it is usually the common error shape, even when it can match a 2xx.
+  const success = entries.filter(([status]) => successKey(status));
   const successType = responseType(success, emission);
   if (successType) emission.account(successType, operation.id);
   return {
     success,
     successType,
     errors: emission.errors(
-      entries.filter(([status]) => status >= 300),
+      entries.filter(([status]) => !successKey(status)),
       operation.id,
     ),
   };
@@ -925,7 +930,7 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
   const entries = client.queries.map((operation) =>
     entry(
       operation,
-      `${propertyKey(operation.id)}: defineQuery({ operation: ${operationScope(operation.id)}, bodyCache: ${operation.responses.filter((response) => response.status >= 200 && response.status < 300).every((response) => response.body.kind !== 'none')}, ...runtime, client: ${jsonSource(client.name)}, operationId: ${jsonSource(operation.id)} })`,
+      `${propertyKey(operation.id)}: defineQuery({ operation: ${operationScope(operation.id)}, bodyCache: ${successResponses(operation.responses).every((response) => response.body.kind !== 'none')}, ...runtime, client: ${jsonSource(client.name)}, operationId: ${jsonSource(operation.id)} })`,
     ),
   );
   // Removing cursors and transport headers can remove every schema reference

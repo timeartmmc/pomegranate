@@ -348,7 +348,7 @@ validation, including operations excluded from output.
 | Input       | Local OpenAPI 3.0.x or 3.1.x JSON or YAML 1.2 with any patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                          |
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; whole-segment path placeholders                                                                                                                                                                                                              |
 | Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; string and optional nullable string request headers; simple path/header and form query serialization |
-| Bodies      | Required or optional JSON/text bodies; required multipart bodies; exact response statuses 200–599 with at least one 2xx; JSON, text, or bodyless responses; string response headers; local component references and aliases                                                                                                            |
+| Bodies      | Required or optional JSON/text bodies; required multipart bodies; response statuses 200–599, ranges `2XX`–`5XX`, and `default`, with at least one possible success; JSON, text, or bodyless responses; string response headers; local component references and aliases                                                                 |
 | Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; productive local component references; restricted unions and maps described below                                                         |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length and `uniqueItems`, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                |
 | Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, `ipv6`, and `byte`; string `password` hint; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                             |
@@ -400,7 +400,7 @@ an optional JSON or text request may also declare a valid multipart alternative.
 Content-map keys must be concrete media types without parameters or wildcards.
 Case-insensitive duplicates fail. JSON suffixes select JSON decoding, but do not
 make different media types interchangeable. Responses retain every supported
-declaration for each exact status. The observed Content-Type selects its declared
+declaration for each status, range, and `default`. The observed Content-Type selects its declared
 schema and one JSON or text decoder. Valid parameters such as `charset=utf-8`
 are accepted when matching that media type. Missing, malformed, duplicate or
 undeclared Content-Type produces a protocol failure without decoding or trying
@@ -778,8 +778,7 @@ POM: components.schemas.WidgetId.format: expected a string
 
 External references, nonproductive reference cycles, `oneOf` alternatives that
 share a JSON type without a discriminator, other type arrays, objects mixing fixed properties with dynamic entries,
-optional multipart request bodies, status ranges/default
-responses, OpenID Connect, mutual TLS, unsupported HTTP authentication schemes,
+optional multipart request bodies, OpenID Connect, mutual TLS, unsupported HTTP authentication schemes,
 non-OAuth role requirements and external security-scheme references
 remain unsupported.
 
@@ -929,7 +928,7 @@ The following declarations accept inline objects or local component references:
 | -------------------------------- | --------------------------------------- |
 | Path-item or operation parameter | `#/components/parameters/WidgetId`      |
 | Operation `requestBody`          | `#/components/requestBodies/WidgetBody` |
-| Exact-status operation response  | `#/components/responses/WidgetResult`   |
+| Operation response               | `#/components/responses/WidgetResult`   |
 | Response header                  | `#/components/headers/TraceId`          |
 
 `{ "$ref": "<target>" }` selects the target in its corresponding `components`
@@ -949,8 +948,10 @@ GET and HEAD request bodies remain unsupported, including through references.
 
 Response components require a string `description` and may declare JSON or text content
 and response headers using the same rules as inline responses. Each operation
-binds the resolved body and headers to its declared exact status. HEAD responses
-and statuses 204, 205, and 304 must be bodyless, including through references.
+binds the resolved body and headers to its declared status, range, or `default`.
+HEAD responses and the exact statuses 204, 205, and 304 must be bodyless,
+including through references. [Response evidence](#response-evidence) describes
+how ranges and `default` treat those statuses.
 
 Header components describe response headers; each response header map supplies
 the wire name. Every use rejects invalid names, case-insensitive duplicates,
@@ -1186,10 +1187,10 @@ record with string values. Incorrect JavaScript evidence types throw `TypeError`
 before protocol validation.
 Response header values normalize leading and trailing spaces and tabs before
 validation; request header values reject that boundary whitespace.
-Results discriminate on `kind` and the exact declared `status`:
+Results discriminate on `kind` and the observed `status`:
 
-- `success`: a declared 2xx response with validated `data`.
-- `error`: a declared non-2xx response with validated `data`.
+- `success`: a declared response with a 2xx status and validated `data`.
+- `error`: a declared response with any other status and validated `data`.
 - `protocol`: an undeclared status or invalid headers, media type, or body, with
   `issues` and no `data`. The observed status and normalized headers remain
   available; `validatedHeaders` contains independently valid declared headers.
@@ -1199,6 +1200,30 @@ or headers. Other protocol issues may omit `path`.
 
 A body valid under `200` does not pass under `202` unless both declare it.
 Bodyless responses require empty text and expose `data: undefined`.
+
+Responses declare exact statuses 200–599, the ranges `2XX`, `3XX`, `4XX`, and
+`5XX`, and `default`. An exact status takes precedence over its range, and a
+range over `default`. Only the matching declaration validates a response: a
+`200` body that fails its own schema does not fall through to `2XX` or
+`default`. `default` matches the remaining statuses 200–599. Any other value,
+including an interim 1xx status, is an undeclared status. Range keys use an
+uppercase `X`; `1XX` and lowercase spellings receive diagnostics.
+
+A range or `default` match is classified by the observed status, like an exact
+status of the same class. With only `200` and `default` declared, a 201
+response that `default` validates is a `success` carrying the `default` body.
+Declare `2XX` to keep `default` for errors. Every operation needs a response
+that can succeed: a 2xx status, `2XX`, or `default`.
+
+Generated result types list the statuses each declaration can receive. Checking
+`result.status === 200` narrows to the `200` declaration, and a status without
+its own declaration narrows to the range or `default` that receives it.
+
+A 204, 205, or 304 response has no content. Declaring content for one of
+these exact statuses fails compilation. A range or `default` may declare
+content for the other statuses it covers; when one of these three matches it,
+the result is a protocol failure. Declare the status itself without content to
+accept it.
 
 ## Generated TypeScript
 

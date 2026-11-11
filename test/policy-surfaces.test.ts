@@ -226,9 +226,12 @@ for (const [name, surfaces] of invalidMemberships)
 void test('config membership does not suppress unsupported unselected operations or schemas', async () => {
   const operationFailure = plainFixture();
   Object.assign(operationFailure.paths['/internal/report'].get.responses, {
-    default: { description: 'Unsupported fallback' },
+    '1XX': { description: 'Unsupported interim range' },
   });
-  await assert.rejects(compile(operationFailure, selection), /exact numeric/);
+  await assert.rejects(
+    compile(operationFailure, selection),
+    /expected a final HTTP status/,
+  );
   const schemaFailure = plainFixture();
   Object.assign(
     schemaFailure.components.schemas.SecretRecord.properties.secret,

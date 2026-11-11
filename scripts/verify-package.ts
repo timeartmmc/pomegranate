@@ -124,6 +124,11 @@ import {
   mediaConsumer,
 } from '../test/media-fixture.ts';
 import {
+  responseStatusFixture,
+  responseStatusSelection,
+  responseStatusConsumer,
+} from '../test/response-status-fixture.ts';
+import {
   registeredFormatsFixture,
   registeredFormatsSelection,
   registeredFormatsConsumer,
@@ -304,6 +309,7 @@ try {
     'tolerance-fixture.ts',
     'any-json-fixture.ts',
     'media-fixture.ts',
+    'response-status-fixture.ts',
     'registered-formats-fixture.ts',
     'numeric-format-profiles-fixture.ts',
     'type-composition-fixture.ts',
@@ -721,6 +727,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'tolerance-generated/*.ts',
     'any-json-generated/*.ts',
     'media-generated/*.ts',
+    'response-status-generated/*.ts',
     'registered-formats-generated/*.ts',
     'numeric-format-profiles-generated/*.ts',
     'extension-generated/*.ts',
@@ -992,6 +999,12 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     ['tolerance', toleranceFixture(), toleranceSelection, toleranceConsumer],
     ['any-json', anyJsonFixture(), anyJsonSelection, anyJsonConsumer],
     ['media', mediaFixture(), mediaSelection, mediaConsumer],
+    [
+      'response-status',
+      responseStatusFixture(),
+      responseStatusSelection,
+      responseStatusConsumer,
+    ],
     [
       'registered-formats',
       registeredFormatsFixture(),
@@ -2042,6 +2055,9 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import {verifyMedia} from './verification/media-fixture.ts';
     verifyMedia(mediaClient);
     ${mediaExecutionChecks}
+    import * as responseStatusClient from './response-status-generated/client.consumer.ts';
+    import {verifyResponseStatuses} from './verification/response-status-fixture.ts';
+    verifyResponseStatuses(responseStatusClient);
     import * as registeredFormatsClient from './registered-formats-generated/client.consumer.ts';
     import * as registeredSlug from './registered-formats-generated/standalone.slug.ts';
     import * as registeredInput from './registered-formats-generated/standalone.input.ts';
@@ -2208,6 +2224,9 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import {verifyMedia} from './verification/media-fixture.ts';
     verifyMedia(mediaClient);
     ${mediaExecutionChecks}
+    import * as responseStatusClient from './.build/response-status-generated/client.consumer.js';
+    import {verifyResponseStatuses} from './verification/response-status-fixture.ts';
+    verifyResponseStatuses(responseStatusClient);
     import * as registeredFormatsClient from './.build/registered-formats-generated/client.consumer.js';
     import * as registeredSlug from './.build/registered-formats-generated/standalone.slug.js';
     import * as registeredInput from './.build/registered-formats-generated/standalone.input.js';

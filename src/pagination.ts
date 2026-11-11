@@ -8,6 +8,7 @@ import type {
 } from './model.js';
 import { scalarValidationPlan } from './intersections.js';
 import { resolveSchema } from './schemas.js';
+import { successResponses } from './response-status.js';
 import { literalViolation } from './scalar-rules.js';
 
 function nullableString(schema: Schema, schemas: SchemaTable): boolean {
@@ -87,12 +88,23 @@ export function validatePagination(
         'cursor must name an optional string or nullable string query parameter',
       );
   }
-  for (const response of operation.responses.filter(
-    (response) => response.status < 300,
-  )) {
+  const successes = successResponses(operation.responses);
+  for (const response of successes) {
     const responsePath = `${location}.responses.${response.status}`;
-    if (response.body.kind === 'none')
+    // A page declared for 200 alone leaves default matching every other 2xx
+    // status, usually with an error body. Name the declaration that keeps
+    // default for errors instead of only rejecting its shape. A default that
+    // is the only success is simply the page.
+    const fallback = response.status === 'default' && successes.length > 1;
+    const reject: (path: string, detail: string) => never = (path, detail) =>
       fail(
+        path,
+        fallback
+          ? `${detail}; default also matches every 2xx status without its own declaration, so declare a 2XX response to keep default for errors`
+          : detail,
+      );
+    if (response.body.kind === 'none')
+      reject(
         responsePath,
         'every infinite-query success must have a JSON object body',
       );
@@ -104,7 +116,7 @@ export function validatePagination(
         fail(path, 'every infinite-query success must have a JSON object body');
       const body = resolveSchema(representation.schema, responseSchemas);
       if (body.kind !== 'object')
-        fail(
+        reject(
           path,
           'every infinite-query success must have a fixed object body',
         );
@@ -122,13 +134,13 @@ export function validatePagination(
             name.includes('.') || name.includes('[')
               ? '; nested paths are not supported in this version'
               : '';
-          fail(
+          reject(
             path,
             `pagination field ${JSON.stringify(name)} must name an existing top-level response property${hint}`,
           );
         }
         if (!body.required.includes(name))
-          fail(
+          reject(
             path,
             `pagination field ${JSON.stringify(name)} must be required`,
           );
@@ -138,7 +150,7 @@ export function validatePagination(
         responseSchemas,
       );
       if (items.kind !== 'array')
-        fail(`${path}.${binding.items}`, 'items must name an array field');
+        reject(`${path}.${binding.items}`, 'items must name an array field');
       if (offset) {
         for (const name of [
           binding.responseOffset,
@@ -149,7 +161,7 @@ export function validatePagination(
             resolveSchema(body.properties.get(name)!, responseSchemas).kind !==
             'integer'
           )
-            fail(
+            reject(
               `${path}.${name}`,
               'offset pagination metadata must name required nonnullable integer fields',
             );
@@ -161,7 +173,7 @@ export function validatePagination(
           responseSchemas,
         )
       )
-        fail(
+        reject(
           `${path}.${binding.nextCursor}`,
           'nextCursor must name a nullable string field',
         );

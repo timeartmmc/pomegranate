@@ -108,15 +108,16 @@ void test('header parameters reject non-string schemas, including optional nulla
     }
 });
 
-void test('redirect and error responses cannot satisfy the required 2xx response', async () => {
-  for (const status of [300, 302, 400]) {
+void test('redirect and error responses cannot satisfy the required success response', async () => {
+  for (const status of [300, 302, 400, '3XX', '5XX']) {
     const document = fixture();
     Object.assign(preparation(document), {
       responses: { [status]: { description: 'No successful response' } },
     });
     await assert.rejects(compile(document), {
       name: 'ContractError',
-      message: /responses: at least one 2xx response is required/,
+      message:
+        /responses: at least one 2xx, 2XX or default response is required/,
     });
   }
 });
@@ -253,7 +254,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
         101: { description: 'An interim response is not a final response' },
       });
     },
-    /responses\.101: only exact numeric final HTTP statuses/,
+    /responses\.101: expected a final HTTP status 200–599, a range 2XX–5XX or default/,
   ],
   [
     'duplicate case-insensitive response headers',
@@ -356,22 +357,22 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /undeclared surface/,
   ],
   [
-    'wildcard status',
+    'interim status range',
     (d) => {
       Object.assign(preparation(d).responses, {
-        '4XX': { description: 'Error' },
+        '1XX': { description: 'Interim' },
       });
     },
-    /exact numeric/,
+    /responses\.1XX: expected a final HTTP status/,
   ],
   [
-    'default status',
+    'lowercase status range',
     (d) => {
       Object.assign(preparation(d).responses, {
-        default: { description: 'Error' },
+        '4xx': { description: 'Error' },
       });
     },
-    /exact numeric/,
+    /responses\.4xx: expected a final HTTP status/,
   ],
   [
     'external reference',

@@ -46,6 +46,7 @@ import { normalizeSecurity, normalizeSecuritySchemes } from './security.js';
 import { projectSchemas } from './directional.js';
 import { normalizeOpenApi30, openApi30Diagnostic } from './openapi30.js';
 import { isRequired } from './required-index.js';
+import { responseKey, successResponses } from './response-status.js';
 import { createIntersectionNormalizer } from './intersections.js';
 import {
   deprecatedAnnotation,
@@ -790,13 +791,13 @@ function operationResponses(
   const responses: ContractResponse[] = Object.keys(rawResponses)
     .sort()
     .map((statusText) => {
-      if (!/^[2-5][0-9]{2}$/.test(statusText))
-        fail(
-          `${location}.responses.${statusText}`,
-          'only exact numeric final HTTP statuses 200–599 are supported',
-        );
-      const status = Number(statusText);
       const responseLocation = `${location}.responses.${statusText}`;
+      const status = responseKey(statusText);
+      if (status === undefined)
+        fail(
+          responseLocation,
+          'expected a final HTTP status 200–599, a range 2XX–5XX or default',
+        );
       const value = record(rawResponses[statusText], responseLocation);
       const target = componentReference(value, 'responses', responseLocation);
       const response =
@@ -816,9 +817,14 @@ function operationResponses(
         );
       // Definitions have no HTTP context: a shared JSON response may be valid
       // for GET 200 and invalid for HEAD or 204. Check every binding after resolution.
+      // A range or default with content stays valid for the other statuses it
+      // covers; the response parser rejects these three when one matches.
       if (
         response.body.kind !== 'none' &&
-        (method === 'head' || [204, 205, 304].includes(status))
+        (method === 'head' ||
+          status === 204 ||
+          status === 205 ||
+          status === 304)
       )
         fail(
           `${responseLocation}.${target === undefined ? 'content' : '$ref'}`,
@@ -829,8 +835,11 @@ function operationResponses(
         );
       return { status, ...response };
     });
-  if (!responses.some((response) => response.status < 300))
-    fail(`${location}.responses`, 'at least one 2xx response is required');
+  if (successResponses(responses).length === 0)
+    fail(
+      `${location}.responses`,
+      'at least one 2xx, 2XX or default response is required',
+    );
   return responses;
 }
 

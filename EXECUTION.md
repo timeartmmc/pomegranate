@@ -53,7 +53,7 @@ inputs retain their builder types; when all generated fields are optional,
 `call({ context })` may omit `input`. An
 [optional request body](REFERENCE.md#build-and-validate-a-request) does not relax
 other required inputs. Calls return promises. Invalid requests reject before the
-executor runs. Successes retain the exact declared 2xx status, raw normalized headers,
+executor runs. Successes retain the observed 2xx status, raw normalized headers,
 validated declared headers and schema-validated data. Bodyless success has an own
 `data: undefined` field. Different success statuses retain distinct body types.
 
@@ -92,8 +92,9 @@ documents with different policy vocabularies, declare the supported
 [policy type](REFERENCE.md#operation-policy) explicitly.
 
 For raw execution, read the final body once and return its evidence. POM parses
-JSON when selected and validates text as a string. It applies the exact-status
-response schema once after the executor returns. When a status declares several
+JSON when selected and validates text as a string. It applies the
+[matching response declaration](REFERENCE.md#response-evidence) once after the
+executor returns. When a status declares several
 media types, the observed Content-Type selects the decoder and schema; the
 returned `contentType` identifies the validated representation and narrows its
 `data` type. Bodyless results use `contentType: undefined`.

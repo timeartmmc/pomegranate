@@ -78,9 +78,9 @@ Check the affected boundaries together:
   The schema oracle compares supported cases with Ajv2020, a development dependency.
 - Output: deterministic complete rendering, read-only drift, protected inputs,
   aliases and symlinks, conflicts, stale cleanup, and interrupted generation.
-- Execution: input snapshots, raw/scoped responses, exact statuses, error
-  provenance, single-use evidence, callback cleanup, cancellation, and complete
-  browser/native uploads.
+- Execution: input snapshots, raw/scoped responses, exact, range and default
+  statuses, error provenance, single-use evidence, callback cleanup,
+  cancellation, and complete browser/native uploads.
 - Queries: identity, skip transitions, context filters, error guards, sharing,
   hydration, and ordinary/cursor/offset pagination in envelope/body modes.
 

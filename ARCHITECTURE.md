@@ -99,9 +99,10 @@ independent of TanStack and React; query modules require Query Core.
 
 Requests and responses retain direction-specific validation. Validated JSON and
 native file references must not retain mutable caller data. Immutable browser
-files may retain identity. Protocol interpretation uses one exact-status response
-table and preserves observed HTTP evidence on failures. The application decides
-what those failures mean.
+files may retain identity. Protocol interpretation uses one response table, in
+which an exact status takes precedence over its range and a range over
+`default`, and preserves observed HTTP evidence on failures. The application
+decides what those failures mean.
 
 [Execution](EXECUTION.md) is a validation boundary around an application executor.
 It must validate a selected response once. Scoped inspection keeps the saved

@@ -351,14 +351,14 @@ void test('unselected operations, unused schemas and overridden document securit
   await assert.rejects(selected(document), /role requirements are unsupported/);
   Reflect.deleteProperty(document.paths['/api/staff/reports'].get, 'security');
   Object.assign(document.paths['/api/staff/reports'].get.responses, {
-    default: {
+    '1XX': {
       description: 'Unsupported status',
     },
   });
-  await assert.rejects(selected(document), /exact numeric/);
+  await assert.rejects(selected(document), /expected a final HTTP status/);
   Reflect.deleteProperty(
     document.paths['/api/staff/reports'].get.responses,
-    'default',
+    '1XX',
   );
   Object.assign(document.components.schemas.UnusedMessage.properties.message, {
     format: false,

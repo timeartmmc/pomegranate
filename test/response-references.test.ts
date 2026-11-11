@@ -157,16 +157,20 @@ void test('response body legality is checked at every method/status use includin
   await compile(bodyless, selection);
 });
 
-void test('response references retain final exact-status and success requirements', async () => {
-  for (const status of ['default', '2XX', '4XX', '101', '600']) {
+void test('response references retain final status and success requirements', async () => {
+  for (const status of ['1XX', '101', '600']) {
     const document = fixture();
     document.paths['/results'].get.responses[status] = ref('Empty');
     await rejectsAt(
       document,
       `paths./results.get.responses.${status}`,
-      /only exact numeric final HTTP statuses/,
+      /expected a final HTTP status 200–599, a range 2XX–5XX or default/,
     );
   }
+  const fallbacks = fixture();
+  for (const status of ['2XX', '4XX', 'default'])
+    fallbacks.paths['/results'].get.responses[status] = ref('Problem');
+  await compile(fallbacks, selection);
   const document = fixture();
   document.paths['/results'].get.responses = { 404: ref('Problem') };
   await rejectsAt(document, 'paths./results.get.responses', /at least one 2xx/);

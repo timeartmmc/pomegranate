@@ -1938,7 +1938,14 @@ type ResponseSpec = Readonly<{
         content: ResponseContent;
       }>
   );
-export type Responses = Readonly<Record<number, ResponseSpec>>;
+// A table declares exact final statuses, status-class ranges and a default.
+type StatusClass = 2 | 3 | 4 | 5;
+type Digit = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+type ClassStatus<C extends StatusClass> =
+  `${C}${Digit}${Digit}` extends `${infer S extends number}` ? S : never;
+type StatusRange = `${StatusClass}XX`;
+export type Responses = Readonly<Record<number, ResponseSpec>> &
+  Readonly<Partial<Record<StatusRange | 'default', ResponseSpec>>>;
 
 type Data<R> = R extends { schema: Parse<infer T> } ? T : undefined;
 type CommonResponseData = Readonly<{
@@ -1961,22 +1968,56 @@ type ResponseData<S extends ResponseSpec> = CommonResponseData &
           }>;
         }[keyof C & string]
       : Readonly<{ contentType: undefined; data: undefined }>);
-export type DeclaredResponse<R extends Responses> = {
-  [S in keyof R]: S extends number
-    ? Readonly<{
-        kind: number extends S
-          ? 'success' | 'error'
-          : `${S}` extends `2${string}`
-            ? 'success'
-            : 'error';
-        operationId: string;
-        status: S;
-        headers: HeaderContext;
-        validatedHeaders: HeaderContext;
-      }> &
-        ResponseData<R[S]>
-    : never;
-}[keyof R];
+type Declared<Kind, Status, S extends ResponseSpec> = [Status] extends [never]
+  ? never
+  : Readonly<{
+      kind: Kind;
+      operationId: string;
+      status: Status;
+      headers: HeaderContext;
+      validatedHeaders: HeaderContext;
+    }> &
+      ResponseData<S>;
+// The statuses of a class that no exact key declares reach that class's range,
+// or else default. Literal statuses keep a status check narrowing to the one
+// declaration that can produce it.
+type Fallback<
+  R extends Responses,
+  C extends StatusClass,
+> = C extends StatusClass
+  ? (`${C}XX` extends keyof R ? `${C}XX` : 'default') extends infer K extends
+      keyof R & keyof Responses
+    ? Declared<
+        C extends 2 ? 'success' : 'error',
+        Exclude<ClassStatus<C>, keyof R>,
+        Exclude<R[K], undefined>
+      >
+    : never
+  : never;
+type Entries<R extends Responses> =
+  | {
+      [S in keyof R]-?: S extends number
+        ? Declared<
+            number extends S
+              ? 'success' | 'error'
+              : `${S}` extends `2${string}`
+                ? 'success'
+                : 'error',
+            S,
+            R[S]
+          >
+        : never;
+    }[keyof R]
+  | Fallback<R, StatusClass>;
+// Executors are generic in the table. Inferring it here leaves them one
+// deferred type whose constraint is the unparameterized entry; expanding four
+// hundred statuses for each type parameter multiplied the shared runtime's
+// type instantiations sixfold.
+export type DeclaredResponse<R extends Responses> = [R] extends [
+  infer Table extends Responses,
+]
+  ? Entries<Table>
+  : never;
 
 export type ProtocolResult<R extends Responses> =
   | DeclaredResponse<R>
@@ -2306,6 +2347,26 @@ function declaredHeaders(
   return frozenHeaders(validated);
 }
 
+// An exact status takes precedence over its range, and a range over default
+// (OAS 3.1.1 §4.8.16). Fallbacks match only final statuses 200–599, the same
+// statuses an exact key can declare: results classify by status class, and an
+// interim or out-of-range status is not a response the contract describes.
+function declaredResponse(
+  responses: Responses,
+  status: number,
+): ResponseSpec | undefined {
+  if (Object.hasOwn(responses, status)) return responses[status];
+  if (!Number.isInteger(status) || status < 200 || status > 599)
+    return undefined;
+  // The guard leaves only classes 2–5.
+  const range = `${Math.trunc(status / 100)}XX` as StatusRange;
+  return Object.hasOwn(responses, range)
+    ? responses[range]
+    : Object.hasOwn(responses, 'default')
+      ? responses.default
+      : undefined;
+}
+
 function responseParser<R extends Responses>(
   operationId: string,
   responses: R,
@@ -2324,9 +2385,7 @@ function responseParser<R extends Responses>(
     if (typeof body !== 'string')
       throw new TypeError('response body must be raw text');
     const { headers, issues, invalidFields } = observedHeaders(rawHeaders);
-    const spec = Object.hasOwn(responses, status)
-      ? responses[status]
-      : undefined;
+    const spec = declaredResponse(responses, status);
     if (!spec)
       addIssue(issues, {
         part: 'status',
@@ -2346,6 +2405,18 @@ function responseParser<R extends Responses>(
           part: 'body',
           message: 'expected an empty response body',
         });
+    } else if (
+      !exhausted(issues) &&
+      spec?.bodyKind === 'content' &&
+      (status === 204 || status === 205 || status === 304)
+    ) {
+      // The compiler rejects content declared for these exact statuses. A range
+      // or default with content can still match one, and HTTP gives it no body
+      // to validate (RFC 9110 §15.3.5, §15.3.6, §15.4.5).
+      addIssue(issues, {
+        part: 'status',
+        message: `a ${status} response cannot carry the declared content`,
+      });
     } else if (!exhausted(issues) && spec?.bodyKind === 'content') {
       const field = headers['content-type'];
       const essence =

@@ -204,14 +204,15 @@ void test('invalid query selections receive explicit diagnostics', async () => {
     },
   );
   Object.assign(document.paths['/outcome'].get.responses, {
-    default: { description: 'Unsupported' },
+    '1XX': { description: 'Unsupported' },
   });
   await assert.rejects(
     compile(document, { ...querySelection, queries: { consumer: ['health'] } }),
     {
       name: 'ContractError',
-      location: 'paths./outcome.get.responses.default',
-      message: /only exact numeric final HTTP statuses 200–599 are supported/,
+      location: 'paths./outcome.get.responses.1XX',
+      message:
+        /expected a final HTTP status 200–599, a range 2XX–5XX or default/,
     },
   );
 });

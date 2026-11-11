@@ -431,7 +431,7 @@ void test('YAML uses the existing semantic diagnostics, including unselected dec
     },
     (d) => {
       Object.assign(preparation(d).responses, {
-        default: { description: 'Unsupported' },
+        '1XX': { description: 'Unsupported' },
       });
     },
     (d) => {

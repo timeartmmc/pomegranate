@@ -215,8 +215,11 @@ export type ResponseHeader = {
   readonly required: boolean;
   readonly schema: Schema;
 };
+// A Responses Object key: one exact final status, a status-class range, or
+// the fallback for statuses that neither declares.
+export type ResponseKey = number | '2XX' | '3XX' | '4XX' | '5XX' | 'default';
 export type ContractResponse = {
-  readonly status: number;
+  readonly status: ResponseKey;
   readonly body:
     | { readonly kind: 'none' }
     | {

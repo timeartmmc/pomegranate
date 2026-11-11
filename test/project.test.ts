@@ -115,12 +115,12 @@ void test('unsupported semantics reject before even creating an output directory
   const { root, config } = await project(t);
   const document = fixture();
   Object.assign(preparation(document).responses, {
-    default: {
+    '1XX': {
       description: 'Undeclared semantics',
     },
   });
   await writeFile(join(root, 'openapi.json'), JSON.stringify(document));
-  await assert.rejects(runProject(config), /exact numeric/);
+  await assert.rejects(runProject(config), /expected a final HTTP status/);
   assert.deepEqual((await readdir(root)).sort(), ['openapi.json', 'pom.json']);
 });
 

@@ -149,10 +149,10 @@ typed data reads and writes. `filter` remains scoped to its family.
 
 Query functions forward cancellation, reject late results after cancellation,
 and set `retry: false` so the executor owns the retry budget. By default, success
-data is the validated response envelope, including exact status and bodyless `data: undefined`.
+data is the validated response envelope, including its status and bodyless `data: undefined`.
 Declared HTTP errors and protocol failures reject with a `QueryResponseError`
 whose `result` holds the failure envelope. Narrow an unknown error with the
-operation's `isError` guard to recover its exact status and declared body types:
+operation's `isError` guard to recover its status and declared body types:
 
 ```ts
 try {
@@ -184,10 +184,12 @@ mapped rejection with its cancellation result.
 
 ## Choose cache storage once per operation
 
-Factories store exact-status success envelopes by default. For an operation whose
-every declared success has a JSON or text body, `.body()` creates a factory that
-stores only the validated API body. Envelope results retain the validated `contentType`
-and its data correlation; body-only storage retains the payload union without
+Factories store success envelopes by default. For an operation whose every
+possible success has a JSON or text body, `.body()` creates a factory that
+stores only the validated API body. Possible successes are the 2xx statuses,
+`2XX`, and a `default` that
+[still receives a 2xx status](REFERENCE.md#response-evidence). Envelope results
+retain the validated `contentType` and its data correlation; body-only storage retains the payload union without
 that discriminator. Any bodyless success makes body mode unavailable in
 types and rejects JavaScript selection before transport. JSON `null` is valid;
 successful `undefined` query data is never stored. All response and bound
@@ -301,7 +303,7 @@ Bind forward cursor pagination explicitly in configuration or `CompileOptions`:
 ```
 
 `listItems` must be a bodyless GET operation on the selected client. `after`
-must name an optional string or nullable string query parameter. Every declared 2xx response representation must have a fixed JSON object body with a required nullable string
+must name an optional string or nullable string query parameter. Every representation of each [possible success](#choose-cache-storage-once-per-operation) must have a fixed JSON object body with a required nullable string
 `continuation` field and a required array `results` field. Component references
 are supported. Bindings name top-level fields; nested paths, tagged-union page
 objects, numeric cursors, backward pagination, and bodyless
@@ -353,7 +355,7 @@ pages and cycles. TanStack's `maxPages` option can evict that history; applicati
 that enable eviction own the resulting limit on cycle detection.
 
 With default envelope storage and no `select`, data is `{ pages, pageParams }`:
-each page is its exact-status validated success envelope, and page parameters are
+each page is its validated success envelope, and page parameters are
 strings or the initial `null`. Keys retain these types through cache access and
 JSON hydration. Use
 `key(args)` for a real request and `filter({ context })` or
@@ -403,7 +405,7 @@ binding instead of a cursor binding:
 The binding names the request query parameter and four distinct top-level response
 fields; names need not follow this example. The request offset must be a
 nonnullable integer parameter whose constraints accept `0`; it may be required.
-Every declared representation of each 2xx response must have a fixed JSON object body with the bound
+Every declared representation of each [possible success](#choose-cache-storage-once-per-operation) must have a fixed JSON object body with the bound
 fields required: integer offset, limit and total, and an array of items.
 Component references are supported. Nested fields and mixed cursor/offset
 bindings receive diagnostics.
