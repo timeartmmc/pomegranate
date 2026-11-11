@@ -276,3 +276,107 @@ void test('shared type modules preserve recursive, directional and binary identi
   );
   await check('published');
 });
+
+for (const openapi of ['3.0.4', '3.1.2'])
+  for (const scope of ['client', 'standalone'])
+    void test(`parser annotations preserve ${scope} type isolation in OpenAPI ${openapi}`, async (t) => {
+      const response = (name: string) => ({
+        description: 'Synthetic annotation closure',
+        content: content(ref(name)),
+      });
+      const files = await compile(
+        {
+          openapi,
+          info: { title: 'Synthetic parser annotation roots', version: '1' },
+          components: {
+            schemas: {
+              Kilo: {
+                type: 'object',
+                properties: {
+                  p: {
+                    type: 'object',
+                    properties: { x: { type: 'string' } },
+                  },
+                },
+              },
+              Echo: {
+                allOf: [
+                  ref('Kilo'),
+                  {
+                    type: 'object',
+                    properties: { privateMarker: { type: 'string' } },
+                  },
+                ],
+              },
+            },
+          },
+          paths: {
+            '/kilo': { post: exchange('saveKilo', 'Kilo') },
+            '/echo': {
+              get: {
+                operationId: 'getEcho',
+                responses: { 200: response('Echo') },
+              },
+            },
+          },
+        },
+        scope === 'client'
+          ? {
+              clients: ['c1', 'c2'],
+              surfaces: { c1: ['getEcho'], c2: ['saveKilo'] },
+            }
+          : {
+              clients: ['c1'],
+              surfaces: { c1: ['getEcho', 'saveKilo'] },
+              standalone: {
+                request: { schema: ref('Kilo').$ref, usage: 'request' },
+                response: { schema: ref('Kilo').$ref, usage: 'response' },
+              },
+            },
+      );
+      const root = await generatedTestWorkspace(t, files, 'generated');
+      await writeFile(
+        join(root, 'consumer.ts'),
+        scope === 'client'
+          ? `import type { RequestTypes, ResponseTypes } from './generated/client.c2.ts';
+      export const request: RequestTypes['Kilo'] = {p:{x:'value'}};
+      export const response: ResponseTypes['Kilo'] = request;
+      // @ts-expect-error The other client's component is excluded.
+      export type Unselected = ResponseTypes['Echo'];`
+          : `
+      import type { Output as Request } from './generated/standalone.request.ts';
+      import type { Output as Response } from './generated/standalone.response.ts';
+      export const standaloneRequest: Request = {p:{x:'value'}};
+      export const standaloneResponse: Response = standaloneRequest;`,
+      );
+      await writeFile(
+        join(root, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            target: 'ES2022',
+            module: 'NodeNext',
+            moduleResolution: 'NodeNext',
+            strict: true,
+            noEmit: true,
+            allowImportingTsExtensions: true,
+            types: [],
+          },
+          include: ['consumer.ts'],
+        }),
+      );
+      const { stdout } = await promisify(execFile)(process.execPath, [
+        fileURLToPath(
+          new URL('../node_modules/typescript/bin/tsc', import.meta.url),
+        ),
+        '-p',
+        join(root, 'tsconfig.json'),
+        '--listFiles',
+      ]);
+      for (const path of stdout.trim().split(/\r?\n/))
+        if (path.startsWith(`${join(root, 'generated')}${sep}`))
+          assert.doesNotMatch(
+            await readFile(path, 'utf8'),
+            /type_Echo_|privateMarker/,
+            `unselected component reached through ${relative(root, path)}`,
+          );
+    });

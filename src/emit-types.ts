@@ -468,6 +468,24 @@ export function renderTypes(
       for (const dependency of dependencies.get(entry)!) needed.add(dependency);
     }
   }
+  function selectAnnotations(
+    roots: readonly Schema[],
+    direction: Direction,
+    target: Client['target'],
+    types: Set<TypeNode>,
+  ): void {
+    // Parsers annotate inline children in their own direction even when a
+    // public declaration canonicalizes to another direction. Include those
+    // aliases before grouping modules, not just the public type body's links.
+    // Selected component roots already cover references; visit each inline
+    // node once so shared graphs cannot multiply this discovery work.
+    const pending = new Set(roots);
+    for (const schema of pending) {
+      const alias = privateType(schema, direction, target);
+      if (alias) types.add(alias);
+      for (const child of schemaChildren(schema)) pending.add(child);
+    }
+  }
   for (const client of clients) {
     const roots = new Set<TypeNode>();
     for (const direction of ['request', 'response'] as const) {
@@ -476,18 +494,37 @@ export function renderTypes(
           ? client.requestSchemas
           : client.responseSchemas;
       for (const name of names) roots.add(node(name, direction, client.target));
+      const schemas = names.map((name) =>
+        descriptor.schemas[direction].get(name)!,
+      );
       for (const operation of client.operations)
-        for (const schema of operationSchemas(operation, direction))
+        for (const schema of operationSchemas(operation, direction)) {
+          schemas.push(schema);
           for (const entry of references(schema, direction, client.target))
             roots.add(entry);
+        }
+      selectAnnotations(schemas, direction, client.target, roots);
     }
     selectClosure(`client:${client.name}`, roots);
   }
-  for (const root of standalone)
-    selectClosure(`standalone:${root.name}`, [
+  for (const root of standalone) {
+    const roots = new Set([
       ...root.schemaOrder.map((name) => node(name, root.direction, undefined)),
       ...references(root.schema, root.direction, undefined),
     ]);
+    selectAnnotations(
+      [
+        root.schema,
+        ...root.schemaOrder.map((name) =>
+          descriptor.schemas[root.direction].get(name)!,
+        ),
+      ],
+      root.direction,
+      undefined,
+      roots,
+    );
+    selectClosure(`standalone:${root.name}`, roots);
+  }
   const groups = new Map<string, TypeNode[]>();
   for (const entry of canonical) {
     const selected = consumers.get(entry)!;
