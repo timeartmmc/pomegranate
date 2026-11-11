@@ -422,7 +422,7 @@ void test('the output checker CLI runs the same qualified public-compiler family
   );
 });
 
-void test('loose compiler and TypeScript entries run without package metadata and attribute enclosing metadata explicitly', async (t) => {
+void test('loose compiler and TypeScript entries tolerate unavailable metadata and attribute enclosing metadata explicitly', async (t) => {
   const root = await temporary(t);
   const compiler = join(root, 'compiler.mjs');
   const typescript = join(root, 'typescript.cjs');
@@ -457,4 +457,20 @@ void test('loose compiler and TypeScript entries run without package metadata an
   assert.equal(wrapped.compilerPackageManifest, await realpath(manifest));
   assert.equal(wrapped.typescriptVersion, '0.0.0-wrapper');
   assert.equal(wrapped.typescriptPackageManifest, await realpath(manifest));
+  await writeFile(manifest, '{"name":');
+  // The explicit ESM compiler stays executable with malformed package metadata.
+  // Use TypeScript directly: Node's CJS require also needs that metadata.
+  const malformed = record(
+    json(
+      (
+        await exec(process.execPath, [args[0]!, compiler, tsc], {
+          timeout: 30_000,
+        })
+      ).stdout,
+    ),
+  );
+  assert.equal(malformed.sourceBudgets, 'passed');
+  assert.equal(malformed.generatedTypes, 'verified');
+  assert.equal(malformed.compilerVersion, null);
+  assert.equal(malformed.compilerPackageManifest, null);
 });

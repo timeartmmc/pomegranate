@@ -21,14 +21,14 @@ const typescriptEntry = process.argv[3]
       new URL('bin/tsc', import.meta.resolve('typescript/package.json')),
     );
 async function packageMetadata(entry: string) {
-  const manifest = findPackageJSON(entry);
   // Loose entries may resolve to themselves. Versions describe the entry's
   // enclosing package (including wrappers), and optional metadata must never
   // prevent the supplied compiler or TypeScript entry from executing.
-  if (manifest === undefined || basename(manifest) !== 'package.json')
-    return { manifest: null, version: null };
   let resolvedManifest: string | null = null;
   try {
+    const manifest = findPackageJSON(entry);
+    if (manifest === undefined || basename(manifest) !== 'package.json')
+      return { manifest: null, version: null };
     resolvedManifest = await realpath(manifest);
     const input = await readJson(resolvedManifest, 64 * 1024);
     const metadata = record(input.value);
