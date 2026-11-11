@@ -273,8 +273,9 @@ function walkDocument(
       if (!context) continue;
       if (!readAccessors && !Object.hasOwn(descriptor, 'value')) continue;
       // Semantic siblings of Reference Objects remain the owning parser's
-      // error. Only 3.1 schema refs interpret externalDocs; 3.0 discards that
-      // sibling, including nested extensions, before annotation validation.
+      // error. Schema refs in 3.1 also admit allOf, whose branches still need
+      // extension filtering. In 3.0, annotation siblings such as externalDocs
+      // are discarded before annotation validation, including their extensions.
       if (
         reference &&
         (frame.context === 'parameter' ||
@@ -286,7 +287,7 @@ function walkDocument(
       if (
         reference &&
         frame.context === 'schema' &&
-        (key !== 'externalDocs' || openApi30)
+        ((key !== 'externalDocs' && key !== 'allOf') || openApi30)
       )
         continue;
       const value: unknown =

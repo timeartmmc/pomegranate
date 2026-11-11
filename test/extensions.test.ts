@@ -67,6 +67,71 @@ void test('all ignored keyword sites retain exact output, data names, and YAML i
   );
 });
 
+void test('schema reference allOf siblings filter nested extensions in OpenAPI 3.1', async () => {
+  const branch = {
+    type: 'object',
+    properties: { label: { type: 'string' } },
+    required: ['label'],
+  };
+  const document = {
+    openapi: '3.1.2',
+    info: { title: 'Synthetic reference composition', version: '1' },
+    paths: {},
+    components: {
+      schemas: {
+        Base: {
+          type: 'object',
+          properties: { id: { type: 'integer' } },
+          required: ['id'],
+        },
+        Combined: {
+          $ref: '#/components/schemas/Base',
+          allOf: [branch],
+        },
+      },
+    },
+  };
+  const options = {
+    clients: [],
+    standalone: {
+      combined: { schema: '#/components/schemas/Combined', usage: 'request' },
+    },
+  } as const;
+  const expected = await compile(document, options);
+  for (const [target, path] of [
+    [branch, 'components.schemas.Combined.allOf[0]'],
+    [
+      branch.properties.label,
+      'components.schemas.Combined.allOf[0].properties.label',
+    ],
+  ] as const) {
+    const value = record(target);
+    value['x-note'] = 'documentation';
+    const before = structuredClone(document);
+    const allowed = { ...options, ignoreExtensions: ['x-note'] };
+    assert.deepEqual(await compile(document, allowed), expected);
+    assert.deepEqual(
+      await compile(
+        parseYaml(stringify(document), 'reference-allof.yaml'),
+        allowed,
+      ),
+      expected,
+    );
+    assert.deepEqual(document, before);
+    await assert.rejects(compile(document, options), (error) => {
+      assert.ok(error instanceof ContractError);
+      assert.equal(error.location, `${path}.x-note`);
+      assert.match(error.message, /unsupported keyword.*ignoreExtensions/);
+      return true;
+    });
+    delete value['x-note'];
+  }
+  await assert.rejects(compile({ ...document, openapi: '3.0.4' }, options), {
+    name: 'ContractError',
+    location: 'components.schemas.Combined.allOf',
+  });
+});
+
 void test('ignored keywords leave application property, query, header, policy and response data intact', async (t) => {
   const document = extensionFixture();
   for (const { value } of extensionKeywordTargets(document))
