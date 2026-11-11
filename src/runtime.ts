@@ -1811,6 +1811,19 @@ function plainRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+function* jsonObjectEntries(
+  input: Record<string, unknown>,
+): Generator<readonly [string, unknown]> {
+  // Snapshot names without capturing every value or allocating every entry
+  // pair. Recursive traversal can then stop reading at its work allowance.
+  for (const key of Reflect.ownKeys(input))
+    if (
+      typeof key === 'string' &&
+      Object.getOwnPropertyDescriptor(input, key)?.enumerable
+    )
+      yield [key, Reflect.get(input, key)];
+}
+
 export function jsonValue(input: unknown, issues: Issues): JsonValue | Invalid {
   if (aborted(issues)) return invalid;
   const traversal = recursiveTraversals.get(issues);
@@ -1865,7 +1878,7 @@ export function jsonValue(input: unknown, issues: Issues): JsonValue | Invalid {
         const count = arrayLength(value);
         if (count === undefined) break;
         entries = arrayEntries(value, count);
-      } else entries = Object.entries(value).values();
+      } else entries = jsonObjectEntries(value);
       pending.add(value);
       copy = Array.isArray(value) ? [] : {};
       stack.push({

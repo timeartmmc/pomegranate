@@ -535,6 +535,38 @@ void test('arbitrary JSON descent uses the containing recursive depth and work a
   assert.deepEqual(schema.parse({ payload: [0] }), { payload: [0] });
 });
 
+void test('wide arbitrary JSON objects stop reading values at the recursive work allowance', async (t) => {
+  const { validators } = await wrappedRecursive(
+    t,
+    {
+      type: 'object',
+      properties: { payload: {}, next: ref('Node') },
+    },
+    ref('Node'),
+  );
+  let reads = 0;
+  const payload = {};
+  for (let index = 0; index < 100_005; index++)
+    Object.defineProperty(payload, `key${index}`, {
+      enumerable: true,
+      get() {
+        reads++;
+        return 0;
+      },
+    });
+  for (const schema of validators) {
+    reads = 0;
+    const failure = schema.safeParse({ payload });
+    assert.equal(failure.success, false);
+    if (!failure.success)
+      assert.match(failure.error.message, /work exceeds 100000/);
+    assert.ok(reads <= 100_000, `read ${reads} values before stopping`);
+    assert.deepEqual(schema.parse({ payload: { value: 1 } }), {
+      payload: { value: 1 },
+    });
+  }
+});
+
 void test('arbitrary JSON children reject active typed ancestors even when JSON enumeration hides the back edge', async (t) => {
   const schema = await standalone(t, {
     type: 'object',
