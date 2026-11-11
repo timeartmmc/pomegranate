@@ -134,6 +134,14 @@ export function schemaNode(input: SchemaDraft): Schema {
   }
 }
 
+// Property tables follow ordinary record order: integer-like names first, in
+// numeric order, then the remaining names sorted.
+export function propertyOrder(names: Iterable<string>): string[] {
+  return Object.keys(
+    Object.fromEntries([...names].sort().map((name) => [name, true])),
+  );
+}
+
 // Diagnostics name the source keyword that produced a union's branches.
 export function unionKeyword(
   schema: Extract<Schema, { kind: 'union' }>,

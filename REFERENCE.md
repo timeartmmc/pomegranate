@@ -368,6 +368,15 @@ inapplicable active flags receive a diagnostic instead of silently doing nothing
 For fixed objects in 3.0, omit `required` when no properties are required;
 an explicit empty array is rejected. In 3.1, `required: []` is also accepted.
 
+`required` may name a member that `properties` does not declare, including
+after `allOf` composition. In an open object the member becomes a required
+field holding any JSON value, exactly as if it were declared with the empty
+schema `{}`. An object that lists only `required` names is therefore a fixed
+object of those fields. Under `additionalProperties: false` the same name is
+forbidden and required at once, and receives a diagnostic. A required name is
+a fixed member, so beside an explicit dynamic `additionalProperties` it is the
+unsupported mixture of fixed and dynamic members, directly or through `allOf`.
+
 OpenAPI 3.1 uses null types/type arrays and numeric exclusive bounds. Schema
 `const`, `$comment`, `examples`, and `contentMediaType`, plus `info.summary` and
 `info.license.identifier`, are accepted only in 3.1. `nullable` is accepted only
@@ -1202,8 +1211,9 @@ are unsupported.
 Requests reject unknown fields in fixed objects. Responses strip additive fields
 from fixed objects while rejecting missing required fields, changed types, and
 unknown enum values. Declared dynamic maps validate and preserve their entries.
-An object schema without `properties` entries or `additionalProperties`, such as
-`{ "type": "object" }`, accepts and preserves any JSON members, as in JSON Schema.
+An object schema without `properties` entries, `required` names, or
+`additionalProperties`, such as `{ "type": "object" }`, accepts and preserves any
+JSON members, as in JSON Schema.
 Declare `additionalProperties: false` for an object that must be empty.
 Fixed objects validate structural fields, including fields supplied by class
 instances or prototypes, and return fresh plain objects. Discriminator values in

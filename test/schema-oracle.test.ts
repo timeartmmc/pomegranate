@@ -280,6 +280,34 @@ const cases: SchemaCase[] = [
       [[], false],
     ],
   },
+  {
+    // required alone demands a member of any JSON value. As for other fixed
+    // objects, samples omit members outside the fixed set.
+    name: 'RequiredOnly',
+    schema: { type: 'object', required: ['id'] },
+    samples: [
+      [{ id: null }, true],
+      [{ id: { nested: [1] } }, true],
+      [{}, false],
+      [[], false],
+      [null, false],
+    ],
+  },
+  {
+    name: 'RequiredUndeclared',
+    schema: {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: ['name', 'extra'],
+    },
+    samples: [
+      [{ name: 'n', extra: 0 }, true],
+      [{ name: 'n', extra: null }, true],
+      [{ name: 'n' }, false],
+      [{ extra: 1 }, false],
+      [{ name: 1, extra: 1 }, false],
+    ],
+  },
   ...compositionCases,
 ];
 
@@ -383,10 +411,12 @@ for (const { name, samples } of cases) {
     // No coercion, defaults, or schema rewriting. OpenAPI's component container
     // and discriminator are annotations here: Ajv follows the literal refs and
     // independently evaluates oneOf. A sibling constraint gets its type from
-    // its ref target, so only Ajv's redundant-type style restriction is disabled.
+    // its ref target, and required may name a member without a properties
+    // entry, so only Ajv's style restrictions on those two forms are disabled.
     const reference = new Ajv2020({
       strict: true,
       strictTypes: false,
+      strictRequired: false,
       keywords: ['components', 'discriminator'],
     }).compile({
       components: { schemas },

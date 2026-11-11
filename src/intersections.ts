@@ -10,6 +10,7 @@ import type {
 import {
   constraintNames,
   constraintRecord,
+  propertyOrder,
   schemaNode,
   unionKeyword,
 } from './schema-node.js';
@@ -397,6 +398,33 @@ export function createIntersectionNormalizer(
     }
   }
 
+  // required also constrains members that no properties entry describes. An
+  // open object must contain them, with any JSON value. A closed object
+  // forbids every undeclared member, so requiring one is a contradiction.
+  function requiredMembers(
+    input: Extract<Schema, { kind: 'object' }>,
+    location: string,
+  ): Extract<Schema, { kind: 'object' }> {
+    const declared = input.properties;
+    const undeclared = input.required.filter((name) => !declared.has(name));
+    if (undeclared.length === 0) return input;
+    if (input.closed)
+      fail(
+        `${location}.required`,
+        `unknown property ${JSON.stringify(undeclared[0])}`,
+      );
+    const anyJson = schemaNode({ kind: 'json' });
+    return {
+      ...input,
+      properties: new Map(
+        propertyOrder([...declared.keys(), ...undeclared]).map((name) => [
+          name,
+          declared.get(name) ?? anyJson,
+        ]),
+      ),
+    };
+  }
+
   function materializeObject(input: Schema, location: string): Schema {
     if (input.kind !== 'object') return input;
     if (!input.typeExplicit)
@@ -404,29 +432,25 @@ export function createIntersectionNormalizer(
         location,
         'allOf object fragments require an explicit type: object conjunct',
       );
-    for (const name of input.required)
-      if (!input.properties.has(name))
-        fail(
-          `${location}.required`,
-          `unknown property ${JSON.stringify(name)}`,
-        );
-    assertScalarRules('object', input, undefined, location);
+    const object = requiredMembers(input, location);
+    assertScalarRules('object', object, undefined, location);
     // Object fragments retain their assertions until composition completes.
-    // With no declared fields or explicit closure, those assertions describe an
-    // open JSON map, even if they constrain its property count. Derive the output
-    // constructor here, before directional projection: a fixed object whose
-    // fields are later excluded must remain a fixed empty object.
-    if (input.properties.size === 0 && !input.closed)
+    // With no declared fields, required names or explicit closure, those
+    // assertions describe an open JSON map, even if they constrain its property
+    // count. Derive the output constructor here, before directional projection:
+    // a fixed object whose fields are later excluded must remain a fixed empty
+    // object.
+    if (object.properties.size === 0 && !object.closed)
       return schemaNode({
         kind: 'map',
-        additionalPropertiesExplicit: input.additionalPropertiesExplicit,
+        additionalPropertiesExplicit: object.additionalPropertiesExplicit,
         values: true,
-        minProperties: input.minProperties,
-        maxProperties: input.maxProperties,
-        readOnly: input.readOnly,
-        writeOnly: input.writeOnly,
+        minProperties: object.minProperties,
+        maxProperties: object.maxProperties,
+        readOnly: object.readOnly,
+        writeOnly: object.writeOnly,
       });
-    return input;
+    return object;
   }
 
   function intersection(
@@ -577,8 +601,10 @@ export function createIntersectionNormalizer(
       );
       // A bare object assertion is neutral. Explicit additionalProperties:true
       // declares map intent, which must retain the same admission limit as a
-      // direct declaration mixing fixed properties with dynamic entries.
-      if (fields.size > 0 && explicitlyOpen)
+      // direct declaration mixing fixed properties with dynamic entries. A
+      // required name is a fixed member as well, declared or not: resolving
+      // it into a field below would drop the map's other entries.
+      if ((fields.size > 0 || required.size > 0) && explicitlyOpen)
         fail(
           location,
           'mixed fixed properties and dynamic maps are unsupported',
@@ -592,12 +618,7 @@ export function createIntersectionNormalizer(
             );
       const properties = new Map<string, Schema>();
       // Match ordinary object normalization, including numeric-key enumeration.
-      const names = Object.keys(
-        Object.fromEntries(
-          [...fields.keys()].sort().map((name) => [name, true]),
-        ),
-      );
-      for (const name of names) {
+      for (const name of propertyOrder(fields.keys())) {
         const children = fields.get(name)!;
         properties.set(
           name,

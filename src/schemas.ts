@@ -608,7 +608,6 @@ function normalizeObject(
   nesting: number,
   registered: FormatRegistry,
   work?: WorkCounter,
-  intersectionMember = false,
 ): SchemaDraft {
   keys(
     value,
@@ -662,9 +661,10 @@ function normalizeObject(
     fail(`${location}.required`, 'expected an array of property names');
   if (new Set(required).size !== required.length)
     fail(`${location}.required`, 'duplicate required property');
-  for (const name of required)
-    if (!intersectionMember && !normalized.has(name))
-      fail(`${location}.required`, `unknown property ${JSON.stringify(name)}`);
+  // A required name may lack a properties entry here: another allOf member can
+  // declare it, and otherwise composition resolves it against object closure.
+  // Either way it becomes a field, so it must be usable as one.
+  for (const name of required) contractField(name, `${location}.required`);
   if (
     Object.hasOwn(value, 'additionalProperties') &&
     value.additionalProperties !== false
@@ -933,14 +933,7 @@ function normalizeShapeValue(
     return { kind: 'binary' };
   }
   if (kind === 'object')
-    return normalizeObject(
-      value,
-      location,
-      nesting,
-      registered,
-      work,
-      intersectionMember,
-    );
+    return normalizeObject(value, location, nesting, registered, work);
   if (kind === 'array') {
     keys(
       value,
