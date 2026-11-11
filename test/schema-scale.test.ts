@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeSchema, validateSchema } from '../dist/schemas.js';
-import { schemaType, typeSymbol } from '../dist/schema-types.js';
+import { schemaType } from '../dist/schema-types.js';
 import { schemaRenderer } from '../dist/emit-schema.js';
 import { identifier } from '../dist/code.js';
 
@@ -36,7 +36,7 @@ void test('wide required objects retain their contract with linear membership re
   const renderer = schemaRenderer(
     { request: new Map([['Wide', indexed]]), response: new Map() },
     identifier,
-    typeSymbol,
+    (schema, direction) => schemaType(schema, direction),
   );
   renderer.define(
     indexed,

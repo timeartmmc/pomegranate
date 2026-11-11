@@ -18,7 +18,6 @@ import {
   parse_WidgetId_request,
   parse_Widget_response,
 } from './client.staff.schemas.ts';
-import type * as schemas from './client.staff.schemas.ts';
 function options_0(
   input: unknown,
   issues: Issues,
@@ -34,15 +33,15 @@ function options_1(
 }
 type options_type1 = Record<string, never> | undefined;
 function make_options_2_path(): Parse<{
-  widgetId: schemas.RequestTypes['WidgetId'];
+  widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
 }> {
-  return fixedObject<{ widgetId: schemas.RequestTypes['WidgetId'] }>(
-    { widgetId: parse_WidgetId_request },
-    true,
-  );
+  return fixedObject<{
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  }>({ widgetId: parse_WidgetId_request }, true);
 }
-const options_2_path: Parse<{ widgetId: schemas.RequestTypes['WidgetId'] }> =
-  /* @__PURE__ */ make_options_2_path();
+const options_2_path: Parse<{
+  widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+}> = /* @__PURE__ */ make_options_2_path();
 const rules_scalar_part0: NumberRules = {
   integer: true,
   minimum: 1,
@@ -61,20 +60,28 @@ function make_options_2_query(): Parse<{ limit?: number | undefined }> {
 const options_2_query: Parse<{ limit?: number | undefined }> =
   /* @__PURE__ */ make_options_2_query();
 function make_options_2(): Parse<{
-  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  path: {
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  };
   query?: { limit?: number | undefined } | undefined;
 }> {
   return fixedObject<{
-    path: { widgetId: schemas.RequestTypes['WidgetId'] };
+    path: {
+      widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+    };
     query?: { limit?: number | undefined } | undefined;
   }>({ path: options_2_path, query: [options_2_query] }, true);
 }
 const options_2: Parse<{
-  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  path: {
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  };
   query?: { limit?: number | undefined } | undefined;
 }> = /* @__PURE__ */ make_options_2();
 type options_type2 = {
-  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  path: {
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  };
   query?: { limit?: number | undefined } | undefined;
 };
 type operation_type0 = Operation<

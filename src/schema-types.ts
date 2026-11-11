@@ -23,9 +23,14 @@ export function schemaType(
   target?: Client['target'],
   reference: (name: string, direction: Direction) => string = typeSymbol,
   recursive = false,
+  // Planning supplies compact child identities; emission supplies named shared
+  // types. Both retain this visitor's single interpretation of each type shape.
+  children?: (schema: Schema) => string,
 ): string {
-  const child = (value: Schema): string =>
-    schemaType(value, direction, target, reference, recursive);
+  const child =
+    children ??
+    ((value: Schema): string =>
+      schemaType(value, direction, target, reference, recursive));
   switch (schema.kind) {
     case 'json':
       return "import('./runtime.ts').JsonValue";

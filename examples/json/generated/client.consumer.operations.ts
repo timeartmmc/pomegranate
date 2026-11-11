@@ -40,7 +40,6 @@ import {
   parse_WidgetId_request,
   parse_Widget_response,
 } from './client.consumer.schemas.ts';
-import type * as schemas from './client.consumer.schemas.ts';
 function options_0(
   input: unknown,
   issues: Issues,
@@ -49,15 +48,15 @@ function options_0(
 }
 type options_type0 = Record<string, never> | undefined;
 function make_options_1_path(): Parse<{
-  widgetId: schemas.RequestTypes['WidgetId'];
+  widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
 }> {
-  return fixedObject<{ widgetId: schemas.RequestTypes['WidgetId'] }>(
-    { widgetId: parse_WidgetId_request },
-    true,
-  );
+  return fixedObject<{
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  }>({ widgetId: parse_WidgetId_request }, true);
 }
-const options_1_path: Parse<{ widgetId: schemas.RequestTypes['WidgetId'] }> =
-  /* @__PURE__ */ make_options_1_path();
+const options_1_path: Parse<{
+  widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+}> = /* @__PURE__ */ make_options_1_path();
 const rules_scalar_part0: NumberRules = {
   integer: true,
   minimum: 1,
@@ -76,20 +75,28 @@ function make_options_1_query(): Parse<{ limit?: number | undefined }> {
 const options_1_query: Parse<{ limit?: number | undefined }> =
   /* @__PURE__ */ make_options_1_query();
 function make_options_1(): Parse<{
-  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  path: {
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  };
   query?: { limit?: number | undefined } | undefined;
 }> {
   return fixedObject<{
-    path: { widgetId: schemas.RequestTypes['WidgetId'] };
+    path: {
+      widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+    };
     query?: { limit?: number | undefined } | undefined;
   }>({ path: options_1_path, query: [options_1_query] }, true);
 }
 const options_1: Parse<{
-  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  path: {
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  };
   query?: { limit?: number | undefined } | undefined;
 }> = /* @__PURE__ */ make_options_1();
 type options_type1 = {
-  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  path: {
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  };
   query?: { limit?: number | undefined } | undefined;
 };
 const rules_scalar_part1: StringRules = { minLength: 1, maxLength: 80 };
@@ -98,15 +105,15 @@ function make_scalar_part1(): Parse<string> {
 }
 const scalar_part1: Parse<string> = /* @__PURE__ */ make_scalar_part1();
 function make_options_2_path(): Parse<{
-  widgetId: schemas.RequestTypes['WidgetId'];
+  widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
 }> {
-  return fixedObject<{ widgetId: schemas.RequestTypes['WidgetId'] }>(
-    { widgetId: parse_WidgetId_request },
-    true,
-  );
+  return fixedObject<{
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  }>({ widgetId: parse_WidgetId_request }, true);
 }
-const options_2_path: Parse<{ widgetId: schemas.RequestTypes['WidgetId'] }> =
-  /* @__PURE__ */ make_options_2_path();
+const options_2_path: Parse<{
+  widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+}> = /* @__PURE__ */ make_options_2_path();
 function make_options_2_query(): Parse<{ dryRun?: boolean | undefined }> {
   return fixedObject<{ dryRun?: boolean | undefined }>(
     { dryRun: [booleanValue] },
@@ -124,16 +131,20 @@ function make_options_2_header(): Parse<{ 'Idempotency-Key': string }> {
 const options_2_header: Parse<{ 'Idempotency-Key': string }> =
   /* @__PURE__ */ make_options_2_header();
 function make_options_2(): Parse<{
-  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  path: {
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  };
   query?: { dryRun?: boolean | undefined } | undefined;
   headers: { 'Idempotency-Key': string };
-  body: schemas.RequestTypes['PreparationInput'];
+  body: import('./schema-types.48c732c9edc62000a3572f099a982b8699d7d29c5d06155bcaed7f048fd393ad.ts').type_PreparationInput_request;
 }> {
   return fixedObject<{
-    path: { widgetId: schemas.RequestTypes['WidgetId'] };
+    path: {
+      widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+    };
     query?: { dryRun?: boolean | undefined } | undefined;
     headers: { 'Idempotency-Key': string };
-    body: schemas.RequestTypes['PreparationInput'];
+    body: import('./schema-types.48c732c9edc62000a3572f099a982b8699d7d29c5d06155bcaed7f048fd393ad.ts').type_PreparationInput_request;
   }>(
     {
       path: options_2_path,
@@ -145,16 +156,20 @@ function make_options_2(): Parse<{
   );
 }
 const options_2: Parse<{
-  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  path: {
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  };
   query?: { dryRun?: boolean | undefined } | undefined;
   headers: { 'Idempotency-Key': string };
-  body: schemas.RequestTypes['PreparationInput'];
+  body: import('./schema-types.48c732c9edc62000a3572f099a982b8699d7d29c5d06155bcaed7f048fd393ad.ts').type_PreparationInput_request;
 }> = /* @__PURE__ */ make_options_2();
 type options_type2 = {
-  path: { widgetId: schemas.RequestTypes['WidgetId'] };
+  path: {
+    widgetId: import('./schema-types.9c5d4b9ce928eac5f4af020ccda247d0a2d4ac928bdfdc56fa0f8f2b2dfc7faa.ts').type_WidgetId_request;
+  };
   query?: { dryRun?: boolean | undefined } | undefined;
   headers: { 'Idempotency-Key': string };
-  body: schemas.RequestTypes['PreparationInput'];
+  body: import('./schema-types.48c732c9edc62000a3572f099a982b8699d7d29c5d06155bcaed7f048fd393ad.ts').type_PreparationInput_request;
 };
 const rules_scalar_part2: StringRules = { minLength: 1 };
 function make_scalar_part2(): Parse<string> {

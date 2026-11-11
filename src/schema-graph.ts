@@ -1,13 +1,9 @@
 import { assertNever, fail } from './diagnostics.js';
 import type { Schema, SchemaTable } from './model.js';
 
-function children(schema: Schema, schemas: SchemaTable): readonly Schema[] {
+// Inline structural children; named references are separate graph edges.
+export function schemaChildren(schema: Schema): readonly Schema[] {
   switch (schema.kind) {
-    case 'ref': {
-      const target = schemas.get(schema.name);
-      if (!target) fail(schema.location, `unresolved reference ${schema.name}`);
-      return [target];
-    }
     case 'object':
       return [...schema.properties.values()];
     case 'array':
@@ -17,6 +13,7 @@ function children(schema: Schema, schemas: SchemaTable): readonly Schema[] {
     case 'intersection':
     case 'union':
       return schema.branches;
+    case 'ref':
     case 'binary':
     case 'json':
     case 'string':
@@ -28,6 +25,12 @@ function children(schema: Schema, schemas: SchemaTable): readonly Schema[] {
     default:
       return assertNever(schema);
   }
+}
+function children(schema: Schema, schemas: SchemaTable): readonly Schema[] {
+  if (schema.kind !== 'ref') return schemaChildren(schema);
+  const target = schemas.get(schema.name);
+  if (!target) fail(schema.location, `unresolved reference ${schema.name}`);
+  return [target];
 }
 
 // Components are returned in dependency order. Work follows distinct schema

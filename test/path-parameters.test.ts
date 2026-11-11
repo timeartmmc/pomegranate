@@ -161,6 +161,20 @@ void test('inherited parameters produce the same bytes as explicit expansion, pr
   );
 });
 
+void test('inherited parameters remain byte-equivalent when methods share one client', async () => {
+  const together = {
+    clients: ['consumer'],
+    surfaces: {
+      consumer: ['readItem', 'writeItem'],
+      internal: ['internalReport'],
+    },
+  };
+  assert.deepEqual(
+    await compile(fixture(), together),
+    await compile(expandedFixture(), together),
+  );
+});
+
 void test('each method inherits path, query and header rules and applies whole-parameter overrides', async (t) => {
   const files = await compile(fixture(), selection);
   const root = await temporary(t);

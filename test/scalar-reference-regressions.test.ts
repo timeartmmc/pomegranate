@@ -5,7 +5,7 @@ import { compile, ContractError } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
 import { identifier } from '../dist/code.js';
 import { schemaRenderer } from '../dist/emit-schema.js';
-import { parseSymbol, schemaType, typeSymbol } from '../dist/schema-types.js';
+import { parseSymbol, schemaType } from '../dist/schema-types.js';
 import type { Schema as NormalizedSchema } from '../dist/model.js';
 import {
   normalizeSchema,
@@ -458,7 +458,7 @@ void test('parser bindings own their scalar cache entries even when normalized n
     const renderer = schemaRenderer(
       { request: schemas, response: schemas },
       (name, direction) => identifier(parseSymbol(name, direction)),
-      typeSymbol,
+      (schema, direction) => schemaType(schema, direction),
     );
     for (const direction of ['request', 'response'] as const)
       for (const name of orderSchemas(schemas)) {

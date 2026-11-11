@@ -21,7 +21,6 @@ import type {
 } from './model.js';
 import { hasConstraints, constraintRecord, schemaNode } from './schema-node.js';
 import { hasUnicodeProperty, intersectConstraints } from './scalar-rules.js';
-import { schemaType } from './schema-types.js';
 import { isRequired } from './required-index.js';
 import { scalarValidationPlan } from './intersections.js';
 import { stringFormatHelpers } from './formats.js';
@@ -136,7 +135,7 @@ function rules(
 export function schemaRenderer(
   schemas: DirectionalSchemas,
   reference: (name: string, direction: Direction) => Expression,
-  typeReference: (name: string, direction: Direction) => string,
+  typeOf: (schema: Schema, direction: Direction) => string,
   target?: Client['target'],
 ) {
   const identities = {
@@ -155,9 +154,18 @@ export function schemaRenderer(
   const typeImports = new Set<string>();
   const declarations: string[] = [];
   const parts = new Map<string, number>();
-  // Share only private scalar leaves within this module, across declaration
-  // drains. References and containers retain their own binding/usage semantics.
+  // Equivalent scalar leaves share constructors. Composite parts share by node
+  // identity within one emission scope and direction, across declaration drains.
+  // Separate entry points retain the same bindings whether their source was
+  // inherited or repeated explicitly; parser reuse never reuses parsed values.
   const scalarParts = new Map<string, Expression>();
+  const compositeParts: Record<
+    Direction,
+    Map<string, WeakMap<Schema, Expression>>
+  > = {
+    request: new Map(),
+    response: new Map(),
+  };
   // Validated names identify one format per output module. Retain these
   // identities across declaration drains so later components share them.
   const registeredFormats = new Map<string, Expression>();
@@ -391,7 +399,7 @@ export function schemaRenderer(
 
   // Return a Parse function name for a child schema. Unconstrained references,
   // binary targets, JSON and plain scalars use existing functions. Other scalar
-  // leaves share checked functions; containers keep their flat named bindings.
+  // leaves share checked functions; shared containers keep one flat binding.
   function part(
     value: Schema,
     direction: Direction,
@@ -421,7 +429,10 @@ export function schemaRenderer(
             ? 'integerValue'
             : 'numberValue',
       );
-    const type = schemaType(value, direction, target, typeReference);
+    const composites = compositeParts[direction].get(scope);
+    const existing = value.kind === 'ref' ? undefined : composites?.get(value);
+    if (existing) return existing;
+    const type = typeOf(value, direction);
     // The complete normalized leaf and its declared return type preserve every
     // rule, format and literal order. Full keys avoid hash collisions; access
     // flags remain in the key conservatively even though projection ran first.
@@ -446,8 +457,13 @@ export function schemaRenderer(
       parts.set(scope, index + 1);
       name = `${scope}_part${index}`;
     }
-    define(value, direction, location, scope, name, type, false);
     const result = identifier(name);
+    if (key === undefined && value.kind !== 'ref') {
+      const cache = composites ?? new WeakMap<Schema, Expression>();
+      if (!composites) compositeParts[direction].set(scope, cache);
+      cache.set(value, result);
+    }
+    define(value, direction, location, scope, name, type, false);
     if (key !== undefined) scalarParts.set(key, result);
     return result;
   }
@@ -778,8 +794,7 @@ export function schemaRenderer(
   return {
     define,
     part,
-    typeOf: (value: Schema, direction: Direction): string =>
-      schemaType(value, direction, target, typeReference),
+    typeOf,
     objectParser,
     helpers,
     typeImports,

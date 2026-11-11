@@ -4,11 +4,11 @@
   "files": {
     "call-runtime.ts": "632a88fd052c29b8fe2fdf03b894fc38001bbec6bef658581b6dbd18e98bfe61",
     "client.consumer.execute.ts": "8f319b7c955971987d2766172e0d04ea56a4b0cd2bd6ad3e4e3024553f6318e2",
-    "client.consumer.operations.ts": "528bc1c114ce2f3856cceb9ee20d55579fcee88f6f6be650496237704d9d9751",
+    "client.consumer.operations.ts": "17c9f47906a8ad3a090c78e518b2526501873e093d714da44c3580f399b7e3e0",
     "client.consumer.queries.ts": "61b8e9c1cee45704f3a274987c2c331832f3725021e3d86cfa41510634fb2294",
     "client.consumer.schemas.ts": "f9a7d043f3fc42e5281ac3394f15eb56d28d03843e24cb34a5f8f9ff355dc35b",
     "client.consumer.ts": "131ed3fc38bf06adc5844e5f1013eabd052bc5113a3fcd3bae5e4283bde6c1ba",
-    "client.staff.operations.ts": "328ae938c79cb88a4490accd6d078f124ea81b5df6025d33cff612d56f125628",
+    "client.staff.operations.ts": "3212014d7e0a6a03e26434a4c9b5d7ff76aad5ddf11f924220364d64c50dae8a",
     "client.staff.schemas.ts": "37ce981a420d4fc4eee3d43ef979c03b9bd8a04796b86fff7ca2f2aa49913854",
     "client.staff.ts": "e91b47ce1027d0f2b24bef0dd788bbd1a18dad5be3a6b7252812e327cae37ec7",
     "endpoint-runtime.ts": "06c6da4c7266f65b0ec3ac418aecc2a0b50f7e1cbe3bb9f35f49026ac5458379",

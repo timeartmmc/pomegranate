@@ -15,7 +15,7 @@ import {
   validateSchema,
 } from './schemas.js';
 
-function roots(
+export function operationSchemas(
   operation: Operation,
   direction: 'request' | 'response',
 ): readonly Schema[] {
@@ -159,12 +159,16 @@ export function selectClients(
       infiniteQueries: selectedInfinite,
       requestSchemas: closure(
         descriptor,
-        operations.flatMap((operation) => roots(operation, 'request')),
+        operations.flatMap((operation) =>
+          operationSchemas(operation, 'request'),
+        ),
         'request',
       ),
       responseSchemas: closure(
         descriptor,
-        operations.flatMap((operation) => roots(operation, 'response')),
+        operations.flatMap((operation) =>
+          operationSchemas(operation, 'response'),
+        ),
         'response',
       ),
     };

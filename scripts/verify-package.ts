@@ -41,6 +41,11 @@ import {
   typeCompositionSelection,
   verifyTypeComposition,
 } from '../test/type-composition-fixture.ts';
+import {
+  compositionGraphConsumer,
+  compositionGraphFixture,
+  compositionGraphSelection,
+} from '../test/composition-graph-fixture.ts';
 import { annotateDocument } from '../test/metadata-fixture.ts';
 import {
   multipartFixture,
@@ -305,6 +310,7 @@ try {
     'security-fixture.ts',
     'allof-fixture.ts',
     'recursion-fixture.ts',
+    'composition-graph-fixture.ts',
     'openapi30-fixture.ts',
     'tolerance-fixture.ts',
     'any-json-fixture.ts',
@@ -723,6 +729,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'security-generated/*.ts',
     'allof-generated/*.ts',
     'recursion-generated/*.ts',
+    'composition-graph-generated/*.ts',
     'openapi30-generated/*.ts',
     'tolerance-generated/*.ts',
     'any-json-generated/*.ts',
@@ -995,6 +1002,12 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     ['security', securityFixture(), securitySelection, securityConsumer],
     ['allof', allOfFixture(), allOfSelection, allOfConsumer],
     ['recursion', recursionFixture(), recursionSelection, recursionConsumer],
+    [
+      'composition-graph',
+      compositionGraphFixture(12),
+      compositionGraphSelection(12, true),
+      compositionGraphConsumer.replaceAll('./generated/', './'),
+    ],
     ['openapi30', openapi30Fixture(), openapi30Selection, openapi30Consumer],
     ['tolerance', toleranceFixture(), toleranceSelection, toleranceConsumer],
     ['any-json', anyJsonFixture(), anyJsonSelection, anyJsonConsumer],
@@ -1985,6 +1998,21 @@ ${await readFile(rewritingWorker, 'utf8')}`,
       } finally {cache.clear();}
     }
   `;
+  const compositionGraphChecks = `
+    const graphInput = {...compositionGraphValue(12, 'request'), stamp:'composed'};
+    for (const graphClient of [compositionGraphFirst, compositionGraphSecond]) {
+      const built = graphClient.operations.save.build({body:graphInput}).body;
+      assert.deepEqual(built, graphInput);
+      assert.notEqual(built.left, built.right);
+      assert.throws(()=>graphClient.operations.save.build({body:{...compositionGraphValue(12, 'request', ''),stamp:'composed'}}));
+      const observed = {...compositionGraphValue(12, 'response'),stamp:'composed'};
+      const parsed = graphClient.operations.save.parseResponse({status:200,headers:{'content-type':'application/json'},body:JSON.stringify(observed)});
+      assert.equal(parsed.kind, 'success');
+      assert.deepEqual(parsed.data, observed);
+    }
+    const graphOutput = compositionGraphRoot.schema.parse(compositionGraphValue(12, 'request'));
+    assert.notEqual(graphOutput.left, graphOutput.right);
+  `;
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
@@ -2036,6 +2064,11 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import * as recursionExpression from './recursion-generated/standalone.expression.ts';
     import {verifyRecursion} from './verification/recursion-fixture.ts';
     verifyRecursion(recursionClient, recursionSchemas, {request:recursionRequest,response:recursionResponse,mutual:recursionMutual,array:recursionArray,map:recursionMap,nullable:recursionNullable,expression:recursionExpression});
+    import * as compositionGraphFirst from './composition-graph-generated/client.first.ts';
+    import * as compositionGraphSecond from './composition-graph-generated/client.second.ts';
+    import * as compositionGraphRoot from './composition-graph-generated/standalone.request.ts';
+    import {compositionGraphValue} from './verification/composition-graph-fixture.ts';
+    ${compositionGraphChecks}
     import * as openapi30Client from './openapi30-generated/client.consumer.ts';
     import * as openapi30Request from './openapi30-generated/standalone.request.ts';
     import * as openapi30Response from './openapi30-generated/standalone.response.ts';
@@ -2205,6 +2238,11 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import * as recursionExpression from './.build/recursion-generated/standalone.expression.js';
     import {verifyRecursion} from './verification/recursion-fixture.ts';
     verifyRecursion(recursionClient, recursionSchemas, {request:recursionRequest,response:recursionResponse,mutual:recursionMutual,array:recursionArray,map:recursionMap,nullable:recursionNullable,expression:recursionExpression});
+    import * as compositionGraphFirst from './.build/composition-graph-generated/client.first.js';
+    import * as compositionGraphSecond from './.build/composition-graph-generated/client.second.js';
+    import * as compositionGraphRoot from './.build/composition-graph-generated/standalone.request.js';
+    import {compositionGraphValue} from './verification/composition-graph-fixture.ts';
+    ${compositionGraphChecks}
     import * as openapi30Client from './.build/openapi30-generated/client.consumer.js';
     import * as openapi30Request from './.build/openapi30-generated/standalone.request.js';
     import * as openapi30Response from './.build/openapi30-generated/standalone.response.js';

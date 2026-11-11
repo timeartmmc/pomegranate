@@ -5,7 +5,7 @@ import { identifier } from '../dist/code.js';
 import { schemaRenderer } from '../dist/emit-schema.js';
 import type { Schema as NormalizedSchema } from '../dist/model.js';
 import { constraintRecord, schemaNode } from '../dist/schema-node.js';
-import { parseSymbol, schemaType, typeSymbol } from '../dist/schema-types.js';
+import { parseSymbol, schemaType } from '../dist/schema-types.js';
 import { entry } from './assertions.ts';
 import {
   generatedTestWorkspace,
@@ -69,7 +69,7 @@ void test('container parser generation shares deep alias suffixes with linear ta
       const renderer = schemaRenderer(
         { request: schemas, response: schemas },
         (name, direction) => identifier(parseSymbol(name, direction)),
-        typeSymbol,
+        (schema, direction) => schemaType(schema, direction),
       );
       for (const direction of ['request', 'response'] as const)
         // Encounter the deepest path first, then all shared prefixes and twins.

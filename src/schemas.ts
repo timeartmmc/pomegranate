@@ -43,7 +43,7 @@ import {
 } from './schema-node.js';
 import { schemaAccess } from './directional.js';
 import { scalarIntersectionBase } from './intersections.js';
-import { schemaGraph } from './schema-graph.js';
+import { schemaChildren, schemaGraph } from './schema-graph.js';
 import {
   builtInFormat,
   expectedStringFormats,
@@ -1029,29 +1029,21 @@ function normalizeShapeValue(
 export function schemaReferences(
   schema: Schema,
 ): readonly Extract<Schema, { kind: 'ref' }>[] {
-  switch (schema.kind) {
-    case 'ref':
-      return [schema];
-    case 'array':
-      return schemaReferences(schema.items);
-    case 'map':
-      return schema.values === true ? [] : schemaReferences(schema.values);
-    case 'intersection':
-    case 'union':
-      return schema.branches.flatMap(schemaReferences);
-    case 'object':
-      return [...schema.properties.values()].flatMap(schemaReferences);
-    case 'json':
-    case 'binary':
-    case 'string':
-    case 'number':
-    case 'integer':
-    case 'boolean':
-    case 'null':
-      return [];
-    default:
-      return assertNever(schema);
+  const found: Extract<Schema, { kind: 'ref' }>[] = [];
+  const visited = new Set<Schema>();
+  const pending = [schema];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (current.kind === 'ref') found.push(current);
+    else {
+      const children = schemaChildren(current);
+      for (let index = children.length - 1; index >= 0; index--)
+        pending.push(children[index]!);
+    }
   }
+  return found;
 }
 
 type Usage = 'component' | 'request' | 'response' | 'multipart';

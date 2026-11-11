@@ -79,7 +79,7 @@ function renderComponents(
   const renderer = schemaRenderer(
     descriptor.schemas,
     (name, direction) => identifier(parseSymbol(name, direction)),
-    (name, direction) => componentType(name, direction, target),
+    (schema, direction) => componentType.schema(schema, direction, target),
     target,
   );
   const declarations = selections.flatMap(({ direction, names }) =>
@@ -94,7 +94,7 @@ function renderComponents(
         hasConstraints(schema.constraints)
       )
         renderer.push(
-          `type ${type} = ${componentType(name, direction, target)};`,
+          `type ${type} = ${componentType.component(name, direction, target)};`,
           location,
         );
       renderer.define(
@@ -626,7 +626,6 @@ function renderClient(
     ${schemaMaps.join('\n')}`;
   addOutput(`client.${moduleName(client.name)}.schemas.ts`, emittedSchema);
   const schemaImports = new Set<string>();
-  let usesSchemaTypes = false;
   const inline = schemaRenderer(
     descriptor.schemas,
     (name, direction) => {
@@ -634,10 +633,8 @@ function renderClient(
       schemaImports.add(symbol);
       return identifier(symbol);
     },
-    (name, direction) => {
-      usesSchemaTypes = true;
-      return `schemas.${direction === 'request' ? 'Request' : 'Response'}Types[${jsonSource(name)}]`;
-    },
+    (schema, direction) =>
+      componentType.schema(schema, direction, client.target),
     client.target,
   );
   const accountPrepared = sourceBudget();
@@ -876,7 +873,6 @@ export const ${operationScope(operation.id)}: ${defined.typeName} = /* @__PURE__
     ${runtimeTypeImports(inline.typeImports)}
     ${helperImports(inline.helpers)}
     ${schemaImports.size ? `import { ${[...schemaImports].sort().join(', ')} } from './client.${moduleName(client.name)}.schemas.ts';` : ''}
-    ${usesSchemaTypes ? `import type * as schemas from './client.${moduleName(client.name)}.schemas.ts';` : ''}
     ${inline.takeDeclarations()}
     ${endpointDeclarations.join('\n')}
     export type type_operations = ${operationsType};
@@ -908,7 +904,7 @@ export const ${operationScope(operation.id)}: ${defined.typeName} = /* @__PURE__
   if (client.queries.length + client.infiniteQueries.length > 0)
     addOutput(
       `client.${moduleName(client.name)}.queries.ts`,
-      renderQueries(descriptor, client),
+      renderQueries(descriptor, client, componentType),
     );
 }
 
@@ -941,7 +937,11 @@ function renderExecution(client: Client): string {
     }`;
 }
 
-function renderQueries(descriptor: Descriptor, client: Client): string {
+function renderQueries(
+  descriptor: Descriptor,
+  client: Client,
+  componentType: ReturnType<typeof renderTypes>,
+): string {
   const account = sourceBudget();
   const entry = (operation: Operation, source: string): string => {
     account(
@@ -965,7 +965,6 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
   // Removing cursors and transport headers can remove every schema reference
   // from base inputs, even when the ordinary client needs those components.
   const schemaImports = new Set<string>();
-  let usesSchemaTypes = false;
   const renderer = schemaRenderer(
     descriptor.schemas,
     (name, direction) => {
@@ -973,10 +972,8 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
       schemaImports.add(symbol);
       return identifier(symbol);
     },
-    (name, direction) => {
-      usesSchemaTypes = true;
-      return `schemas.${direction === 'request' ? 'Request' : 'Response'}Types[${jsonSource(name)}]`;
-    },
+    (schema, direction) =>
+      componentType.schema(schema, direction, client.target),
     client.target,
   );
   const infiniteTypes: string[] = [];
@@ -1041,11 +1038,6 @@ function renderQueries(descriptor: Descriptor, client: Client): string {
           `import { ${[...schemaImports].sort().join(', ')} } from './client.${moduleName(client.name)}.schemas.ts';`,
         ]
       : []),
-    ...(usesSchemaTypes
-      ? [
-          `import type * as schemas from './client.${moduleName(client.name)}.schemas.ts';`,
-        ]
-      : []),
     helperImports(renderer.helpers),
   ].join('\n');
   return `${banner}
@@ -1093,7 +1085,7 @@ function standaloneParserNames(
       needed.add(name);
       return identifier(parseSymbol(name, direction));
     },
-    componentType,
+    (schema, direction) => componentType.schema(schema, direction),
   );
   renderer.part(
     selection.schema,
@@ -1109,7 +1101,7 @@ function standaloneParserNames(
       `components.schemas.${name}`,
       parse,
       parse,
-      componentType(name, selection.direction),
+      componentType.component(name, selection.direction),
       false,
     );
     renderer.takeDeclarations();
