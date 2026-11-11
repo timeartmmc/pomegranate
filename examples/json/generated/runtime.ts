@@ -116,8 +116,10 @@ export function recursiveParse<T>(
         fatal: true,
       };
       if (remaining(issues) > 0) issues.splice(start, 0, cause);
-      else if (issues.length > start) issues[start] = cause;
-      else report(issues, traversal.abort, true);
+      else if (issues.length > start) {
+        issues[start] = cause;
+        omitted.add(issues);
+      } else report(issues, traversal.abort, true);
     }
     return value;
   } finally {
@@ -191,6 +193,10 @@ function recursiveChild<T>(
 // synchronous union attempts propagate that marker before a parent resumes.
 function aborted(issues: Issues): boolean {
   return issues[abortCause] !== undefined;
+}
+
+function stopped(issues: Issues): boolean {
+  return exhausted(issues) || aborted(issues);
 }
 
 const omitted = new WeakSet<readonly unknown[]>();
@@ -429,7 +435,7 @@ export function requiredKeys(
   names: readonly string[],
   issues: Issues,
 ): ReadonlySet<string> | Invalid | undefined {
-  if (exhausted(issues) || aborted(issues)) return invalid;
+  if (stopped(issues)) return invalid;
   let missing: Set<string> | undefined;
   for (const name of names)
     if (
@@ -469,7 +475,7 @@ export function field<T>(
   issues: Issues,
   missing?: ReadonlySet<string>,
 ): T | Invalid {
-  if (exhausted(issues) || aborted(issues)) return invalid;
+  if (stopped(issues)) return invalid;
   if (missing?.has(key)) return missingProperty(issues, key);
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
@@ -490,7 +496,7 @@ export function optionalField<T>(
   parse: Parse<T>,
   issues: Issues,
 ): T | undefined | Absent | Invalid {
-  if (exhausted(issues) || aborted(issues)) return invalid;
+  if (stopped(issues)) return invalid;
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
   // The common absent case costs one membership test, as an explicit
@@ -518,7 +524,7 @@ export function unknownKeys(
   known: readonly string[],
   issues: Issues,
 ): boolean {
-  if (exhausted(issues) || aborted(issues)) return true;
+  if (stopped(issues)) return true;
   let keys = keySets.get(known);
   if (!keys) {
     keys = new Set(known);
@@ -554,7 +560,7 @@ export function forbiddenKeys(
 ): boolean {
   let found = false;
   for (const key of names) {
-    if (exhausted(issues) || aborted(issues)) return true;
+    if (stopped(issues)) return true;
     // Known read-only fields follow structural presence even when they are
     // non-enumerable. Test membership without invoking an excluded getter.
     if (key in source && holds(source, key)) {
@@ -1240,7 +1246,7 @@ export function list<T>(
   items: Parse<T>,
   rules?: ArrayRules,
 ): T[] | Invalid {
-  if (exhausted(issues) || aborted(issues)) return invalid;
+  if (stopped(issues)) return invalid;
   if (!Array.isArray(input)) return report(issues, 'expected an array', true);
   const length = arrayLength(input);
   if (length === undefined)
@@ -1258,7 +1264,7 @@ export function list<T>(
   const received: unknown[] | undefined =
     settings?.uniqueItems === 'received' ? [] : undefined;
   for (let index = 0; index < length; index++) {
-    if (exhausted(issues) || aborted(issues)) return invalid;
+    if (stopped(issues)) return invalid;
     const before = issues.length;
     const element = arrayItem(input, index);
     received?.push(element);
@@ -1395,7 +1401,10 @@ function canonicalJson(
       text += '[';
       pending.push(']');
       for (let index = length - 1; index >= 0; index--)
-        pending.push({ value: items[index] }, ...(index ? [','] : []));
+        pending.push(
+          { value: arrayItem(items, index) },
+          ...(index ? [','] : []),
+        );
     } else {
       const members: [string, unknown][] = [];
       // Bound enumeration and value reads before retaining or sorting members.
@@ -1434,7 +1443,7 @@ export function map<T>(
   values: Parse<T>,
   rules?: ObjectRules,
 ): Record<string, T> | Invalid {
-  if (exhausted(issues) || aborted(issues)) return invalid;
+  if (stopped(issues)) return invalid;
   // Dynamic JSON keys are data: inspect own entries of plain records and build
   // the result with fromEntries so keys such as __proto__ stay own properties.
   if (!plainRecord(input)) return report(issues, 'expected an object', true);
@@ -1445,7 +1454,7 @@ export function map<T>(
   // Snapshot keys, then read values as they are validated. Eager Object.entries
   // would invoke every getter before the issue budget could stop traversal.
   for (const name of Reflect.ownKeys(input)) {
-    if (exhausted(issues) || aborted(issues)) return invalid;
+    if (stopped(issues)) return invalid;
     if (
       typeof name !== 'string' ||
       !Object.getOwnPropertyDescriptor(input, name)?.enumerable
@@ -1514,7 +1523,7 @@ export function union<T>(
   issues: Issues,
   branches: readonly Parse<T>[],
 ): T | Invalid {
-  if (exhausted(issues) || aborted(issues)) return invalid;
+  if (stopped(issues)) return invalid;
   const traversal = recursiveTraversals.get(issues);
   // Generated null branches return null, and cannot match a non-null value.
   // A sole viable branch is committed: retain its parent's diagnostic mode.
@@ -1561,7 +1570,7 @@ export function union<T>(
     mergeIssues(issues, reported[0]!, (issue) => issue);
   else
     for (const [index, attempt] of attempts.entries()) {
-      if (exhausted(issues) || aborted(issues)) break;
+      if (stopped(issues)) break;
       if (close.length > 0 && fatalSince(attempt, 0)) continue;
       mergeIssues(issues, attempt, ({ path, message }) => ({
         path,
@@ -1750,13 +1759,11 @@ export function scalarIntersection<T>(
       return invalid;
     }
     for (const parse of checks) {
+      if (stopped(issues)) return invalid;
       const start = issues.length;
-      if (parse(value, issues) === invalid || issues.length !== start) {
-        rejected(issues, start);
-        return invalid;
-      }
+      if (parse(value, issues) === invalid) rejected(issues, start);
     }
-    return value;
+    return issues.length === start ? value : invalid;
   };
 }
 

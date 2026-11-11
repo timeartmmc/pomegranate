@@ -61,6 +61,7 @@ export function schemaNode(input: SchemaDraft): Schema {
         ...access,
         branches: value.branches,
         location: value.location,
+        branchLocations: value.branchLocations,
         literals: value.literals,
       };
     case 'map':
@@ -80,6 +81,7 @@ export function schemaNode(input: SchemaDraft): Schema {
         branches: value.branches,
         cardinality: value.cardinality ?? 'any',
         sourceTypeArray: value.sourceTypeArray,
+        sourceLiterals: value.sourceLiterals,
         discriminator: value.discriminator,
       };
     case 'object':

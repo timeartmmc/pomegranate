@@ -703,14 +703,20 @@ function operationParameters(
   // Authorization parameter is safe only when security already sends that
   // header; otherwise it may be the contract's only description of a credential.
   const ignored = declared.filter(ignoredHeader);
-  if (
-    ignored.some(({ name }) => name.toLowerCase() === 'authorization') &&
-    !sendsAuthorization(security)
-  )
+  const authorization = ignored.find(
+    ({ name }) => name.toLowerCase() === 'authorization',
+  );
+  if (authorization && !sendsAuthorization(security)) {
+    const index = own.indexOf(authorization);
+    const declaration =
+      index < 0
+        ? `paths.${path}.parameters[${inherited.indexOf(authorization)}]`
+        : `${location}.parameters[${index}]`;
     fail(
-      `${location}.parameters`,
-      "an Authorization header parameter is ignored, as OpenAPI requires, but this operation's security sends no Authorization credentials; declare them as a security scheme",
+      declaration,
+      `an Authorization header parameter is ignored, as OpenAPI requires, but ${location} security sends no Authorization credentials; declare them as a security scheme`,
     );
+  }
   const parameters = declared.filter(
     (parameter) => !ignored.includes(parameter),
   );
@@ -1123,13 +1129,17 @@ function prepareSchemas(
         normalize(rawSchemas[name], `components.schemas.${name}`),
       ]),
   );
-  const schemaOrder = orderSchemas(raw);
+  const compositionOrder = orderSchemas(raw);
   // Productive cycles retain references to later component identities while
   // composition resolves only the declarations needed at the same value.
   const schemas = new Map(raw);
   const compose = createIntersectionNormalizer(schemas);
-  for (const name of schemaOrder)
+  for (const name of compositionOrder)
     schemas.set(name, compose(raw.get(name)!, `components.schemas.${name}`));
+  // Composition can replace a reference with fields that directly reference
+  // other components. Order the resulting graph so eager parser constructors
+  // cannot capture a dependency that the source graph placed later.
+  const schemaOrder = orderSchemas(schemas);
   // Share traversal work only within this descriptor. Separate usage checks
   // keep multipart binary fields from weakening ordinary JSON validation.
   const validation = schemaValidation();

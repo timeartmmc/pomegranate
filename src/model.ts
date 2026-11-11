@@ -38,6 +38,7 @@ export type SchemaDraft = {
       readonly kind: 'intersection';
       readonly branches: readonly Schema[];
       readonly location: string;
+      readonly branchLocations?: readonly string[] | undefined;
       readonly literals?: readonly Scalar[] | undefined;
     }
   | {
@@ -64,6 +65,9 @@ export type SchemaDraft = {
       // Diagnostic provenance: these branches came from a nullable type
       // declaration, rather than an anyOf keyword in the source document.
       readonly sourceTypeArray?: true | undefined;
+      // Different-type enum groups may narrow an intersection; explicit
+      // anyOf/oneOf alternatives must retain their ordinary contradiction checks.
+      readonly sourceLiterals?: true | undefined;
       readonly discriminator?:
         | {
             readonly propertyName: string;
@@ -127,6 +131,7 @@ export type Schema = {
       readonly kind: 'intersection';
       readonly branches: readonly Schema[];
       readonly location: string;
+      readonly branchLocations: readonly string[] | undefined;
       readonly literals: readonly Scalar[] | undefined;
     }
   | {
@@ -145,6 +150,7 @@ export type Schema = {
       readonly branches: readonly Schema[];
       readonly cardinality: 'any' | 'one';
       readonly sourceTypeArray: true | undefined;
+      readonly sourceLiterals: true | undefined;
       readonly discriminator:
         | {
             readonly propertyName: string;

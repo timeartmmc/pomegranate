@@ -15,6 +15,7 @@ import {
   absent,
   nullValue,
   report,
+  recursiveParse,
   stringValue,
   union,
   unknownKeys,
@@ -28,6 +29,26 @@ import {
 } from './generated-workspace.ts';
 import type { StandaloneModule } from './runtime-types.ts';
 import type { Schema } from './schema-helpers.ts';
+
+void test('promoting a recursive abort into a full issue buffer marks omitted diagnostics', () => {
+  const schema = validator((input, issues) =>
+    recursiveParse(input, issues, (value, sink) => {
+      for (let index = 0; index < 99; index++)
+        report(sink, `earlier failure ${index}`, false);
+      return list(value, sink, stringValue);
+    }),
+  );
+  const failure = schema.safeParse(Array<string>(100_001).fill('valid'));
+  assert.equal(failure.success, false);
+  if (failure.success) assert.fail('excessive recursive work must fail');
+  assert.match(failure.error.issues[0]!.message, /work exceeds 100000/);
+  assert.equal(failure.error.issues.length, 101);
+  assert.equal(
+    failure.error.issues.filter(({ message }) => /omitted/.test(message))
+      .length,
+    1,
+  );
+});
 
 void test('invalid arrays and maps stop reading values at the issue budget', () => {
   for (const container of ['array', 'map']) {

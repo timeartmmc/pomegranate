@@ -629,6 +629,13 @@ schemas at a time, including members of recursive component groups. Shared
 references do not bypass these limits; excessive composition receives an
 actionable diagnostic before generation.
 
+Schema validation also permits at most 1,000,000 enum-candidate visits per
+validation pass. Constrained references reserve their candidate scan before
+filtering, including in unused declarations. Reduce repeated constrained
+references to wide enums, or split the contract, when this limit is exceeded.
+Alias chains share their union-analysis results rather than repeating the
+same traversal for every union.
+
 Finite schema structure supports at most 128 structural levels, including
 structure behind references. Pure aliases add no levels. Each inline schema is
 limited to 32 levels; use component references for deeper structures. Named types and typed
@@ -728,6 +735,11 @@ Reference constraints may narrow an existing enum; empty literal intersections
 and contradictory bounds also fail across reference chains. These checks
 diagnose supported contradictions without attempting general schema
 satisfiability analysis.
+Constrained references keep the referenced component's declared TypeScript
+identity, so its literal type can be wider than the values that validation
+accepts. An `allOf` scalar composition can expose its narrowed literal type.
+After a composed scalar's base type and bounds pass, independent assertion
+failures are collected within the ordinary issue budget.
 
 `type: "string", format: "password"` is a presentation hint, as defined in
 [OpenAPI's format registry](https://spec.openapis.org/registry/format/password).
@@ -866,7 +878,10 @@ Multiple scalar branches must have the same kind, except that `number` and
 single referenced branch restrict that reference, as 3.1 reference siblings do.
 For example, `{ "allOf": [{ "$ref": "#/components/schemas/Codes" }], "maxItems": 2 }`
 limits the referenced array, including in 3.0. Sibling or branch `enum` and
-`const` restrict the composition without a type. Declare a type beside
+`const` restrict the composition without a type. A mixed-type enum narrows to
+the types admitted by the other conjuncts; for example, a string conjunct with
+`enum: ["active", null]` permits only `"active"`. If no literal can remain,
+compilation reports the contradiction. Declare a type beside
 `format`, and in branches such as `{ "maxLength": 3 }`.
 
 For example, a reusable base may declare shared fields and an operation-specific
@@ -941,9 +956,10 @@ Constraints beside a referenced union are unsupported.
 This stage does not support intersections involving typed dynamic maps, multiple
 array schemas, or binary schemas. A nullable type beside or within a
 multi-branch composition is a union with null, and every branch would also need
-to accept null. Wrap the composition in an outer `anyOf` with a null-only branch
-instead. An unconstrained
-object such as `{ "type": "object" }` adds no constraints when combined with a
+to accept null. A finite scalar literal assertion may narrow such a nullable
+declaration. For other conjuncts, wrap the composition in an outer `anyOf` with
+a null-only branch instead. An unconstrained object such as `{ "type": "object" }`
+adds no constraints when combined with a
 fixed object; an empty schema `{}` is neutral. A single branch can still wrap
 existing supported shapes.
 Unsupported or incompatible compositions fail before

@@ -65,13 +65,13 @@ function literalSchemas(): Record<string, Schema> {
   };
 }
 
-void test('wide enums remain bounded across ordinary references and unchanged alias constraints', async (t) => {
+void test('wide enums retain ordinary reference sharing and diagnose excessive constrained scans', async (t) => {
   const root = await temporary(t);
   const probe = join(root, 'probe.mjs');
   await writeFile(
     probe,
     `import assert from 'node:assert/strict';
-const { compile } = await import(${JSON.stringify(new URL('../dist/index.js', import.meta.url).href)});
+const { compile, ContractError } = await import(${JSON.stringify(new URL('../dist/index.js', import.meta.url).href)});
 const reference = { $ref: '#/components/schemas/Values' };
 const values = Array.from({ length: 50_000 }, (_, index) => index);
 for (const mode of ['properties', 'aliases', 'constraints']) {
@@ -87,23 +87,35 @@ for (const mode of ['properties', 'aliases', 'constraints']) {
     for (let index = 0; index < 800; index++)
       schemas['Alias' + index] = mode === 'constraints' ? { ...reference, minimum: 0 } : { ...reference };
   }
-  const files = await compile({
+  const document = {
     openapi: '3.1.2',
     info: { title: 'Synthetic bounded enum references', version: '1' },
     paths: {},
     components: { schemas },
-  }, {
+  };
+  const options = {
     clients: [],
     standalone: { root: { schema: '#/components/schemas/' + (mode === 'properties' ? 'Root' : 'Values'), usage: 'response' } },
-  });
+  };
+  if (mode === 'constraints') {
+    await assert.rejects(compile(document, options), (error) => {
+      assert.ok(error instanceof ContractError);
+      assert.ok(error.location.startsWith('components.schemas.Alias'));
+      assert.match(error.message, /schema validation work exceeds.*1000000/);
+      assert.match(error.message, /reduce repeated constrained references to wide enums/);
+      return true;
+    });
+    continue;
+  }
+  const files = await compile(document, options);
   assert.ok(Object.hasOwn(files, 'standalone.root.ts'));
   assert.ok(Object.values(files).reduce((size, source) => size + Buffer.byteLength(source), 0) < 4 * 1024 * 1024);
 }
 console.log('bounded enum references');
 `,
   );
-  // A successful public compilation under a fixed heap catches retained enum
-  // copies without relying on machine-dependent timing or memory measurements.
+  // Ordinary references compile under a fixed heap; excessive constrained work
+  // returns a diagnostic rather than exhausting that process's resources.
   const result = await exec(
     process.execPath,
     ['--max-old-space-size=256', probe],

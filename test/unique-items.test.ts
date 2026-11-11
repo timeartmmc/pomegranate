@@ -120,6 +120,42 @@ function duplicate(
     ]);
 }
 
+void test('received uniqueness comparisons reject array holes even with inherited index data', async (t) => {
+  const { validator } = await generated(t, '3.1.2', {}, ['Points']);
+  const schema = validator('Points:response');
+  const sparse: unknown[] = Array<unknown>(1);
+  const input = [
+    { x: 1, y: 2, extra: sparse },
+    { x: 1, y: 2, extra: [8] },
+  ];
+  assert.equal(schema.safeParse(input).success, false);
+  const previous = Object.getOwnPropertyDescriptor(Array.prototype, '0');
+  try {
+    Object.defineProperty(Array.prototype, '0', {
+      value: 7,
+      writable: true,
+      configurable: true,
+    });
+    const failure = schema.safeParse(input);
+    assert.equal(failure.success, false);
+    if (!failure.success)
+      assert.match(failure.error.message, /comparison requires acyclic JSON/);
+  } finally {
+    if (previous) Object.defineProperty(Array.prototype, '0', previous);
+    else Reflect.deleteProperty(Array.prototype, '0');
+  }
+  assert.deepEqual(
+    schema.parse([
+      { x: 1, y: 2, extra: [7] },
+      { x: 1, y: 2, extra: [8] },
+    ]),
+    [
+      { x: 1, y: 2 },
+      { x: 1, y: 2 },
+    ],
+  );
+});
+
 void test('uniqueItems compares validated JSON values in requests, responses and standalone validators', async (t) => {
   const { client, validator } = await generated(
     t,

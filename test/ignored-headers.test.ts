@@ -220,10 +220,11 @@ void test('an Authorization header parameter is ignored only where security send
         compile(secured(declared, ['Authorization'], modern), securedSelection),
         (error) => {
           assert.ok(error instanceof ContractError, JSON.stringify(declared));
-          assert.equal(error.location, `paths./items.${method}.parameters`);
+          assert.equal(error.location, 'paths./items.parameters[0]');
+          assert.ok(error.message.includes(`paths./items.${method} security`));
           assert.match(
             error.message,
-            /an Authorization header parameter is ignored, as OpenAPI requires, but this operation's security sends no Authorization credentials; declare them as a security scheme$/,
+            /an Authorization header parameter is ignored, as OpenAPI requires, but .* security sends no Authorization credentials; declare them as a security scheme$/,
           );
           return true;
         },
@@ -248,4 +249,34 @@ void test('an Authorization header parameter is ignored only where security send
     await rejects({ document: [{ Bearer: [] }], write: security }, 'post');
     await rejects({ document: security, read: [{ Bearer: [] }] }, 'post');
   }
+});
+
+void test('ignored Authorization diagnostics identify the effective declaration, including reference bindings and overrides', async () => {
+  for (const modern of [true, false])
+    for (const referenced of [true, false])
+      for (const inherited of [true, false]) {
+        const document = secured({}, [], modern);
+        Object.assign(document.components, {
+          parameters: { Authorization: header('Authorization') },
+        });
+        const declaration = referenced
+          ? { $ref: '#/components/parameters/Authorization' }
+          : header('Authorization');
+        const item = document.paths['/items'];
+        Object.assign(item, {
+          parameters: [header('Accept'), header('Authorization')],
+        });
+        Object.assign(inherited ? item : item.get, {
+          parameters: [header('Accept'), declaration],
+        });
+        await assert.rejects(compile(document, securedSelection), (error) => {
+          assert.ok(error instanceof ContractError);
+          assert.equal(
+            error.location,
+            `paths./items.${inherited ? '' : 'get.'}parameters[1]`,
+          );
+          assert.ok(error.message.includes('paths./items.get security'));
+          return true;
+        });
+      }
 });

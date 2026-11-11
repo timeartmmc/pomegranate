@@ -495,6 +495,9 @@ function normalizeIntersection(
   const branches = Array.from(arrayValues(raw), (branch, index) =>
     member(branch, `${location}.allOf[${index}]`),
   );
+  const branchLocations = branches.map(
+    (_, index) => `${location}.allOf[${index}]`,
+  );
   const siblings = Object.fromEntries(
     Object.entries(value).filter(
       ([key]) => key !== 'allOf' && !annotationKeys.includes(key),
@@ -509,24 +512,43 @@ function normalizeIntersection(
       // Untyped sibling constraints restrict the one referenced value, exactly
       // like 3.1 reference siblings. An unconstrained branch adds no rule, so
       // one constrained reference at the author's $ref represents the whole
-      // schema. A constrained branch stays independent: a reference holds one
-      // pattern or multipleOf, and sibling rules must not replace its own.
+      // schema. Comparable bounds merge; distinct patterns and multipleOf
+      // assertions stay independent because a reference holds only one of each.
       const constrained = member(
         { ...siblings, $ref: `#/components/schemas/${only.name}` },
         location,
       );
-      if (constrained.kind === 'ref' && !hasConstraints(only.constraints))
+      const independent = ['pattern', 'multipleOf'] as const;
+      if (
+        constrained.kind === 'ref' &&
+        !independent.some(
+          (key) =>
+            only.constraints[key] !== undefined &&
+            constrained.constraints[key] !== undefined &&
+            only.constraints[key] !== constrained.constraints[key],
+        )
+      )
         return {
           ...constrained,
+          constraints: intersectConstraints(
+            only.constraints,
+            constrained.constraints,
+          ),
           location: only.location,
           readOnly: constrained.readOnly || only.readOnly,
           writeOnly: constrained.writeOnly || only.writeOnly,
         };
       branches.push(constrained);
     } else branches.push(member(siblings, location));
+    branchLocations.push(location);
   }
   if (branches.length === 1) return branches[0]!;
-  return { kind: 'intersection', branches, location: `${location}.allOf` };
+  return {
+    kind: 'intersection',
+    branches,
+    branchLocations,
+    location: `${location}.allOf`,
+  };
 }
 
 function normalizeUnion(
@@ -836,7 +858,7 @@ function normalizeLiterals(
   if (branches.length === 1) return branches[0]!;
   // The alternatives count just like explicit anyOf branches.
   assertInlineSchemaNesting(nesting + 1, location);
-  return schemaNode({ kind: 'union', branches });
+  return schemaNode({ kind: 'union', branches, sourceLiterals: true });
 }
 
 function normalizeNullableType(
@@ -1052,10 +1074,21 @@ type ReferenceConstraints = {
   literals: readonly Scalar[] | undefined;
 };
 export function schemaValidation() {
+  const maximum = 1_000_000;
+  let remaining = maximum;
   return {
     depths: new Map<Schema, number>(),
     checked: new Map<Usage, Set<Schema>>(),
     constraints: new Map<Schema, ReferenceConstraints>(),
+    // A small alias graph can multiply a wide enum's candidate scans. Charge
+    // the complete scan before filtering, shared across this validation pass.
+    work: (amount: number, location: string): void => {
+      if ((remaining -= amount) < 0)
+        fail(
+          location,
+          `schema validation work exceeds the supported limit of ${maximum} units; reduce or split the input contract, or reduce repeated constrained references to wide enums`,
+        );
+    },
   };
 }
 
@@ -1194,10 +1227,20 @@ function alternativeVisits(schema: Schema, schemas: SchemaTable): number {
     case 'ref': {
       // Walk alias chains iteratively; they add no value nesting.
       const recursive = recursiveSchemas(schemas).members;
+      const aliases: Schema[] = [];
       let target: Schema = schema;
-      while (target.kind === 'ref' && !recursive.has(target.name))
+      while (
+        target.kind === 'ref' &&
+        !recursive.has(target.name) &&
+        !cache.has(target)
+      ) {
+        aliases.push(target);
         target = schemas.get(target.name)!;
-      if (target.kind !== 'ref') count = visits(target);
+      }
+      count = cache.get(target) ?? (target.kind === 'ref' ? 1 : visits(target));
+      // Different unions often enter the same long alias suffix. Retain every
+      // visited suffix, not only the first reference that requested its cost.
+      for (const alias of aliases) cache.set(alias, count);
       break;
     }
     case 'object':
@@ -1331,6 +1374,7 @@ function validateReferenceConstraints(
   schemas: SchemaTable,
   location: string,
   cache: Map<Schema, ReferenceConstraints>,
+  work: WorkCounter,
 ): void {
   if (
     resolved.kind !== 'string' &&
@@ -1363,6 +1407,7 @@ function validateReferenceConstraints(
     // every member must not multiply the same wide enum in the validation cache.
     let literals = rules.literals;
     if (literals !== undefined && hasConstraints(reference.constraints)) {
+      work(literals.length, location);
       const violation = literalViolation(reference.constraints);
       const narrowed = literals.filter((item) => violation(item) === undefined);
       if (narrowed.length !== literals.length) literals = narrowed;
@@ -1381,11 +1426,12 @@ function validateUsage(
   usage: Usage,
   checked: Set<Schema>,
   constraintCache: Map<Schema, ReferenceConstraints>,
+  work: WorkCounter,
 ): void {
   if (checked.has(schema)) return;
   checked.add(schema);
   const visit = (value: Schema, path: string) =>
-    validateUsage(value, schemas, path, usage, checked, constraintCache);
+    validateUsage(value, schemas, path, usage, checked, constraintCache, work);
   const access = schemaAccess(schema, schemas);
   if (access.readOnly && access.writeOnly)
     fail(
@@ -1444,6 +1490,7 @@ function validateUsage(
         schemas,
         location,
         constraintCache,
+        work,
       );
       visit(target, targetLocation);
       return;
@@ -1462,7 +1509,10 @@ function validateUsage(
     case 'intersection':
       scalarIntersectionBase(schema, schemas);
       schema.branches.forEach((value, index) =>
-        visit(value, `${schema.location}[${index}]`),
+        visit(
+          value,
+          schema.branchLocations?.[index] ?? `${schema.location}[${index}]`,
+        ),
       );
       return;
     case 'union':
@@ -1504,7 +1554,15 @@ export function validateSchema(
     checked = new Set();
     cache.checked.set(usage, checked);
   }
-  validateUsage(schema, schemas, location, usage, checked, cache.constraints);
+  validateUsage(
+    schema,
+    schemas,
+    location,
+    usage,
+    checked,
+    cache.constraints,
+    cache.work,
+  );
 }
 
 function sameValueReferences(

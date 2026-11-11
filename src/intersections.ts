@@ -97,6 +97,14 @@ export type ScalarValidationPlan = Readonly<{
   runtime: readonly ScalarAssertion[];
 }>;
 
+function assertionViolation(assertion: ScalarAssertion) {
+  return assertion.kind === 'pattern'
+    ? literalViolation({ pattern: assertion.pattern })
+    : assertion.kind === 'format'
+      ? literalViolation({}, assertion.format)
+      : literalViolation({ multipleOf: assertion.value });
+}
+
 const scalarPlans = new WeakMap<
   SchemaTable,
   WeakMap<Schema, ScalarValidationPlan>
@@ -250,16 +258,7 @@ export function scalarValidationPlan(
   }
   if (literals !== undefined) {
     charge(literals.length * (assertions.size + 1), location);
-    const checks = [
-      literalViolation(bounds),
-      ...atoms.map((assertion) =>
-        assertion.kind === 'pattern'
-          ? literalViolation({ pattern: assertion.pattern })
-          : assertion.kind === 'format'
-            ? literalViolation({}, assertion.format)
-            : literalViolation({ multipleOf: assertion.value }),
-      ),
-    ];
+    const checks = [literalViolation(bounds), ...atoms.map(assertionViolation)];
     const narrowed = literals.filter(
       (value) =>
         (kind !== 'integer' ||
@@ -315,6 +314,13 @@ export function createIntersectionNormalizer(
       location,
       'recursive allOf object expansion is unsupported; keep recursive edges as local property, array-item or map-value references without overlapping object composition',
     );
+
+  // A distributed branch can be anchored at a source reference or virtual
+  // enum/type assertion. Those values have no child schema fields to append.
+  const childLocation = (location: string, suffix: string): string =>
+    /\.(?:\$ref|enum|type)$/.test(location)
+      ? location
+      : `${location}.${suffix}`;
 
   function resolve(input: Schema, location: string): Resolved {
     const path: Extract<Schema, { kind: 'ref' }>[] = [];
@@ -388,7 +394,7 @@ export function createIntersectionNormalizer(
       for (const [name, child] of input.properties)
         properties.set(
           name,
-          normalize(child, `${location}.properties.${name}`),
+          normalize(child, childLocation(location, `properties.${name}`)),
         );
       const result = { ...input, properties };
       objects.set(input, result);
@@ -458,15 +464,18 @@ export function createIntersectionNormalizer(
     input: Extract<Schema, { kind: 'intersection' }>,
     location: string,
   ): Schema {
-    const pending: Schema[] = [input];
+    const pending: { schema: Schema; location: string }[] = [
+      { schema: input, location },
+    ];
     let branches: Schema[] = [];
+    let branchLocations: string[] = [];
     const seen = new Set<Schema>();
     const references = new Set<string>();
     let access: Access = { readOnly: false, writeOnly: false };
     // Flatten same-instance composition before checking required-only fragments.
     // Each source branch was normalized already, so deduplication loses no checks.
     while (pending.length > 0) {
-      const current = pending.pop()!;
+      const { schema: current, location: currentLocation } = pending.pop()!;
       if (seen.has(current)) continue;
       seen.add(current);
       charge(1, location);
@@ -474,12 +483,19 @@ export function createIntersectionNormalizer(
       if (current.kind === 'intersection') {
         charge(current.branches.length, location);
         for (let index = current.branches.length - 1; index >= 0; index--)
-          pending.push(current.branches[index]!);
+          pending.push({
+            schema: current.branches[index]!,
+            location:
+              current.branchLocations?.[index] ??
+              `${current.location}[${index}]`,
+          });
       } else {
         const branch =
           current.kind === 'object'
-            ? objectChildren(current, location)
-            : normalize(current, location);
+            ? objectChildren(current, currentLocation)
+            : normalize(current, currentLocation);
+        if (branch.kind === 'object' && branch.closed)
+          requiredMembers(branch, currentLocation);
         // Repeating the same unrefined component adds no assertion. Keep the
         // reference (including its alias chain), and accumulate own access first.
         // Different names or use-site constraints can carry distinct checks.
@@ -488,7 +504,10 @@ export function createIntersectionNormalizer(
           references.add(branch.name);
         }
         access = accessFlags(access, branch, location);
-        if (branch.kind !== 'json') branches.push(branch);
+        if (branch.kind !== 'json') {
+          branches.push(branch);
+          branchLocations.push(currentLocation);
+        }
       }
     }
     // Discover neutral JSON aliases without composing their targets. Resolving
@@ -513,20 +532,52 @@ export function createIntersectionNormalizer(
         for (const link of path) neutral.set(link, value);
         return value;
       };
-      branches = branches.filter((branch) => {
-        if (!json(branch)) return true;
+      const retained: string[] = [];
+      branches = branches.filter((branch, index) => {
+        const path = branchLocations[index]!;
+        if (!json(branch)) {
+          retained.push(path);
+          return true;
+        }
         access = accessFlags(access, resolve(branch, location), location);
         return false;
       });
+      branchLocations = retained;
     }
     if (branches.length === 0) return schemaNode({ kind: 'json', ...access });
     if (branches.length === 1) {
       const branch = branches[0]!;
       return materializeObject({ ...branch, ...access }, location);
     }
-    const targets = branches.map((branch) => resolve(branch, location));
+    const targets = branches.map((branch, index) =>
+      resolve(branch, branchLocations[index]!),
+    );
     for (const target of targets)
       access = accessFlags(access, target, location);
+    const finiteValues = (input: Schema): readonly Scalar[] | undefined => {
+      const target = resolve(input, location).schema;
+      if (target.kind === 'union') {
+        if (!target.sourceLiterals && !target.sourceTypeArray) return undefined;
+        const values: Scalar[] = [];
+        for (const branch of target.branches) {
+          const members = finiteValues(branch);
+          if (!members) return undefined;
+          charge(members.length, location);
+          for (const value of members) values.push(value);
+        }
+        return values;
+      }
+      const value =
+        target.kind === 'intersection'
+          ? scalarIntersectionBase(input, schemas)
+          : target;
+      if (value.kind === 'null') return [null];
+      return 'literals' in value ? value.literals : undefined;
+    };
+    const finite = targets.some(({ schema }) => schema.kind === 'union')
+      ? branches.map(finiteValues)
+      : [];
+    const literalNarrowing = finite.some((values) => values !== undefined);
     // A nullable type is a union with null, so every other conjunct would also
     // need to accept null. Name the supported nullable form instead of the
     // generic union restriction below.
@@ -534,7 +585,8 @@ export function createIntersectionNormalizer(
       targets.some(
         ({ schema }) =>
           schema.kind === 'union' && schema.sourceTypeArray === true,
-      )
+      ) &&
+      !literalNarrowing
     )
       fail(
         location,
@@ -549,38 +601,144 @@ export function createIntersectionNormalizer(
       schema.kind === 'union' ? [{ union: schema, position }] : [],
     );
     const factor =
-      unions.find(({ union }) => !union.discriminator) ?? unions[0];
+      unions.find(
+        ({ union }) => !union.discriminator && !union.sourceLiterals,
+      ) ?? unions[0];
     if (factor) {
       const { union, position } = factor;
       const others = branches.filter((_, index) => index !== position);
+      const otherLocations = branchLocations.filter(
+        (_, index) => index !== position,
+      );
+      // An untyped enum lists permitted scalar values; its different-type
+      // groups are assertions to narrow, not explicit alternatives to retain.
+      // Explicit anyOf/oneOf branches still diagnose incompatible conjuncts.
+      const predicates = new WeakMap<Schema, (value: Scalar) => boolean>();
+      const acceptsLiteral = (input: Schema): ((value: Scalar) => boolean) => {
+        const known = predicates.get(input);
+        if (known) return known;
+        const target = resolve(input, location).schema;
+        let accepts: (value: Scalar) => boolean;
+        if (target.kind === 'json') accepts = () => true;
+        else if (target.kind === 'union') {
+          // Explicit alternatives remain structural: distribution, rather than
+          // finite pruning, diagnoses any contradictory explicit branch.
+          if (target.sourceLiterals || target.sourceTypeArray) {
+            const alternatives = target.branches.map(acceptsLiteral);
+            accepts = (value) => alternatives.some((branch) => branch(value));
+          } else accepts = () => true;
+        } else if (
+          target.kind === 'intersection' ||
+          target.kind === 'string' ||
+          target.kind === 'number' ||
+          target.kind === 'integer' ||
+          target.kind === 'boolean' ||
+          target.kind === 'null'
+        ) {
+          const plan = scalarValidationPlan(input, schemas);
+          const base = plan.base;
+          const checks = [
+            literalViolation(schemaConstraints(base)),
+            ...plan.assertions.map(assertionViolation),
+          ];
+          const literals = 'literals' in base ? base.literals : undefined;
+          charge(literals?.length ?? 0, location);
+          const members = literals && new Set(literals);
+          accepts = (value) => {
+            charge(checks.length + 1, location);
+            return (
+              (base.kind === 'null'
+                ? value === null
+                : base.kind === 'integer'
+                  ? typeof value === 'number' && Number.isInteger(value)
+                  : typeof value === base.kind) &&
+              (!members || members.has(value)) &&
+              checks.every((check) => check(value) === undefined)
+            );
+          };
+        } else accepts = () => false;
+        predicates.set(input, accepts);
+        return accepts;
+      };
+      let candidates: readonly Scalar[] | undefined;
+      if (literalNarrowing) {
+        for (const values of finite) {
+          if (!values) continue;
+          charge(values.length + (candidates?.length ?? 0), location);
+          const members = new Set(values);
+          candidates = candidates?.filter((value) => members.has(value)) ?? [
+            ...members,
+          ];
+        }
+        if (candidates) {
+          for (const branch of branches)
+            candidates = candidates.filter(acceptsLiteral(branch));
+        }
+      }
       charge(union.branches.length * branches.length, location);
-      return schemaNode({
-        kind: 'union',
-        cardinality: union.cardinality,
-        discriminator: union.discriminator,
-        branches: union.branches.map((alternative, index) => {
-          const path = `${location}.${unionKeyword(union)}[${index}]`;
+      const alternatives = union.branches
+        .map((schema, index) => ({
+          schema,
+          index,
+        }))
+        .filter(({ schema: alternative }) => {
+          return (
+            !candidates ||
+            (!union.sourceLiterals && !union.sourceTypeArray) ||
+            candidates.some(acceptsLiteral(alternative))
+          );
+        });
+      if (alternatives.length === 0)
+        fail(location, 'allOf constraints admit no literal value');
+      const composedBranches = alternatives.map(
+        ({ schema: alternative, index }) => {
+          const source = branches[position]!;
+          const path =
+            source.kind === 'ref'
+              ? source.location
+              : union.sourceLiterals
+                ? `${branchLocations[position]}.enum`
+                : union.sourceTypeArray
+                  ? `${branchLocations[position]}.type`
+                  : `${branchLocations[position]}.${unionKeyword(union)}[${index}]`;
           const composed = normalize(
             schemaNode({
               kind: 'intersection',
               branches: [alternative, ...others],
+              branchLocations: [path, ...otherLocations],
               location: path,
             }),
             path,
           );
-          // Annotations from other conjuncts apply to the whole union. Keep the
-          // alternative's own, so usage validation still rejects annotated
-          // union branches instead of losing them through composition.
+          // Register the access-neutral alternative as canonical too. A later
+          // composition must not rebuild it from conjuncts whose annotations
+          // have already moved to the enclosing union.
           const own = resolve(alternative, path);
-          return composed.readOnly === own.readOnly &&
+          if (
+            composed.readOnly === own.readOnly &&
             composed.writeOnly === own.writeOnly
-            ? composed
-            : {
-                ...composed,
-                readOnly: own.readOnly,
-                writeOnly: own.writeOnly,
-              };
-        }),
+          )
+            return composed;
+          const projected = {
+            ...composed,
+            readOnly: own.readOnly,
+            writeOnly: own.writeOnly,
+          };
+          normalized.set(projected, projected);
+          return projected;
+        },
+      );
+      const sourceLiterals =
+        union.sourceLiterals ||
+        (union.sourceTypeArray && literalNarrowing ? true : undefined);
+      if (sourceLiterals && composedBranches.length === 1)
+        return { ...composedBranches[0]!, ...access };
+      return schemaNode({
+        kind: 'union',
+        cardinality: union.cardinality,
+        discriminator: union.discriminator,
+        sourceLiterals,
+        branches: composedBranches,
         ...access,
       });
     }
@@ -611,9 +769,11 @@ export function createIntersectionNormalizer(
       let additionalPropertiesExplicit = false;
       let explicitlyOpen = false;
       const fields = new Map<string, Schema[]>();
+      const fieldLocations = new Map<string, string[]>();
       const required = new Set<string>();
+      const requiredLocations = new Map<string, string>();
       const closed: Extract<Schema, { kind: 'object' }>[] = [];
-      for (const target of targets) {
+      for (const [index, target] of targets.entries()) {
         limits = intersectConstraints(limits, target.limits);
         const shape = target.schema;
         if (shape.kind === 'object' || shape.kind === 'map') {
@@ -626,11 +786,28 @@ export function createIntersectionNormalizer(
         const object = objectChildren(target.schema, location);
         charge(object.properties.size + object.required.length, location);
         if (object.closed) closed.push(object);
-        for (const name of object.required) required.add(name);
+        for (const name of object.required) {
+          required.add(name);
+          const source = branches[index]!;
+          requiredLocations.set(
+            name,
+            source.kind === 'ref'
+              ? source.location
+              : childLocation(branchLocations[index]!, 'required'),
+          );
+        }
         for (const [name, child] of object.properties) {
           const existing = fields.get(name);
           if (existing) existing.push(child);
           else fields.set(name, [child]);
+          const source = branches[index]!;
+          const path =
+            source.kind === 'ref'
+              ? source.location
+              : childLocation(branchLocations[index]!, `properties.${name}`);
+          const locations = fieldLocations.get(name);
+          if (locations) locations.push(path);
+          else fieldLocations.set(name, [path]);
         }
       }
       charge(
@@ -654,10 +831,18 @@ export function createIntersectionNormalizer(
               location,
               `allOf property ${JSON.stringify(name)} is forbidden by branch-local additionalProperties: false; declare it in each closed branch or remove that restriction`,
             );
+      if (closed.length > 0)
+        for (const name of required)
+          if (!fields.has(name))
+            fail(
+              requiredLocations.get(name)!,
+              `unknown property ${JSON.stringify(name)}`,
+            );
       const properties = new Map<string, Schema>();
       // Match ordinary object normalization, including numeric-key enumeration.
       for (const name of propertyOrder(fields.keys())) {
         const children = fields.get(name)!;
+        const locations = fieldLocations.get(name)!;
         properties.set(
           name,
           children.length === 1
@@ -666,9 +851,10 @@ export function createIntersectionNormalizer(
                 schemaNode({
                   kind: 'intersection',
                   branches: children,
-                  location: `${location}.properties.${name}`,
+                  branchLocations: locations,
+                  location: locations[0]!,
                 }),
-                `${location}.properties.${name}`,
+                locations[0]!,
               ),
         );
       }
@@ -713,6 +899,7 @@ export function createIntersectionNormalizer(
     const result = schemaNode({
       kind: 'intersection',
       branches,
+      branchLocations,
       location,
       ...access,
     });
@@ -721,6 +908,7 @@ export function createIntersectionNormalizer(
     const canonical = schemaNode({
       kind: 'intersection',
       branches,
+      branchLocations,
       location,
       ...access,
       literals: 'literals' in summary ? summary.literals : undefined,

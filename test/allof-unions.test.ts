@@ -301,7 +301,7 @@ void test('allOf union distribution diagnoses contradictions, untagged object on
           { type: 'string', maxLength: 3 },
         ],
       },
-      'components.schemas.Value.allOf.anyOf[1]',
+      'components.schemas.Value.allOf[0].anyOf[1]',
       /incompatible scalar types/,
     ],
     [
@@ -312,7 +312,7 @@ void test('allOf union distribution diagnoses contradictions, untagged object on
           fixed({ kind: { type: 'string', enum: ['z'] } }),
         ],
       },
-      'components.schemas.Value.allOf.oneOf[0].properties.kind',
+      'components.schemas.Tagged.oneOf[0].$ref',
       /admit no literal value/,
     ],
     [

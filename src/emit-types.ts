@@ -417,19 +417,6 @@ export function renderTypes(
       `standalone:${root.name}`,
       `standalone.${root.name}`,
     );
-  const groups = new Map<string, TypeNode[]>();
-  for (const entry of canonical) {
-    const owners = JSON.stringify([...entry.owners].sort());
-    // Dependency owner sets only grow. Grouping by ownership preserves each
-    // surface's type closure without introducing imports between client APIs.
-    // Digests avoid case-folding collisions in file inventories.
-    entry.file = `schema-types.${createHash('sha256').update(owners).digest('hex')}.ts`;
-    const members = groups.get(owners) ?? [];
-    members.push(entry);
-    groups.set(owners, members);
-  }
-  const reference = (entry: TypeNode) =>
-    `import('./${entry.file!}').${entry.symbol}`;
   function privateType(
     schema: Schema,
     direction: Direction,
@@ -446,7 +433,70 @@ export function renderTypes(
       namedTypes.get(schema)?.get(signature) ?? privateTypes.get(signature)
     );
   }
-
+  // A canonical declaration can serve several directions while retaining the
+  // inline aliases chosen for its first direction. Propagate its owners over
+  // those actual type links before grouping files; otherwise a shared module
+  // can import a narrower module containing another client's private types.
+  const dependencies = new Map<TypeNode, ReadonlySet<TypeNode>>();
+  for (const entry of canonical) {
+    const links = new Set<TypeNode>();
+    const visited = new Set<Schema>();
+    const visit = (schema: Schema): void => {
+      if (visited.has(schema)) return;
+      visited.add(schema);
+      // Use the type visitor's own child/reference rules, including scalar
+      // intersections whose emitted type can omit their retained source graph.
+      schemaType(
+        schema,
+        entry.direction,
+        entry.target,
+        (name, direction) => {
+          links.add(node(name, direction, entry.target));
+          return '';
+        },
+        entry.recursive,
+        (child) => {
+          const alias = privateType(child, entry.direction, entry.target);
+          if (alias) links.add(alias);
+          else visit(child);
+          return '';
+        },
+      );
+    };
+    visit(entry.schema);
+    dependencies.set(entry, links);
+  }
+  const pendingOwners = [...canonical];
+  const queuedOwners = new Set(canonical);
+  while (pendingOwners.length > 0) {
+    const entry = pendingOwners.pop()!;
+    queuedOwners.delete(entry);
+    for (const dependency of dependencies.get(entry)!) {
+      let changed = false;
+      for (const owner of entry.owners)
+        if (!dependency.owners.has(owner)) {
+          dependency.owners.add(owner);
+          changed = true;
+        }
+      if (changed && !queuedOwners.has(dependency)) {
+        pendingOwners.push(dependency);
+        queuedOwners.add(dependency);
+      }
+    }
+  }
+  const groups = new Map<string, TypeNode[]>();
+  for (const entry of canonical) {
+    const owners = JSON.stringify([...entry.owners].sort());
+    // Dependency owner sets only grow. Grouping by ownership preserves each
+    // surface's type closure without introducing imports between client APIs.
+    // Digests avoid case-folding collisions in file inventories.
+    entry.file = `schema-types.${createHash('sha256').update(owners).digest('hex')}.ts`;
+    const members = groups.get(owners) ?? [];
+    members.push(entry);
+    groups.set(owners, members);
+  }
+  const reference = (entry: TypeNode) =>
+    `import('./${entry.file!}').${entry.symbol}`;
   function render(
     schema: Schema,
     direction: Direction,

@@ -233,7 +233,7 @@ void test('closed objects and unusable names keep their required diagnostics', a
   );
   await rejects(
     { allOf: [closed, { required: ['extra'] }] },
-    '.allOf.required',
+    '.allOf[1].required',
     /unknown property "extra"$/,
   );
   await rejects(
