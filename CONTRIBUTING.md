@@ -112,7 +112,9 @@ The packed check also verifies licenses,
 allowed inventory, and clean builds.
 Check generated modules and the compiler's public declarations with `strict`
 enabled, disabled, and disabled with `noImplicitAny`. Each mode checks unused
-locals and parameters, including standalone constrained-reference chains.
+locals and parameters, including standalone constrained-reference chains. Exercise
+generated builders, direct calls, query factories, and typed cache access in each
+mode, including accepted body factories and rejected bodyless-success selections.
 
 ## Measurements and adoption
 

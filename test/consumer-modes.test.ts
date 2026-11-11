@@ -9,7 +9,7 @@ import {
 } from './generated-workspace.ts';
 import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 
-void test('installed API and full generated modules support strict and non-strict consumers with no unused locals', async (t) => {
+void test('compiler API and generated public calls support strict and non-strict consumers with no unused locals', async (t) => {
   const input = consumerModesFixture();
   const root = await generatedTestWorkspace(
     t,

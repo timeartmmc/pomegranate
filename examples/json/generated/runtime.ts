@@ -1988,22 +1988,23 @@ type CommonResponseData = Readonly<{
   contentType: string | undefined;
   data: unknown;
 }>;
-// Generic executors retain the common evidence shape; concrete response tables
-// additionally correlate each media key with its parser's output type.
-type ResponseData<S extends ResponseSpec> = CommonResponseData &
-  (ResponseSpec extends S
-    ? unknown
-    : S extends {
-          bodyKind: 'content';
-          content: infer C extends ResponseContent;
-        }
-      ? {
-          [M in keyof C & string]: Readonly<{
-            contentType: Observed<M>;
-            data: Data<C[M]>;
-          }>;
-        }[keyof C & string]
-      : Readonly<{ contentType: undefined; data: undefined }>);
+// Generic executors see the common evidence shape; concrete tables correlate
+// each media key with its parser output directly. Without strictNullChecks,
+// the common contentType is a string; intersecting it with a bodyless
+// response's undefined erases that response.
+type ResponseData<S extends ResponseSpec> = ResponseSpec extends S
+  ? CommonResponseData
+  : S extends {
+        bodyKind: 'content';
+        content: infer C extends ResponseContent;
+      }
+    ? {
+        [M in keyof C & string]: Readonly<{
+          contentType: Observed<M>;
+          data: Data<C[M]>;
+        }>;
+      }[keyof C & string]
+    : Readonly<{ contentType: undefined; data: undefined }>;
 type Declared<Kind, Status, S extends ResponseSpec> = [Status] extends [never]
   ? never
   : Readonly<{
@@ -2017,18 +2018,41 @@ type Declared<Kind, Status, S extends ResponseSpec> = [Status] extends [never]
 // The statuses of a class that no exact key declares reach that class's range,
 // or else default. Literal statuses keep a status check narrowing to the one
 // declaration that can produce it.
+type FallbackSpec<R extends Responses, C extends StatusClass> = (
+  `${C}XX` extends keyof R ? `${C}XX` : 'default'
+) extends infer K extends keyof R & keyof Responses
+  ? Exclude<R[K], undefined>
+  : never;
+// Resolve the spec before instantiating Declared. Eager deferred specs multiply
+// type instantiations for every generated operation.
 type Fallback<
   R extends Responses,
   C extends StatusClass,
 > = C extends StatusClass
-  ? (`${C}XX` extends keyof R ? `${C}XX` : 'default') extends infer K extends
-      keyof R & keyof Responses
+  ? FallbackSpec<R, C> extends infer S extends ResponseSpec
     ? Declared<
         C extends 2 ? 'success' : 'error',
         Exclude<ClassStatus<C>, keyof R>,
-        Exclude<R[K], undefined>
+        S
       >
     : never
+  : never;
+// Body availability comes from response metadata rather than payload types,
+// because undefined is assignable to every payload without strictNullChecks.
+export type SuccessResponseSpecs<R extends Responses> = R extends Responses
+  ?
+      | {
+          [S in keyof R]-?: S extends number
+            ? number extends S
+              ? R[S]
+              : `${S}` extends `2${string}`
+                ? R[S]
+                : never
+            : never;
+        }[keyof R]
+      | ([Exclude<ClassStatus<2>, keyof R>] extends [never]
+          ? never
+          : FallbackSpec<R, 2>)
   : never;
 type Entries<R extends Responses> =
   | {

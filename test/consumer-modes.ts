@@ -108,7 +108,66 @@ export function consumerModesFixture() {
     };
   }
   Object.assign(document.components.schemas, schemas);
-  return { document, options: { ...executionSelection, standalone } };
+  const item = {
+    description: 'An item',
+    content: {
+      'application/json': { schema: { $ref: '#/components/schemas/Item' } },
+    },
+  };
+  const empty = { description: 'No response body' };
+  const queryResponses = {
+    mixedBody: { 200: item, 204: empty },
+    defaultBody: { default: item },
+    defaultEmpty: { 200: item, default: empty },
+    rangedBody: { '2XX': item, default: empty },
+    rangedEmpty: { 200: item, '2XX': empty },
+    nullBody: {
+      200: {
+        description: 'JSON null is a body',
+        content: { 'application/json': { schema: { type: 'null' } } },
+      },
+    },
+    textBody: {
+      200: {
+        description: 'A text body',
+        content: { 'text/plain': { schema: { type: 'string' } } },
+      },
+    },
+  };
+  Object.assign(
+    document.paths,
+    Object.fromEntries(
+      Object.entries(queryResponses).map(([operationId, responses]) => [
+        `/consumer-modes/${operationId}`,
+        {
+          get: {
+            operationId,
+            'x-pom': {
+              auth: 'session',
+              retry: 'never',
+              timeout: 'interactive',
+              surfaces: ['consumer'],
+            },
+            responses,
+          },
+        },
+      ]),
+    ),
+  );
+  return {
+    document,
+    options: {
+      ...executionSelection,
+      standalone,
+      queries: {
+        ...executionSelection.queries,
+        consumer: [
+          ...executionSelection.queries.consumer,
+          ...Object.keys(queryResponses),
+        ],
+      },
+    },
+  };
 }
 
 export async function verifyConsumerModes(
@@ -125,6 +184,108 @@ export async function verifyConsumerModes(
     export const output: ReturnType<typeof compile> = compile({}, options);
     export const project: typeof runProject = runProject;
   `,
+  );
+  await writeFile(
+    join(root, 'generated-api.ts'),
+    `import { QueryClient, skipToken } from '@tanstack/query-core';
+    import { createClient, operations } from './client.consumer.ts';
+    import { createQueries, createInfiniteQueries } from './client.consumer.queries.ts';
+    import { schema } from './standalone.root0.ts';
+    import type { QueryFactory } from './query-runtime.ts';
+    import type { EmptyResponse, Parse, Responses } from './runtime.ts';
+    import type { JsonResponse } from './endpoint-runtime.ts';
+
+    const config = {
+      namespace: 'synthetic-consumer-modes',
+      execute: async () => ({ status: 204, headers: {}, body: '' }),
+    };
+    const client = createClient(config);
+    const queries = createQueries(config);
+    const infinite = createInfiniteQueries(config);
+    const cache = new QueryClient();
+    const input = {
+      headers: { 'Idempotency-Key': 'synthetic' },
+      body: { label: 'Valid', values: ['one'] },
+    };
+    export const parsed: string = schema.parse('valid');
+    export const prepared = operations.createWidget.build(input);
+    export async function create() {
+      const result = await client.createWidget.call({ context: {}, input });
+      if (result.status === 201) {
+        const label: string = result.data.label;
+        return label;
+      }
+      const reference: string = result.data.reference;
+      return reference;
+    }
+    export async function callBodyless() {
+      const result = await client.commandOptions.call({ context: {} });
+      const status: 204 = result.status;
+      const data: undefined = result.data;
+      return { status, data };
+    }
+    const health = operations.health.parseResponse({ status: 204, headers: {}, body: '' });
+    if (health.kind === 'success') {
+      const status: 204 = health.status;
+      const data: undefined = health.data;
+      void [status, data];
+    }
+
+    const args = { context: {}, input: { path: { id: 'item' } } };
+    const body = queries.readItem.body();
+    export const bodyOptions = body.options(args);
+    export const skipped = body.options({ context: {}, input: skipToken });
+    const cached = cache.getQueryData(bodyOptions.queryKey);
+    if (cached) {
+      const label: string = cached.label;
+      void label;
+      // @ts-expect-error Body storage contains the payload rather than an envelope.
+      void cached.data;
+    }
+    export const envelopeOptions = queries.readItem.options(args);
+    const envelope = cache.getQueryData(envelopeOptions.queryKey);
+    if (envelope) {
+      const status: 200 = envelope.status;
+      const label: string = envelope.data.label;
+      void [status, label];
+    }
+    export const invalidation = cache.invalidateQueries(body.filter({ context: {} }));
+    export const cursorOptions = infinite.listItems.body().options({
+      context: {}, input: { path: { collection: 'items' } },
+    });
+    export const offsetOptions = infinite.listRecords.body().options({
+      context: {}, input: { path: { category: 'records' } },
+    });
+    const cursorData = cache.getQueryData(cursorOptions.queryKey);
+    const offsetData = cache.getQueryData(offsetOptions.queryKey);
+    export const cursorItems = infinite.listItems.body().items(cursorData);
+    export const offsetItems = infinite.listRecords.body().items(offsetData);
+    export const defaultOptions = queries.defaultBody.body().options({ context: {} });
+    export const rangedOptions = queries.rangedBody.body().options({ context: {} });
+    export const nullOptions = queries.nullBody.body().options({ context: {} });
+    export const textOptions = queries.textBody.body().options({ context: {} });
+
+    declare const unknownQuery: QueryFactory<undefined, Responses>;
+    // @ts-expect-error An unspecified response table may have a bodyless success.
+    unknownQuery.body();
+    declare const eitherQuery: QueryFactory<undefined,
+      { 200: JsonResponse<Parse<string>> } | { 204: EmptyResponse }>;
+    // @ts-expect-error Either response table can be selected, including a bodyless one.
+    eitherQuery.body();
+
+    // @ts-expect-error A bodyless success cannot use body storage.
+    queries.health.body();
+    // @ts-expect-error One bodyless exact success makes body storage unavailable.
+    queries.mixedBody.body();
+    // @ts-expect-error An unshadowed default can produce a bodyless success.
+    queries.defaultEmpty.body();
+    // @ts-expect-error A bodyless success range remains possible beside exact 200.
+    queries.rangedEmpty.body();
+    // @ts-expect-error Path values retain their generated types in every mode.
+    operations.readItem.build({ path: { id: 7 } });
+    // @ts-expect-error Transport-owned headers cannot be supplied by the caller.
+    body.options({ context: {}, input: { path: { id: 'item' }, headers: { 'X-Language': 'en' } } });
+    `,
   );
   for (const [name, options] of [
     [

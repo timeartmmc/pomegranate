@@ -36,6 +36,7 @@ import type {
   PreparedRequest,
   ProtocolResult,
   Responses,
+  SuccessResponseSpecs,
   RequestParts,
   ProtocolIssue,
 } from './runtime.ts';
@@ -157,6 +158,11 @@ export interface OperationFilter<
   M extends CacheRepresentation = 'envelope',
 > extends ScopedOperationFilter<QueryPrefix<M>> {}
 
+type BodyMethod<R extends Responses, Factory> =
+  Extract<SuccessResponseSpecs<R>, { bodyKind: 'none' }> extends never
+    ? () => Factory
+    : never;
+
 export interface QueryFactory<
   Input,
   R extends Responses,
@@ -172,9 +178,7 @@ export interface QueryFactory<
     scope: OperationScope,
   ) => OperationInvalidationFilter;
   readonly filter: (scope: OperationScope) => OperationFilter<M>;
-  readonly body: undefined extends Body<R>
-    ? never
-    : () => QueryFactory<Input, R, 'body'>;
+  readonly body: BodyMethod<R, QueryFactory<Input, R, 'body'>>;
 }
 
 type QueryOperation = Readonly<{
@@ -655,9 +659,7 @@ export interface InfiniteQueryFactory<
   readonly items: (
     data: InfiniteData<QueryValue<R, M>, PageParameter<P>> | undefined,
   ) => Item[];
-  readonly body: undefined extends Body<R>
-    ? never
-    : () => InfiniteQueryFactory<Input, R, Item, P, 'body'>;
+  readonly body: BodyMethod<R, InfiniteQueryFactory<Input, R, Item, P, 'body'>>;
 }
 
 type OperationResponses<Operation> = Operation extends {
