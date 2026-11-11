@@ -693,7 +693,7 @@ void test('many nullable bindings per descent stop at a parser-depth diagnostic 
   if (after.kind === 'success') assert.deepEqual(after.data, small);
 });
 
-void test('a successful nullable alternative discards speculative resource failures before validating later siblings', async (t) => {
+void test('nullable terminals stay within parser limits and preserve later sibling diagnostics', async (t) => {
   const schemas = nullableBindingSchemas();
   schemas.Envelope = {
     type: 'object',
@@ -722,11 +722,9 @@ void test('a successful nullable alternative discards speculative resource failu
   const envelope = (
     await importGenerated<StandaloneModule>(root, 'standalone.envelope.ts')
   ).schema;
-  let accepted = 0;
-  for (let depth = 1; depth <= 16; depth++) {
+  for (const depth of [1, 8, 14, 15]) {
     const value = recursiveNodeChain(depth);
-    if (!recursive.safeParse(value).success) continue;
-    accepted++;
+    assert.deepEqual(recursive.parse(value), value);
     const valid = { recursive: value, zError: 'valid sibling' };
     assert.deepEqual(envelope.parse(valid), valid);
     const failure = envelope.safeParse({ recursive: value, zError: 123 });
@@ -736,10 +734,40 @@ void test('a successful nullable alternative discards speculative resource failu
         { path: ['zError'], message: 'expected a string' },
       ]);
   }
-  assert.ok(
-    accepted > 0,
-    'The generated recursive branch must accept finite values',
-  );
+  for (const depth of [16, 32]) {
+    const failure = recursive.safeParse(recursiveNodeChain(depth));
+    assert.equal(failure.success, false);
+    if (!failure.success)
+      assert.match(
+        failure.error.issues[0]?.message ?? '',
+        /parser depth exceeds 512/,
+      );
+  }
+});
+
+void test('a recursive union abort stops later alternatives and sibling value reads', async (t) => {
+  const { roots } = await generated(t);
+  const schema = entry(roots, 'union-response').schema;
+  let reads = 0;
+  const children: unknown[] = [];
+  const value = {
+    id: 'cyclic',
+    children,
+    get value() {
+      reads++;
+      return 1;
+    },
+  };
+  children.push(value);
+  const failure = schema.safeParse(value);
+  assert.equal(failure.success, false);
+  if (!failure.success)
+    assert.match(failure.error.issues[0]?.message ?? '', /cyclic input/);
+  assert.equal(reads, 0);
+  assert.deepEqual(schema.parse({ id: 'after', value: 2 }), {
+    id: 'after',
+    value: 2,
+  });
 });
 
 void test('omitted prototype-only optional values neither consume recursive work nor supply a later failure cause', async (t) => {

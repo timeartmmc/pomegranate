@@ -44,15 +44,21 @@ const maximumIssues = 100;
 const maximumIssueMessage = 1_024;
 const maximumErrorMessage = 8_192;
 const issueCapacity: unique symbol = Symbol('pom.issueCapacity');
-type Budget = { readonly [issueCapacity]?: number };
-type IssueBuffer<T> = T[] & Budget;
+const abortCause: unique symbol = Symbol('pom.abortCause');
+const speculativeAttempt: unique symbol = Symbol('pom.speculativeAttempt');
+type IssueState = {
+  readonly [issueCapacity]?: number;
+  [abortCause]?: string;
+  [speculativeAttempt]?: true;
+};
+type IssueBuffer<T> = T[] & IssueState;
 export type Issues = IssueBuffer<Problem>;
 export type Parse<T> = (input: unknown, issues: Issues) => T | Invalid;
 
 type RecursiveTraversal = {
   depth: number;
   parserDepth: number;
-  failure: string | undefined;
+  abort: string | undefined;
   remaining: number;
   ancestors: Set<object>;
 };
@@ -77,19 +83,20 @@ export function recursiveParse<T>(
     recursiveTraversals.set(issues, {
       depth: 0,
       parserDepth: 0,
-      failure: undefined,
+      abort: undefined,
       remaining: maximumRecursiveWork,
       ancestors: new Set(
         typeof input === 'object' && input !== null ? [input] : [],
       ),
     });
   const traversal = recursiveTraversals.get(issues)!;
+  if (traversal.abort !== undefined)
+    return abortValidation(issues, traversal.abort);
   // Same-value union/nullable bindings add stack frames without descending into
   // data. Bound those entries separately so a productive schema cannot exhaust
   // the call stack before its value-depth guard gets another chance to run.
   if (traversal.parserDepth >= maximumRecursiveParserDepth)
-    return recursiveFailure(
-      traversal,
+    return abortValidation(
       issues,
       `recursive parser depth exceeds ${maximumRecursiveParserDepth} entries`,
     );
@@ -97,19 +104,20 @@ export function recursiveParse<T>(
   recursiveCalls++;
   const start = issues.length;
   try {
-    const value = parse(input, issues, rules);
-    // Speculative unions may prefix and truncate deep branch messages. Put the
-    // cause first among this value's issues; a full quota replaces one of them.
-    if (ownsTraversal && value === invalid && traversal.failure) {
+    const parsed = parse(input, issues, rules);
+    const value = traversal.abort === undefined ? parsed : invalid;
+    // An aborted traversal is final for this value. Keep its primary cause
+    // ahead of ordinary issues; a full quota replaces one of those issues.
+    if (ownsTraversal && traversal.abort !== undefined) {
       // Annotate the empty path: non-strict consumers would infer any[].
       const cause: Problem = {
         path: [],
-        message: traversal.failure,
+        message: traversal.abort,
         fatal: true,
       };
       if (remaining(issues) > 0) issues.splice(start, 0, cause);
       else if (issues.length > start) issues[start] = cause;
-      else report(issues, traversal.failure, true);
+      else report(issues, traversal.abort, true);
     }
     return value;
   } finally {
@@ -119,13 +127,15 @@ export function recursiveParse<T>(
   }
 }
 
-function recursiveFailure(
-  traversal: RecursiveTraversal,
+function abortValidation(
   issues: Issues,
   message: string,
+  path: (string | number)[] = [],
 ): Invalid {
-  traversal.failure ??= message;
-  return report(issues, message, true);
+  issues[abortCause] ??= message;
+  const traversal = recursiveTraversals.get(issues);
+  if (traversal) traversal.abort ??= message;
+  return report(issues, message, true, path);
 }
 
 function recursiveLimit(
@@ -134,8 +144,7 @@ function recursiveLimit(
   depth: number,
 ): Invalid | undefined {
   if (depth >= maximumRecursiveDepth)
-    return recursiveFailure(
-      traversal,
+    return abortValidation(
       issues,
       `recursive validation depth exceeds ${maximumRecursiveDepth} levels`,
     );
@@ -146,9 +155,10 @@ function recursiveWork(
   traversal: RecursiveTraversal,
   issues: Issues,
 ): Invalid | undefined {
+  if (traversal.abort !== undefined)
+    return abortValidation(issues, traversal.abort);
   if (traversal.remaining-- <= 0)
-    return recursiveFailure(
-      traversal,
+    return abortValidation(
       issues,
       `recursive validation work exceeds ${maximumRecursiveWork} visits`,
     );
@@ -166,7 +176,7 @@ function recursiveChild<T>(
   const object =
     typeof input === 'object' && input !== null ? input : undefined;
   if (object !== undefined && traversal.ancestors.has(object))
-    return recursiveFailure(traversal, issues, 'cyclic input is not supported');
+    return abortValidation(issues, 'cyclic input is not supported');
   traversal.depth++;
   if (object !== undefined) traversal.ancestors.add(object);
   try {
@@ -175,6 +185,12 @@ function recursiveChild<T>(
     if (object !== undefined) traversal.ancestors.delete(object);
     traversal.depth--;
   }
+}
+
+// Ordinary branch issues are speculative. Each abort marks its active buffer;
+// synchronous union attempts propagate that marker before a parent resumes.
+function aborted(issues: Issues): boolean {
+  return issues[abortCause] !== undefined;
 }
 
 const omitted = new WeakSet<readonly unknown[]>();
@@ -194,11 +210,11 @@ function issueBuffer<T>(
   return issues;
 }
 
-function remaining(issues: readonly unknown[] & Budget): number {
+function remaining(issues: readonly unknown[] & IssueState): number {
   return Math.max(0, (issues[issueCapacity] ?? maximumIssues) - issues.length);
 }
 
-export function exhausted(issues: readonly unknown[] & Budget): boolean {
+export function exhausted(issues: readonly unknown[] & IssueState): boolean {
   if (issues.length < (issues[issueCapacity] ?? maximumIssues)) return false;
   omitted.add(issues);
   return true;
@@ -233,7 +249,7 @@ function mergeIssues<
 }
 
 function publishedIssues<T extends { message: string }>(
-  issues: readonly T[] & Budget,
+  issues: readonly T[] & IssueState,
   marker: T,
 ): readonly T[] {
   const capacity = issues[issueCapacity] ?? maximumIssues;
@@ -365,6 +381,7 @@ export function validator<T>(run: Parse<T>): Validator<T> {
 // Read the unparsed input only after validation selected its expected shape.
 // Generated parsers never retain caller objects: they return fresh values.
 export function objectValue(input: unknown, issues: Issues): object | Invalid {
+  if (aborted(issues)) return invalid;
   return typeof input === 'object' && input !== null && !Array.isArray(input)
     ? input
     : report(issues, 'expected an object', true);
@@ -399,6 +416,34 @@ function holds(source: object, key: string): boolean {
   return !Object.hasOwn(Object.prototype, key);
 }
 
+function missingProperty(issues: Issues, key: string): Invalid {
+  return report(issues, 'expected a required property', true, [key]);
+}
+
+// Snapshot requirements before reading values. Speculative union attempts stop
+// at the first missing key; ordinary objects retain the missing names so fields
+// report them in order alongside other issues. Later getters cannot repair or
+// cause reads of a requirement that was absent at this object's entry.
+export function requiredKeys(
+  source: object,
+  names: readonly string[],
+  issues: Issues,
+): ReadonlySet<string> | Invalid | undefined {
+  if (exhausted(issues) || aborted(issues)) return invalid;
+  let missing: Set<string> | undefined;
+  for (const name of names)
+    if (
+      // An own descriptor proves presence without reading its value. Inherited
+      // or virtual members use the same prototype exclusion as field parsing.
+      !Object.hasOwn(source, name) &&
+      !present(source, name, undefined)
+    ) {
+      if (issues[speculativeAttempt]) return missingProperty(issues, name);
+      (missing ??= new Set()).add(name);
+    }
+  return missing;
+}
+
 // Public configuration and response evidence retain structural class fields.
 // Capture one value, excluding defaults supplied solely by Object.prototype.
 export function structuralField<T extends object, K extends keyof T & string>(
@@ -422,8 +467,10 @@ export function field<T>(
   key: string,
   parse: Parse<T>,
   issues: Issues,
+  missing?: ReadonlySet<string>,
 ): T | Invalid {
-  if (exhausted(issues)) return invalid;
+  if (exhausted(issues) || aborted(issues)) return invalid;
+  if (missing?.has(key)) return missingProperty(issues, key);
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
   const result = recursiveCalls
@@ -434,9 +481,7 @@ export function field<T>(
     within(issues, start, key);
     return invalid;
   }
-  return present(source, key, value)
-    ? result
-    : report(issues, 'expected a required property', true, [key]);
+  return present(source, key, value) ? result : missingProperty(issues, key);
 }
 
 export function optionalField<T>(
@@ -445,7 +490,7 @@ export function optionalField<T>(
   parse: Parse<T>,
   issues: Issues,
 ): T | undefined | Absent | Invalid {
-  if (exhausted(issues)) return invalid;
+  if (exhausted(issues) || aborted(issues)) return invalid;
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
   // The common absent case costs one membership test, as an explicit
@@ -473,7 +518,7 @@ export function unknownKeys(
   known: readonly string[],
   issues: Issues,
 ): boolean {
-  if (exhausted(issues)) return true;
+  if (exhausted(issues) || aborted(issues)) return true;
   let keys = keySets.get(known);
   if (!keys) {
     keys = new Set(known);
@@ -509,7 +554,7 @@ export function forbiddenKeys(
 ): boolean {
   let found = false;
   for (const key of names) {
-    if (exhausted(issues)) return true;
+    if (exhausted(issues) || aborted(issues)) return true;
     // Known read-only fields follow structural presence even when they are
     // non-enumerable. Test membership without invoking an excluded getter.
     if (key in source && holds(source, key)) {
@@ -1195,7 +1240,7 @@ export function list<T>(
   items: Parse<T>,
   rules?: ArrayRules,
 ): T[] | Invalid {
-  if (exhausted(issues)) return invalid;
+  if (exhausted(issues) || aborted(issues)) return invalid;
   if (!Array.isArray(input)) return report(issues, 'expected an array', true);
   const length = arrayLength(input);
   if (length === undefined)
@@ -1213,7 +1258,7 @@ export function list<T>(
   const received: unknown[] | undefined =
     settings?.uniqueItems === 'received' ? [] : undefined;
   for (let index = 0; index < length; index++) {
-    if (exhausted(issues)) return invalid;
+    if (exhausted(issues) || aborted(issues)) return invalid;
     const before = issues.length;
     const element = arrayItem(input, index);
     received?.push(element);
@@ -1291,10 +1336,9 @@ function canonicalJson(
   let remaining = maximumComparisonWork - 1;
   const reserve = (amount: number): Invalid | undefined =>
     (remaining -= amount) < 0
-      ? report(
+      ? abortValidation(
           issues,
           `uniqueItems comparison exceeds ${maximumComparisonWork} values`,
-          true,
           [index],
         )
       : undefined;
@@ -1323,9 +1367,16 @@ function canonicalJson(
       continue;
     }
     if (
-      (!Array.isArray(current) && !plainRecord(current)) ||
+      typeof current === 'object' &&
+      current !== null &&
       ancestors.has(current)
     )
+      return abortValidation(
+        issues,
+        'uniqueItems comparison requires acyclic JSON values',
+        [index],
+      );
+    if (!Array.isArray(current) && !plainRecord(current))
       return report(
         issues,
         'uniqueItems comparison requires acyclic JSON values',
@@ -1383,7 +1434,7 @@ export function map<T>(
   values: Parse<T>,
   rules?: ObjectRules,
 ): Record<string, T> | Invalid {
-  if (exhausted(issues)) return invalid;
+  if (exhausted(issues) || aborted(issues)) return invalid;
   // Dynamic JSON keys are data: inspect own entries of plain records and build
   // the result with fromEntries so keys such as __proto__ stay own properties.
   if (!plainRecord(input)) return report(issues, 'expected an object', true);
@@ -1394,7 +1445,7 @@ export function map<T>(
   // Snapshot keys, then read values as they are validated. Eager Object.entries
   // would invoke every getter before the issue budget could stop traversal.
   for (const name of Reflect.ownKeys(input)) {
-    if (exhausted(issues)) return invalid;
+    if (exhausted(issues) || aborted(issues)) return invalid;
     if (
       typeof name !== 'string' ||
       !Object.getOwnPropertyDescriptor(input, name)?.enumerable
@@ -1463,21 +1514,42 @@ export function union<T>(
   issues: Issues,
   branches: readonly Parse<T>[],
 ): T | Invalid {
-  if (exhausted(issues)) return invalid;
+  if (exhausted(issues) || aborted(issues)) return invalid;
   const traversal = recursiveTraversals.get(issues);
-  const priorFailure = traversal?.failure;
-  // A failed branch is speculative: bound its buffer to the remaining quota,
-  // but try the alternatives in order before choosing diagnostics or success.
+  // Generated null branches return null, and cannot match a non-null value.
+  // A sole viable branch is committed: retain its parent's diagnostic mode.
+  const selected =
+    branches.length === 1
+      ? branches[0]
+      : input === null
+        ? branches.find((branch) => branch === nullValue)
+        : branches.length === 2
+          ? branches[0] === nullValue
+            ? branches[1]
+            : branches[1] === nullValue
+              ? branches[0]
+              : undefined
+          : undefined;
+  if (selected) {
+    if (traversal && recursiveWork(traversal, issues)) return invalid;
+    return selected(input, issues);
+  }
+  // Ordinary rejection is speculative. An aborted attempt cannot prove that
+  // a later branch is the first match, so it must not choose another projection.
   const attempts: Issues[] = [];
   for (const branch of branches) {
     // Same-value alternatives consume work even when no child is visited.
     if (traversal && recursiveWork(traversal, issues)) return invalid;
     const attempt = issueBuffer<Problem>(remaining(issues), issues);
+    attempt[speculativeAttempt] = true;
     const value = branch(input, attempt);
-    if (value !== invalid && attempt.length === 0) {
-      if (traversal) traversal.failure = priorFailure;
-      return value;
+    const cause = attempt[abortCause] ?? traversal?.abort;
+    if (cause !== undefined) {
+      issues[abortCause] ??= cause;
+      mergeIssues(issues, attempt, (issue) => issue);
+      return invalid;
     }
+    if (value !== invalid && attempt.length === 0) return value;
     attempts.push(attempt);
   }
   // Branches that accepted the value's shape but failed a constraint are the
@@ -1489,7 +1561,7 @@ export function union<T>(
     mergeIssues(issues, reported[0]!, (issue) => issue);
   else
     for (const [index, attempt] of attempts.entries()) {
-      if (exhausted(issues)) break;
+      if (exhausted(issues) || aborted(issues)) break;
       if (close.length > 0 && fatalSince(attempt, 0)) continue;
       mergeIssues(issues, attempt, ({ path, message }) => ({
         path,
@@ -1553,11 +1625,10 @@ export function fixedObject<T extends object>(
   let template: Readonly<Record<string, undefined>> | undefined;
   let known: readonly string[] = [];
   let forbidden: readonly string[] = [];
+  let requiredNames: readonly string[] = [];
   return (input: unknown, issues: Issues): T | Invalid => {
     const source = objectValue(input, issues);
     if (source === invalid) return invalid;
-    if (!strict && rules && propertyCount(source, issues, rules))
-      return invalid;
     if (!slots) {
       const ordered: {
           name: string;
@@ -1565,15 +1636,17 @@ export function fixedObject<T extends object>(
           parse: Parse<unknown>;
         }[] = [],
         all: string[] = [],
-        blocked: string[] = [];
+        blocked: string[] = [],
+        needed: string[] = [];
       for (const name in fields)
         if (Object.hasOwn(fields, name)) {
           all.push(name);
           const slot = fields[name];
           if (slot === false) blocked.push(name);
-          else if (typeof slot === 'function')
+          else if (typeof slot === 'function') {
+            needed.push(name);
             ordered.push({ name, required: true, parse: slot });
-          else ordered.push({ name, required: false, parse: slot[0] });
+          } else ordered.push({ name, required: false, parse: slot[0] });
         }
       slots = ordered;
       // This private template holds only undefined, never parsed caller data.
@@ -1584,13 +1657,20 @@ export function fixedObject<T extends object>(
         );
       known = all;
       forbidden = blocked;
+      requiredNames = needed;
     }
+    const missing = requiredNames.length
+      ? requiredKeys(source, requiredNames, issues)
+      : undefined;
+    if (missing === invalid) return invalid;
+    if (!strict && rules && propertyCount(source, issues, rules))
+      return invalid;
     const start = issues.length;
     const output: Record<string, unknown> = template ? { ...template } : {};
     let failed = false;
     for (const { name, required, parse } of slots) {
       const value = required
-        ? field(source, name, parse, issues)
+        ? field(source, name, parse, issues, missing)
         : optionalField(source, name, parse, issues);
       failed ||= value === invalid;
       if (value !== absent) {
@@ -1733,6 +1813,7 @@ function plainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function jsonValue(input: unknown, issues: Issues): JsonValue | Invalid {
+  if (aborted(issues)) return invalid;
   const traversal = recursiveTraversals.get(issues);
   const result: Record<string, JsonValue> = {};
   type Frame = {
@@ -1774,12 +1855,12 @@ export function jsonValue(input: unknown, issues: Issues): JsonValue | Invalid {
     )
       copy = value;
     else {
+      if (!Array.isArray(value) && !plainRecord(value)) break;
       if (
-        (!Array.isArray(value) && !plainRecord(value)) ||
         pending.has(value) ||
         (frame.source && traversal?.ancestors.has(value))
       )
-        break;
+        return abortValidation(issues, 'cyclic input is not supported');
       let entries: Frame['entries'];
       if (Array.isArray(value)) {
         const count = arrayLength(value);

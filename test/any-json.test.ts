@@ -24,6 +24,56 @@ import {
 import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 import type { Schema } from './schema-helpers.ts';
 
+void test('an observed JSON cycle aborts a union while ordinary non-JSON rejection can fall through', async (t) => {
+  const document = anyJsonFixture();
+  const summary = { $ref: '#/components/schemas/Summary' };
+  Object.assign(document.components.schemas, {
+    Summary: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+    Value: { anyOf: [{}, summary] },
+    SummaryFirst: { anyOf: [summary, {}] },
+  });
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(document, {
+      clients: [],
+      standalone: {
+        value: { schema: '#/components/schemas/Value', usage: 'response' },
+        summary: {
+          schema: '#/components/schemas/SummaryFirst',
+          usage: 'response',
+        },
+      },
+    }),
+  );
+  const { schema } = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.value.ts',
+  );
+  assert.deepEqual(schema.parse({ id: 'ordinary', payload: new Date(0) }), {
+    id: 'ordinary',
+  });
+  const payload: Record<string, unknown> = {};
+  payload.self = payload;
+  const input = { id: 'cycle', payload };
+  const failure = schema.safeParse(input);
+  assert.equal(failure.success, false);
+  if (!failure.success) assert.match(failure.error.message, /cyclic input/);
+  assert.deepEqual(schema.parse({ id: 'after', payload: [1, null] }), {
+    id: 'after',
+    payload: [1, null],
+  });
+  // Stripped fields are never inspected when an earlier branch already matches.
+  const first = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.summary.ts',
+  );
+  assert.deepEqual(first.schema.parse(input), { id: 'cycle' });
+});
+
 void test('empty schemas accept every JSON type through aliases, containers and protocol boundaries', async (t) => {
   const samples = anyJsonSamples;
   const reference = new Ajv2020().compile({});

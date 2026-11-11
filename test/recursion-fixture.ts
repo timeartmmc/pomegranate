@@ -30,6 +30,12 @@ export function recursionFixture(openapi = '3.1.2') {
           required: ['id', 'secret', 'value'],
         },
         TreeAlias: ref('Tree'),
+        TreeSummary: {
+          type: 'object',
+          properties: { value: { type: 'integer' } },
+          required: ['value'],
+        },
+        TreeOrSummary: { anyOf: [ref('TreeAlias'), ref('TreeSummary')] },
         MutualA: {
           type: 'object',
           properties: { name: { type: 'string' }, b: ref('MutualB') },
@@ -86,6 +92,13 @@ export function recursionFixture(openapi = '3.1.2') {
           responses: response('TreeAlias'),
         },
       },
+      '/tree-or-summary': {
+        post: {
+          operationId: 'saveTreeOrSummary',
+          requestBody: { required: true, content: content('TreeOrSummary') },
+          responses: response('TreeOrSummary'),
+        },
+      },
       '/mutual': {
         get: { operationId: 'getMutual', responses: response('MutualA') },
       },
@@ -116,6 +129,7 @@ export const recursionSelection = {
   surfaces: {
     consumer: [
       'saveTree',
+      'saveTreeOrSummary',
       'getMutual',
       'getArray',
       'getMap',
@@ -126,6 +140,14 @@ export const recursionSelection = {
   standalone: {
     request: { schema: '#/components/schemas/TreeAlias', usage: 'request' },
     response: { schema: '#/components/schemas/TreeAlias', usage: 'response' },
+    'union-request': {
+      schema: '#/components/schemas/TreeOrSummary',
+      usage: 'request',
+    },
+    'union-response': {
+      schema: '#/components/schemas/TreeOrSummary',
+      usage: 'response',
+    },
     mutual: { schema: '#/components/schemas/MutualA', usage: 'request' },
     array: { schema: '#/components/schemas/RecursiveArray', usage: 'request' },
     map: { schema: '#/components/schemas/RecursiveMap', usage: 'request' },
@@ -182,6 +204,7 @@ export function verifyRecursion(
   schemas: RecursionSchemas,
   roots: Readonly<Record<string, StandaloneModule>>,
 ): void {
+  verifyRecursiveUnionAborts(client, roots);
   const request = entry(roots, 'request').schema;
   const responseSchema = entry(roots, 'response').schema;
   assert.equal(
@@ -346,4 +369,79 @@ export function verifyRecursion(
       assert.ok(observed.issues.some((issue) => message.test(issue.message)));
     assert.deepEqual(request.parse(withJson), withJson);
   }
+}
+
+export function verifyRecursiveUnionAborts(
+  client: RuntimeClient,
+  roots: Readonly<Record<string, StandaloneModule>>,
+): void {
+  const operation = present(client.operations.saveTreeOrSummary);
+  for (const direction of ['request', 'response'] as const) {
+    const schema = entry(roots, `union-${direction}`).schema;
+    const leaf =
+      direction === 'request'
+        ? { secret: 'node', value: 1 }
+        : { id: 'node', value: 1 };
+    let deep: object = leaf;
+    for (let level = 0; level < 70; level++)
+      deep = { ...leaf, children: [deep] };
+    const cyclic: Record<string, unknown> = { ...leaf };
+    cyclic.children = [cyclic];
+    const payload: Record<string, unknown> = {};
+    payload.self = payload;
+    const samples: readonly (readonly [object, RegExp])[] = [
+      [deep, /depth exceeds 128/],
+      [cyclic, /cyclic input/],
+      [{ ...leaf, payload }, /cyclic input/],
+      [{ ...leaf, payload: Array(100_005).fill(0) }, /work exceeds 100000/],
+    ];
+    for (const [value, cause] of samples) {
+      const failure = schema.safeParse(value);
+      assert.equal(failure.success, false);
+      if (!failure.success) {
+        assert.deepEqual(failure.error.issues[0]?.path, []);
+        assert.match(present(failure.error.issues[0]).message, cause);
+      }
+      if (direction === 'request')
+        assert.throws(
+          () => operation.build({ body: value }),
+          (error) => {
+            assert.ok(error instanceof client.RequestValidationError);
+            assert.deepEqual(error.issues[0]?.path, ['body']);
+            assert.match(present(error.issues[0]).message, cause);
+            return true;
+          },
+        );
+      else if (
+        value !== cyclic &&
+        !('payload' in value && value.payload === payload)
+      ) {
+        const result = operation.parseResponse({
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(value),
+        });
+        assert.equal(result.kind, 'protocol');
+        if (result.kind === 'protocol')
+          assert.match(present(result.issues[0]).message, cause);
+      }
+      assert.deepEqual(schema.parse(leaf), leaf);
+    }
+    // A proven shape mismatch can still select the summary. It must not be
+    // confused with an aborted attempt whose preferred projection is unknown.
+    assert.deepEqual(schema.parse({ value: 2 }), { value: 2 });
+  }
+  const responseSchema = entry(roots, 'union-response').schema;
+  for (const payload of [new Date(0), 1n])
+    assert.deepEqual(responseSchema.parse({ id: 'node', value: 1, payload }), {
+      value: 1,
+    });
+  const ordinary = operation.parseResponse({
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'node', value: 1, children: [{ value: -1 }] }),
+  });
+  assert.equal(ordinary.kind, 'success');
+  if (ordinary.kind === 'success')
+    assert.deepEqual(ordinary.data, { value: 1 });
 }

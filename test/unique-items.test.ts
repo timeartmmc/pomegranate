@@ -409,3 +409,70 @@ void test('uniqueItems applies through 3.0 allOf siblings and diagnoses unsuppor
     );
   }
 });
+
+void test('comparison exhaustion aborts an anyOf instead of choosing a smaller response projection', async (t) => {
+  for (const recursive of [false, true]) {
+    const { client, validator } = await generated(
+      t,
+      '3.1.2',
+      {
+        Rich: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            label: { type: 'string' },
+            ...(recursive ? { next: ref('Rich') } : {}),
+          },
+          required: ['id', 'label'],
+        },
+        Plain: {
+          type: 'object',
+          properties: { id: { type: 'integer' } },
+          required: ['id'],
+        },
+        Choice: {
+          anyOf: [
+            { type: 'array', items: ref('Rich'), uniqueItems: true },
+            { type: 'array', items: ref('Plain') },
+          ],
+        },
+        Points: ref('Choice'),
+      },
+      ['Choice'],
+    );
+    const response = validator('Choice:response');
+    const parseResponse = present(client.operations.save).parseResponse;
+    const items = (length: number) => [
+      { id: 1, label: 'keep', extra: { a: Array<number>(length).fill(0) } },
+      { id: 1, label: 'keep', extra: { b: Array<number>(length).fill(0) } },
+    ];
+    const expected = [
+      { id: 1, label: 'keep' },
+      { id: 1, label: 'keep' },
+    ];
+    assert.deepEqual(response.parse(items(1)), expected);
+    const large = items(100_001);
+    const failure = response.safeParse(large);
+    assert.equal(failure.success, false);
+    if (!failure.success)
+      assert.match(
+        failure.error.message,
+        /uniqueItems comparison exceeds 100000/,
+      );
+    const observed = parseResponse({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(large),
+    });
+    assert.equal(observed.kind, 'protocol');
+    if (observed.kind === 'protocol')
+      assert.ok(
+        observed.issues.some(({ message }) =>
+          /comparison exceeds 100000/.test(message),
+        ),
+      );
+    assert.deepEqual(response.parse(items(1)), expected);
+    // An actual duplicate disproves the first branch and permits normal fallback.
+    assert.deepEqual(response.parse(expected), [{ id: 1 }, { id: 1 }]);
+  }
+});

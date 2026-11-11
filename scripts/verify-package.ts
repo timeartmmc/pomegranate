@@ -109,6 +109,11 @@ import {
   recursionConsumer,
 } from '../test/recursion-fixture.ts';
 import {
+  requiredMembershipConsumer,
+  requiredMembershipFixture,
+  requiredMembershipSelection,
+} from '../test/required-membership-fixture.ts';
+import {
   openapi30Fixture,
   openapi30Selection,
   openapi30Consumer,
@@ -310,6 +315,7 @@ try {
     'security-fixture.ts',
     'allof-fixture.ts',
     'recursion-fixture.ts',
+    'required-membership-fixture.ts',
     'composition-graph-fixture.ts',
     'openapi30-fixture.ts',
     'tolerance-fixture.ts',
@@ -729,6 +735,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'security-generated/*.ts',
     'allof-generated/*.ts',
     'recursion-generated/*.ts',
+    'required-membership-generated/*.ts',
     'composition-graph-generated/*.ts',
     'openapi30-generated/*.ts',
     'tolerance-generated/*.ts',
@@ -1002,6 +1009,12 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     ['security', securityFixture(), securitySelection, securityConsumer],
     ['allof', allOfFixture(), allOfSelection, allOfConsumer],
     ['recursion', recursionFixture(), recursionSelection, recursionConsumer],
+    [
+      'required-membership',
+      requiredMembershipFixture(),
+      requiredMembershipSelection,
+      requiredMembershipConsumer,
+    ],
     [
       'composition-graph',
       compositionGraphFixture(12),
@@ -2057,13 +2070,20 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import * as recursionSchemas from './recursion-generated/client.consumer.schemas.ts';
     import * as recursionRequest from './recursion-generated/standalone.request.ts';
     import * as recursionResponse from './recursion-generated/standalone.response.ts';
+    import * as recursionUnionRequest from './recursion-generated/standalone.union-request.ts';
+    import * as recursionUnionResponse from './recursion-generated/standalone.union-response.ts';
     import * as recursionMutual from './recursion-generated/standalone.mutual.ts';
     import * as recursionArray from './recursion-generated/standalone.array.ts';
     import * as recursionMap from './recursion-generated/standalone.map.ts';
     import * as recursionNullable from './recursion-generated/standalone.nullable.ts';
     import * as recursionExpression from './recursion-generated/standalone.expression.ts';
     import {verifyRecursion} from './verification/recursion-fixture.ts';
-    verifyRecursion(recursionClient, recursionSchemas, {request:recursionRequest,response:recursionResponse,mutual:recursionMutual,array:recursionArray,map:recursionMap,nullable:recursionNullable,expression:recursionExpression});
+    verifyRecursion(recursionClient, recursionSchemas, {request:recursionRequest,response:recursionResponse,'union-request':recursionUnionRequest,'union-response':recursionUnionResponse,mutual:recursionMutual,array:recursionArray,map:recursionMap,nullable:recursionNullable,expression:recursionExpression});
+    import * as requiredMembershipClient from './required-membership-generated/client.consumer.ts';
+    import * as requiredMembershipRequest from './required-membership-generated/standalone.request.ts';
+    import * as requiredMembershipResponse from './required-membership-generated/standalone.response.ts';
+    import {verifyRequiredMembership} from './verification/required-membership-fixture.ts';
+    verifyRequiredMembership(requiredMembershipClient,{request:requiredMembershipRequest,response:requiredMembershipResponse});
     import * as compositionGraphFirst from './composition-graph-generated/client.first.ts';
     import * as compositionGraphSecond from './composition-graph-generated/client.second.ts';
     import * as compositionGraphRoot from './composition-graph-generated/standalone.request.ts';
@@ -2231,13 +2251,20 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import * as recursionSchemas from './.build/recursion-generated/client.consumer.schemas.js';
     import * as recursionRequest from './.build/recursion-generated/standalone.request.js';
     import * as recursionResponse from './.build/recursion-generated/standalone.response.js';
+    import * as recursionUnionRequest from './.build/recursion-generated/standalone.union-request.js';
+    import * as recursionUnionResponse from './.build/recursion-generated/standalone.union-response.js';
     import * as recursionMutual from './.build/recursion-generated/standalone.mutual.js';
     import * as recursionArray from './.build/recursion-generated/standalone.array.js';
     import * as recursionMap from './.build/recursion-generated/standalone.map.js';
     import * as recursionNullable from './.build/recursion-generated/standalone.nullable.js';
     import * as recursionExpression from './.build/recursion-generated/standalone.expression.js';
     import {verifyRecursion} from './verification/recursion-fixture.ts';
-    verifyRecursion(recursionClient, recursionSchemas, {request:recursionRequest,response:recursionResponse,mutual:recursionMutual,array:recursionArray,map:recursionMap,nullable:recursionNullable,expression:recursionExpression});
+    verifyRecursion(recursionClient, recursionSchemas, {request:recursionRequest,response:recursionResponse,'union-request':recursionUnionRequest,'union-response':recursionUnionResponse,mutual:recursionMutual,array:recursionArray,map:recursionMap,nullable:recursionNullable,expression:recursionExpression});
+    import * as requiredMembershipClient from './.build/required-membership-generated/client.consumer.js';
+    import * as requiredMembershipRequest from './.build/required-membership-generated/standalone.request.js';
+    import * as requiredMembershipResponse from './.build/required-membership-generated/standalone.response.js';
+    import {verifyRequiredMembership} from './verification/required-membership-fixture.ts';
+    verifyRequiredMembership(requiredMembershipClient,{request:requiredMembershipRequest,response:requiredMembershipResponse});
     import * as compositionGraphFirst from './.build/composition-graph-generated/client.first.js';
     import * as compositionGraphSecond from './.build/composition-graph-generated/client.second.js';
     import * as compositionGraphRoot from './.build/composition-graph-generated/standalone.request.js';

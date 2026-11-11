@@ -377,13 +377,12 @@ void test('nullable constraints report their useful branch without expected-null
       if (!result.success) assert.deepEqual(result.error.issues, expected);
       assert.equal(parser.parse(null), null);
     }
-    // Wrong entry types still retain both branch diagnostics.
+    // A non-null value commits to the map branch, including type failures.
     const wrongType = registry.NullableMap.safeParse({ value: 0 });
     assert.equal(wrongType.success, false);
     if (!wrongType.success)
       assert.deepEqual(wrongType.error.issues, [
-        { path: ['value'], message: 'union branch 1: expected a string' },
-        { path: [], message: 'union branch 2: expected null' },
+        { path: ['value'], message: 'expected a string' },
       ]);
   }
 });

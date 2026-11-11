@@ -796,8 +796,11 @@ distinct, so the returned array can hold items that look equal. Only when
 parsed items coincide does POM read those received items in full, including
 stripped fields. Shared acyclic children compare by value. Cyclic or non-JSON
 values that must be compared produce a validation error. Each item comparison
-allows at most 100,000 visited values, including expansion of shared children;
-excessive work produces a validation error. `uniqueItems: false` adds no rule.
+allows at most 100,000 visited values, including expansion of shared children.
+Excessive comparison work or a detected input cycle aborts the complete value;
+a later union alternative cannot select a different projection. An actual
+duplicate is an ordinary constraint mismatch and may try another alternative.
+`uniqueItems: false` adds no rule.
 Constrained references and allOf siblings may add `uniqueItems`; multipart file
 arrays cannot declare it.
 
@@ -969,14 +972,23 @@ Parser entries include nullable and union
 bindings that validate the same value without descending into a child.
 Each object property, array item, or map value adds one descent level; a child
 object inside an array property is two levels below its parent object.
-Excessive depth or work produces an ordinary validation error, or a
-protocol failure for an observed response. The error reports the limit first at
-the path of the recursive value and keeps issues found in other fields and
+Excessive depth, parser entries, work, or a detected input cycle aborts the
+complete recursive value: a later union alternative cannot recover by selecting
+a different response projection. Ordinary type or constraint mismatches may
+still try another alternative. An abort produces a validation error, or a
+protocol failure for an observed response. The error reports the cause first at
+the path of the recursive value and keeps earlier issues from other fields and
 request parts, within the ordinary issue budget. One allowance covers the complete
 value, including outer or inline containers and sibling recursive children.
 The limits bound expansion
 of shared acyclic inputs as well as ordinary trees. The compiler's separate
 schema and generated-expression limits still apply.
+
+Speculative union trials missing required keys stop before their children are
+validated. Committed branches collect ordinary diagnostics. Overlapping
+alternatives whose keys are present can still repeat
+validation and reach the work limit below the depth limit. Discriminated unions
+dispatch directly instead of retrying alternatives.
 
 ### Reusable components
 
@@ -1228,8 +1240,14 @@ An object schema without `properties` entries, `required` names, or
 JSON members, as in JSON Schema.
 Declare `additionalProperties: false` for an object that must be empty.
 Fixed objects validate structural fields, including fields supplied by class
-instances or prototypes, and return fresh plain objects. Discriminator values in
-tagged unions must remain stable during parsing. Data on `Object.prototype`
+instances or prototypes, and return fresh plain objects. Required keys must be
+present when object validation begins, before any field values are read. Own
+properties or inherited structural members establish presence. Union attempts
+reject a missing requirement immediately. Ordinary objects report missing keys,
+validate present fields, and check unknown request keys within the issue budget.
+An initially missing required key remains invalid even if another getter adds it
+during parsing. Field values retain the declared read order.
+Discriminator values in tagged unions must remain stable during parsing. Data on `Object.prototype`
 never supplies a field or an unknown request key, so prototype pollution through
 data, such as an unsafe merge, cannot fill a missing value. Accessors installed
 there run application code and are not covered.

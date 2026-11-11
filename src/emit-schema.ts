@@ -271,7 +271,7 @@ export function schemaRenderer(
     exported = false,
     forbidden: readonly string[] = [],
     limits?: Expression,
-    unrolled = false,
+    chunk = false,
   ): void {
     const sizeCheck = (body: string[]) => {
       if (!limits) return;
@@ -282,6 +282,21 @@ export function schemaRenderer(
         `if (${use('propertyCount').source}(${strict ? 'output' : 'source'}, issues, ${bounds}${strict ? ', true' : ''})) return invalid;`,
       );
     };
+    const admission = (body: string[]) => {
+      // The complete object owns one entry check. Chunks must not repeat it
+      // after earlier fields have already read or changed the caller's value.
+      if (chunk) return '_missing';
+      const names = fields
+        .filter((field) => field.required)
+        .map((field) => field.name);
+      if (names.length === 0) return 'undefined';
+      const required = constant(`required_${name}`, data(names).source);
+      body.push(
+        `const missing = ${use('requiredKeys').source}(source, ${required}, issues);`,
+        'if (missing === invalid) return invalid;',
+      );
+      return 'missing';
+    };
     // Bound TypeScript's failure-condition flow graph while retaining a checked
     // return for every field. Preserve sibling issues in source order until
     // the shared issue budget stops further chunks.
@@ -291,6 +306,7 @@ export function schemaRenderer(
         `const source = ${use('objectValue').source}(input, issues);`,
         'if (source === invalid) return invalid;',
       ];
+      const missing = admission(body);
       if (!strict) sizeCheck(body);
       const values: string[] = [];
       for (let start = 0; start < fields.length; start += 64) {
@@ -309,7 +325,7 @@ export function schemaRenderer(
         );
         const value = `group${start / 64}`;
         values.push(value);
-        body.push(`const ${value} = ${parser}(source, issues);`);
+        body.push(`const ${value} = ${parser}(source, issues, ${missing});`);
         body.push(`if (${use('exhausted').source}(issues)) return invalid;`);
       }
       const failures = values.map((value) => `${value} === invalid`);
@@ -335,7 +351,7 @@ export function schemaRenderer(
       Object.fromEntries(fields.map((entry) => [entry.name, true])),
     );
     if (
-      !unrolled &&
+      !chunk &&
       fields.length > 0 &&
       fields.every((entry, index) => entry.name === order[index])
     ) {
@@ -363,6 +379,7 @@ export function schemaRenderer(
       `const source = ${use('objectValue').source}(input, issues);`,
       'if (source === invalid) return invalid;',
     ];
+    const missing = admission(body);
     if (!strict) sizeCheck(body);
     // Required results have no symbol except Invalid. Checking its primitive
     // kind also handles null | Invalid widening to symbol without
@@ -370,7 +387,7 @@ export function schemaRenderer(
     const failures = fields.map((entry, index) => {
       const helper = use(entry.required ? 'field' : 'optionalField');
       body.push(
-        `const v${index} = ${helper.source}(source, ${jsonSource(entry.name)}, ${entry.parse.source}, issues);`,
+        `const v${index} = ${helper.source}(source, ${jsonSource(entry.name)}, ${entry.parse.source}, issues${entry.required ? `, ${missing}` : ''});`,
       );
       return entry.required
         ? `typeof v${index} === "symbol"`
@@ -392,7 +409,13 @@ export function schemaRenderer(
       body.push('return output;');
     } else body.push(`return ${output};`);
     append(
-      functionDeclaration(name, type, body, exported),
+      functionDeclaration(
+        name,
+        type,
+        body,
+        exported,
+        chunk ? ', _missing?: ReadonlySet<string>' : '',
+      ),
       `generated parser ${name}`,
     );
   }
