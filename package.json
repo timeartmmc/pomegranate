@@ -1,6 +1,6 @@
 {
   "name": "pomegranate-compiler",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "MIT",
   "description": "A strict local OpenAPI compiler for TypeScript request contracts",
   "repository": {
