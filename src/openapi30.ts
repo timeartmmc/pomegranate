@@ -11,6 +11,16 @@ const referenceContexts = new Set([
   'securityScheme',
 ]);
 
+// OAS 3.0.4 §4.7.23 ignores every property beside $ref. Dropping these
+// annotations loses no constraint, so they follow the specification.
+const ignoredReferenceSiblings = [
+  'title',
+  'description',
+  'example',
+  'deprecated',
+  'externalDocs',
+];
+
 const openApi31SchemaKeys = new Set([
   'const',
   '$comment',
@@ -146,11 +156,11 @@ function lowerSchema(
 export function normalizeOpenApi30(document: unknown): unknown {
   return mapOpenApi(document, (value, context, location) => {
     if (referenceContexts.has(context) && Object.hasOwn(value, '$ref')) {
-      // In 3.0 this is a Reference Object, even at a schema location. Siblings
-      // are ignored by the specification. Reject them rather than accidentally
-      // enforcing 3.1 constraints or discarding an author's intended restriction.
-      keys(value, ['$ref'], location);
-      return value;
+      // In 3.0 this is a Reference Object, even at a schema location. Reject
+      // every other sibling rather than accidentally enforcing 3.1 constraints
+      // or discarding an author's intended restriction.
+      keys(value, ['$ref', ...ignoredReferenceSiblings], location);
+      return { $ref: value.$ref };
     }
     if (context === 'schema') return lowerSchema(value, location);
     if (context === 'info') {

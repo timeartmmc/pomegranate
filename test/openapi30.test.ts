@@ -172,6 +172,121 @@ void test('OpenAPI 3.0 false exclusive flags and nullable false preserve their b
   }
 });
 
+const referenceAliases = [
+  ['responses', 'ReplyAlias'],
+  ['parameters', 'SearchAlias'],
+  ['requestBodies', 'BodyAlias'],
+  ['headers', 'ModeAlias'],
+  ['examples', 'SearchAlias'],
+  ['securitySchemes', 'SessionAlias'],
+  ['schemas', 'Alias'],
+] as const;
+
+// Adds the siblings to every Reference Object of the document, wherever it is.
+function annotateReferences(value: unknown, siblings: object): void {
+  if (value === null || typeof value !== 'object') return;
+  for (const child of Object.values(value)) annotateReferences(child, siblings);
+  if (Object.hasOwn(value, '$ref')) Object.assign(value, siblings);
+}
+
+void test('OpenAPI 3.0 ignores annotation siblings of every reference without interpreting them', async () => {
+  const expected = await compile(fixture(), selection);
+  for (const siblings of [
+    {
+      title: 'Ignored',
+      description: 'Ignored',
+      example: { any: ['json', null] },
+      deprecated: true,
+      externalDocs: { url: './docs' },
+    },
+    // Ignored values are not annotations of the reference, so their shapes
+    // are not checked either.
+    {
+      title: 1,
+      description: null,
+      example: undefined,
+      deprecated: 'yes',
+      externalDocs: 'nowhere',
+    },
+  ]) {
+    const input = fixture();
+    annotateReferences(input, siblings);
+    const before = structuredClone(input);
+    assert.deepEqual(await compile(input, selection), expected);
+    assert.deepEqual(input, before);
+    assert.deepEqual(
+      await compile(parseYaml(stringify(input), 'siblings.yaml'), selection),
+      expected,
+    );
+  }
+});
+
+void test('OpenAPI 3.0 keeps rejecting reference siblings that could carry meaning', async () => {
+  const supported =
+    /unsupported keyword; supported keys: "\$ref", "title", "description", "example", "deprecated", "externalDocs"$/;
+  const rejects = async (
+    change: (input: ReturnType<typeof fixture>) => object,
+    sibling: Record<string, unknown>,
+    location: string,
+  ) => {
+    const input = fixture();
+    // An ignored annotation beside it does not excuse the other sibling.
+    Object.assign(change(input), { description: 'Ignored' }, sibling);
+    await assert.rejects(compile(input, selection), (error) => {
+      assert.ok(error instanceof ContractError, location);
+      assert.equal(error.location, location);
+      assert.match(error.message, supported, location);
+      return true;
+    });
+  };
+  for (const sibling of [
+    { nullable: true },
+    { type: 'object' },
+    { default: null },
+    { readOnly: true },
+    { writeOnly: false },
+    { enum: ['fast'] },
+    { minLength: 1 },
+    { maxProperties: 4 },
+    { required: ['label'] },
+    { properties: {} },
+    { examples: [] },
+    { format: 'uuid' },
+  ]) {
+    const [name] = Object.keys(sibling);
+    await rejects(
+      (input) => input.components.schemas.Alias!,
+      sibling,
+      `components.schemas.Alias.${name}`,
+    );
+    await rejects(
+      (input) => record(input.components.schemas.Record!.properties).label!,
+      sibling,
+      `components.schemas.Record.properties.label.${name}`,
+    );
+  }
+  for (const [section, name, sibling] of [
+    ['parameters', 'SearchAlias', { required: true }],
+    ['parameters', 'SearchAlias', { schema: { type: 'string' } }],
+    ['responses', 'ReplyAlias', { content: {} }],
+    ['responses', 'ReplyAlias', { headers: {} }],
+    ['requestBodies', 'BodyAlias', { required: false }],
+    ['headers', 'ModeAlias', { schema: { type: 'string' } }],
+    ['examples', 'SearchAlias', { value: 'slow' }],
+    ['securitySchemes', 'SessionAlias', { scheme: 'basic' }],
+  ] as const)
+    await rejects(
+      (input) => record(record(input.components[section])[name]),
+      sibling,
+      `components.${section}.${name}.${Object.keys(sibling)[0]}`,
+    );
+  await rejects(
+    (input) => input.paths['/round-trip'].post.responses[200],
+    { headers: {} },
+    'paths./round-trip.post.responses.200.headers',
+  );
+});
+
 void test('OpenAPI 3.0 validates version-specific metadata, reference siblings and request methods', async () => {
   const cases: [ReturnType<typeof fixture>, string][] = [];
   const summary = fixture();
@@ -180,23 +295,13 @@ void test('OpenAPI 3.0 validates version-specific metadata, reference siblings a
   const license = fixture();
   Object.assign(license.info, { license: { name: 'MIT', identifier: 'MIT' } });
   cases.push([license, 'info.license.identifier']);
-  const response = fixture();
-  Object.assign(response.components.responses.ReplyAlias, {
-    description: 'Ignored in 3.0',
-  });
-  cases.push([response, 'components.responses.ReplyAlias.description']);
-  for (const [section, name] of [
-    ['parameters', 'SearchAlias'],
-    ['requestBodies', 'BodyAlias'],
-    ['headers', 'ModeAlias'],
-    ['examples', 'SearchAlias'],
-    ['securitySchemes', 'SessionAlias'],
-    ['schemas', 'Alias'],
-  ] as const) {
+  // 3.1 lets a reference carry a summary. 3.0 ignores it, and POM does not
+  // count it among the annotations that are safe to drop.
+  for (const [section, name] of referenceAliases) {
     const input = fixture();
     const component = record(record(input.components[section])[name]);
-    Object.assign(component, { description: 'Ignored in OpenAPI 3.0' });
-    cases.push([input, `components.${section}.${name}.description`]);
+    Object.assign(component, { summary: 'A 3.1 reference annotation' });
+    cases.push([input, `components.${section}.${name}.summary`]);
   }
   const deletion = fixture();
   const operation = deletion.paths['/round-trip'].post;

@@ -382,12 +382,14 @@ OpenAPI 3.1 uses null types/type arrays and numeric exclusive bounds. Schema
 `info.license.identifier`, are accepted only in 3.1. `nullable` is accepted only
 in 3.0. Parameter/media-type named `examples` and schema `example` work in both.
 
-OpenAPI 3.0 references accept only `$ref`. Siblings receive a diagnostic because
-3.0 specifies that they are ignored; POM must not silently lose an intended
-constraint or apply 3.1 reference semantics. In 3.1, supported schema constraint
-siblings and non-schema reference `summary` / `description` annotations remain
-accepted. DELETE and OPTIONS request body declarations are rejected in 3.0:
-OpenAPI 3.0 tells consumers to ignore bodies whose semantics HTTP does not
+OpenAPI 3.0 ignores every sibling of `$ref`. POM follows that for the
+annotations `title`, `description`, `example`, `deprecated`, and
+`externalDocs`: they are dropped without being interpreted, for every kind of
+reference. Any other sibling receives a diagnostic, because POM must not
+silently lose an intended constraint or apply 3.1 reference semantics. In
+3.1, supported schema constraint siblings and non-schema reference `summary` /
+`description` annotations remain accepted. DELETE and OPTIONS request body
+declarations are rejected in 3.0: OpenAPI 3.0 tells consumers to ignore bodies whose semantics HTTP does not
 define, and POM reports an error rather than silently discarding a declaration.
 Bodyless DELETE/OPTIONS operations remain supported, and 3.1 permits their bodies.
 Both dialects lower into the same generated API and validators;
