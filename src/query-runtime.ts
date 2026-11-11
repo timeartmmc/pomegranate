@@ -712,9 +712,9 @@ export function defineInfiniteQuery<
       initialPageParam: null,
       responseIssues: undefined,
       parsePageParam: (value) => {
-        if (typeof value === 'string') return value;
-        if (value === null) return null;
-        throw new TypeError('page cursor must be a string or null');
+        if (value !== null && typeof value !== 'string')
+          throw new TypeError('page cursor must be a string or null');
+        return value;
       },
       nextPageParam: (page) => normalized.nextCursor(page) ?? undefined,
     },

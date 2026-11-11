@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
 import { compile, runProject } from '../dist/index.js';
-import type { CompileOptions } from '../dist/index.js';
+import type { CompileOptions, OutputWarning } from '../dist/index.js';
 import { synchronizeOutputs } from '../dist/outputs.js';
 import { commandFailure, invalidOptions, json, record } from './assertions.ts';
 import { fixture, preparation, temporary, fileSnapshot } from './helpers.ts';
@@ -133,6 +133,8 @@ void test('invalid execution options cannot turn a read-only request into genera
     { check: 0 },
     { check: null },
     { check: undefined },
+    { onWarning: 'print' },
+    { check: true, onWarning: null },
     null,
     [],
   ]) {
@@ -251,7 +253,7 @@ void test('changing selected clients checks stale output read-only and cleans on
   );
 });
 
-void test('an edited deselected client blocks the complete output change before writes', async (t) => {
+void test('an edited deselected client is preserved while current outputs update', async (t) => {
   const { root, config } = await project(t);
   await runProject(config);
   const output = join(root, 'generated');
@@ -265,12 +267,28 @@ void test('an edited deselected client blocks the complete output change before 
   const document = fixture();
   document.components.schemas.PreparationInput.properties.label.maxLength = 50;
   await writeFile(join(root, 'openapi.json'), JSON.stringify(document));
-  const before = await fileSnapshot(output);
-  await assert.rejects(
-    runProject(config),
-    /modified owned output: client.staff.ts/,
+  const warnings: OutputWarning[] = [];
+  const result = await runProject(config, {
+    onWarning: (warning) => {
+      warnings.push(warning);
+    },
+  });
+  assert.deepEqual(warnings, result.warnings);
+  assert.ok(
+    warnings.some(
+      (warning) =>
+        warning.code === 'preserved-stale-output' &&
+        warning.path === join(output, 'client.staff.ts'),
+    ),
   );
-  assert.deepEqual(await fileSnapshot(output), before);
+  assert.equal(
+    await readFile(join(output, 'client.staff.ts'), 'utf8'),
+    'locally edited staff client',
+  );
+  for (const [name, source] of Object.entries(
+    await compile(document, { clients: ['consumer'] }),
+  ))
+    assert.equal(await readFile(join(output, name), 'utf8'), source);
 });
 
 void test('first-milestone output inventory migrates safely without accepting an edited stale file', async (t) => {
@@ -284,14 +302,41 @@ void test('first-milestone output inventory migrates safely without accepting an
   };
   await synchronizeOutputs(output, oldFiles, [], false);
   await writeFile(join(output, 'index.ts'), 'user edit to old entry');
-  const before = await fileSnapshot(output);
-  await assert.rejects(runProject(config), /modified owned output: index.ts/);
-  assert.deepEqual(await fileSnapshot(output), before);
+  const result = await runProject(config);
+  assert.ok(
+    result.warnings.some(
+      (warning) =>
+        warning.code === 'preserved-stale-output' &&
+        warning.path === join(output, 'index.ts'),
+    ),
+  );
+  assert.equal(
+    await readFile(join(output, 'index.ts'), 'utf8'),
+    'user edit to old entry',
+  );
   await writeFile(join(output, 'index.ts'), oldFiles['index.ts']);
   await runProject(config);
   for (const name of ['index.ts', 'operations.ts', 'schemas.ts'])
     await assert.rejects(stat(join(output, name)), { code: 'ENOENT' });
   assert.equal((await runProject(config, { check: true })).clean, true);
+});
+
+void test('CLI generation reports modified target warnings and succeeds without a prompt', async (t) => {
+  const { root, config } = await project(t);
+  await runProject(config);
+  const target = join(root, 'generated', 'client.consumer.ts');
+  const source = await readFile(target, 'utf8');
+  await writeFile(target, source + '\n// application edit\n');
+  const { stdout, stderr } = await exec(process.execPath, [
+    cli,
+    'generate',
+    '--config',
+    config,
+  ]);
+  assert.match(stdout, /Generated/);
+  assert.match(stderr, /POM warning \[modified-output\]/);
+  assert.match(stderr, /client\.consumer\.ts/);
+  assert.equal(await readFile(target, 'utf8'), source);
 });
 
 void test('contract and selection failures preserve outputs and inputs during generate and check', async (t) => {

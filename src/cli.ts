@@ -22,6 +22,11 @@ if (
     try {
       const result = await runProject(configPath, {
         check: command === 'check',
+        onWarning: (warning) => {
+          process.stderr.write(
+            `POM warning [${warning.code}]: ${warning.path}: ${warning.message}\n`,
+          );
+        },
       });
       if (command === 'check' && !result.clean) {
         process.stderr.write(

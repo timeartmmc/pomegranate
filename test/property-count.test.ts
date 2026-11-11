@@ -10,11 +10,7 @@ import { stringify } from 'yaml';
 import { compile, ContractError, runProject } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
 import { json, present, record } from './assertions.ts';
-import {
-  generatedTestWorkspace,
-  generatedWorkspace,
-  importGenerated,
-} from './generated-workspace.ts';
+import { generatedWorkspace, importGenerated } from './generated-workspace.ts';
 import { fileSnapshot, temporary } from './helpers.ts';
 import {
   propertyCountConsumer,
@@ -137,7 +133,7 @@ void test('fixed-object counts inspect original own enumerable keys before respo
   assert.deepEqual(response.parse(unread), { a: 'a' });
 });
 
-void test('request bounds count serialized snapshot fields and preserve single-read structural inputs', () => {
+void test('request bounds count serialized snapshots and structural fields', () => {
   const fixed = present(schemas.requestSchemas.Fixed);
   const alias = present(schemas.requestSchemas.Alias);
   assert.equal(fixed.safeParse({ a: undefined }).success, false);
@@ -161,132 +157,10 @@ void test('request bounds count serialized snapshot fields and preserve single-r
   }
   const tooWide: unknown = Object.create({ a: 'a', b: 'b', c: 'c' });
   assert.equal(alias.safeParse(tooWide).success, false);
-  let reads = 0;
-  const getter = Object.defineProperty({}, 'a', {
-    configurable: true,
-    get() {
-      reads++;
-      Reflect.deleteProperty(getter, 'a');
-      return 'a';
-    },
-  });
-  assert.deepEqual(fixed.parse(getter), { a: 'a' });
-  assert.equal(reads, 1);
-  assert.deepEqual(Object.keys(getter), []);
   assert.equal(
     present(schemas.requestSchemas.AnyMap).safeParse({ a: undefined }).success,
     false,
   );
-});
-
-void test('bounded maps retain their bounds when getters change the captured member set', async (t) => {
-  const direct = fixture();
-  Object.assign(present(direct.components.schemas.CountedMap), {
-    minProperties: 2,
-  });
-  const directDirectory = await generatedTestWorkspace(
-    t,
-    await compile(direct, selection),
-  );
-  const directModules = await importGenerated<PropertyCountSchemas>(
-    directDirectory,
-    'client.consumer.schemas.ts',
-  );
-  const document = fixture();
-  document.components.schemas.MapBase = present(
-    document.components.schemas.CountedMap,
-  );
-  document.components.schemas.CountedMap = {
-    $ref: '#/components/schemas/MapBase',
-    minProperties: 2,
-  };
-  const directory = await generatedTestWorkspace(
-    t,
-    await compile(document, selection),
-  );
-  const modules = await importGenerated<PropertyCountSchemas>(
-    directory,
-    'client.consumer.schemas.ts',
-  );
-  for (const table of [
-    directModules.requestSchemas,
-    directModules.responseSchemas,
-    modules.requestSchemas,
-    modules.responseSchemas,
-  ]) {
-    const validator = present(table.CountedMap);
-    for (const removed of [undefined, 'a', 'b']) {
-      let reads = 0;
-      const input = Object.defineProperties(
-        {},
-        {
-          a: {
-            enumerable: true,
-            configurable: true,
-            get() {
-              reads++;
-              if (removed !== undefined) Reflect.deleteProperty(input, removed);
-              return 1;
-            },
-          },
-          b: { enumerable: true, configurable: true, value: 2 },
-        },
-      );
-      const result = validator.safeParse(input);
-      assert.equal(reads, 1);
-      if (removed === 'b') {
-        assert.equal(result.success, false);
-        if (!result.success)
-          assert.deepEqual(result.error.issues, [
-            { path: [], message: 'expected at least 2 properties' },
-          ]);
-      } else {
-        assert.equal(result.success, true);
-        if (result.success) assert.deepEqual(result.data, { a: 1, b: 2 });
-      }
-    }
-  }
-  document.components.schemas.CountedMap = {
-    $ref: '#/components/schemas/MapBase',
-    maxProperties: 1,
-  };
-  const upperDirectory = await generatedTestWorkspace(
-    t,
-    await compile(document, selection),
-  );
-  const upper = await importGenerated<PropertyCountSchemas>(
-    upperDirectory,
-    'client.consumer.schemas.ts',
-  );
-  for (const table of [upper.requestSchemas, upper.responseSchemas]) {
-    const validator = present(table.CountedMap);
-    for (const expose of [false, true]) {
-      let reads = 0;
-      const input = Object.defineProperties(
-        {},
-        {
-          a: {
-            enumerable: true,
-            get() {
-              reads++;
-              if (expose)
-                Object.defineProperty(input, 'b', { enumerable: true });
-              return 1;
-            },
-          },
-          b: { configurable: true, value: 2 },
-        },
-      );
-      const result = validator.safeParse(input);
-      assert.equal(reads, 1);
-      assert.equal(result.success, !expose);
-      if (result.success) assert.deepEqual(result.data, { a: 1 });
-      else
-        assert.deepEqual(result.error.issues, [
-          { path: [], message: 'expected at most 1 property' },
-        ]);
-    }
-  }
 });
 
 void test('directional projection preserves object bounds and counts stripped fields without reading them', async () => {

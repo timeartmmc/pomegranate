@@ -374,7 +374,7 @@ void test('configuration typo diagnostics name supported keys and corrected opti
     name: 'ContractError',
     location: 'project options.chek',
     message:
-      'project options.chek: unsupported keyword; supported keys: "check"',
+      'project options.chek: unsupported keyword; supported keys: "check", "onWarning"',
   });
   assert.equal((await runProject(config, { check: true })).clean, false);
   await assert.rejects(stat(join(root, 'generated')), { code: 'ENOENT' });

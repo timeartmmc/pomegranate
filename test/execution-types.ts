@@ -12,7 +12,9 @@ import type {
   Responses,
 } from './execution-generated/client.consumer.ts';
 import { defineOperation } from './execution-generated/runtime.ts';
-import type { Parse } from './execution-generated/runtime.ts';
+import type { EmptyResponse, Parse } from './execution-generated/runtime.ts';
+import type { JsonResponse } from './execution-generated/endpoint-runtime.ts';
+import type { QueryFactory } from './execution-generated/query-runtime.ts';
 import { QueryClient, skipToken } from '@tanstack/query-core';
 import type { QueryExecutor } from './execution-generated/client.consumer.queries.ts';
 import type { Executor as UploadExecutor } from './multipart-generated/client.browser.ts';
@@ -23,6 +25,16 @@ import {
 } from './execution-generated/client.consumer.queries.ts';
 
 const authReadiness = { public: false, session: true } as const;
+
+declare const unknownQuery: QueryFactory<undefined, Responses>;
+// @ts-expect-error An unspecified response table may have a bodyless success.
+unknownQuery.body();
+declare const eitherQuery: QueryFactory<
+  undefined,
+  { 200: JsonResponse<Parse<string>> } | { 204: EmptyResponse }
+>;
+// @ts-expect-error Either response table can be selected, including a bodyless one.
+eitherQuery.body();
 const retryBudgets = { never: 0 } as const;
 const execute: Executor = async (request, execution) => {
   const readiness: boolean = authReadiness[request.policy.auth];

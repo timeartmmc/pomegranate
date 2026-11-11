@@ -210,7 +210,7 @@ export async function verifyWideDeclarations(
       '{ id: stringValue, label: stringValue }',
       '{ id: integerValue, label: stringValue }',
     ),
-    originalSource.replace('field0: v0,', 'field0: 123,'),
+    originalSource.replace('field0: stringValue', 'field0: integerValue'),
     originalSource.slice(0, literalMember) +
       "'undeclared'" +
       originalSource.slice(literalMember + "'v0'".length),

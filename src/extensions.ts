@@ -207,7 +207,9 @@ function walkDocument(
     }
     const target: object = grammar.list
       ? (Object.setPrototypeOf([], prototype) as object)
-      : (Object.create(prototype) as object);
+      : // This is already the compiler's detached copy. Give records the own-only
+        // view expected by record() so later passes do not copy descriptors again.
+        (Object.create(null) as object);
     contexts.set(context, target);
     pending.push({ source: input, target, context, shape: grammar, location });
     return target;

@@ -12,22 +12,17 @@ import { join } from 'node:path';
 import { fail } from './diagnostics.js';
 import {
   existingFile,
-  existingFileStamp,
   filenames,
   hasCode,
   hash,
   inspectOutputs,
-  inspectRecovery,
   inventoryName,
-  journal,
-  journalName,
   lockName,
   outputDirectory,
-  readJournal,
   safeDirectory,
-  snapshot,
 } from './output-state.js';
-import type { Files, OutputPlan } from './output-state.js';
+import type { Files, OutputPlan, OutputWarning } from './output-state.js';
+export type { OutputWarning } from './output-state.js';
 
 type Lock = {
   path: string;
@@ -118,45 +113,12 @@ async function publish(
   files: Files,
   plan: OutputPlan,
   lock: Lock,
-  newJournal?: string,
 ): Promise<void> {
   await ownLock(lock);
   await unchanged(root, plan);
-  if (newJournal !== undefined) {
-    // Publish the complete recovery evidence before the first target change.
-    // Atomic rename prevents a partially written journal from authorizing work.
-    await writeFile(join(stage, journalName), newJournal, 'utf8');
-    await ownLock(lock);
-    await unchanged(root, plan);
-    await rename(join(stage, journalName), join(root, journalName));
-  }
-  const journalHash =
-    newJournal === undefined
-      ? plan.snapshots.get(journalName)?.hash
-      : hash(newJournal);
-  let journalStamp: string | undefined;
-  const assertWriter = async (verifyContent = false) => {
-    await ownLock(lock);
-    if (
-      verifyContent ||
-      (await existingFileStamp(join(root, journalName))) !== journalStamp
-    ) {
-      const current = await existingFile(join(root, journalName));
-      if (current?.hash !== journalHash)
-        fail(journalName, 'recovery journal changed during generation');
-      journalStamp = current?.stamp;
-    }
-  };
-  // The journal contains the complete output set. Fingerprints catch ordinary
-  // edits and replacements without rereading that payload for every target.
-  // Coarse timestamps can defer an in-place edit's detection until more targets
-  // reach their intended state. Full content hashes still gate manifest
-  // publication and recovery-evidence removal.
-  // Target content and lock ownership still receive their independent checks.
-  await assertWriter(true);
   for (const [name, content] of Object.entries(files)) {
     if (plan.snapshots.get(name)?.content === content) continue;
-    await assertWriter();
+    await ownLock(lock);
     if (
       (await existingFile(join(root, name)))?.hash !==
       plan.snapshots.get(name)?.hash
@@ -164,20 +126,24 @@ async function publish(
       fail(name, 'output changed during generation; refusing to overwrite it');
     await rename(join(stage, name), join(root, name));
   }
-  for (const [name, previous] of plan.snapshots) {
+  for (const name of plan.removals) {
+    await ownLock(lock);
     if (
-      name === inventoryName ||
-      name === journalName ||
-      Object.hasOwn(files, name) ||
-      !previous
+      (await existingFile(join(root, name)))?.hash !==
+      plan.snapshots.get(name)?.hash
     )
-      continue;
-    await assertWriter();
-    if ((await existingFile(join(root, name)))?.hash !== previous.hash)
       fail(name, 'output changed during generation; refusing to remove it');
     await rm(join(root, name));
   }
-  await assertWriter(true);
+  // Publish ownership last, and never record an edit made after a target was
+  // published as if it were generated content. A retry uses the current inputs.
+  for (const [name, content] of Object.entries(files))
+    if ((await existingFile(join(root, name)))?.hash !== hash(content))
+      fail(
+        name,
+        'output changed during generation; refusing to publish its manifest',
+      );
+  await ownLock(lock);
   if (
     (await existingFile(join(root, inventoryName)))?.hash !==
     plan.snapshots.get(inventoryName)?.hash
@@ -185,38 +151,38 @@ async function publish(
     fail(inventoryName, 'manifest changed during generation');
   if (plan.snapshots.get(inventoryName)?.content !== plan.nextManifest)
     await rename(join(stage, inventoryName), join(root, inventoryName));
-  await assertWriter(true);
-  await rm(join(root, journalName));
 }
 
 export type OutputResult = Readonly<{
   output: string;
   clean: boolean;
   changes: readonly string[];
+  warnings: readonly OutputWarning[];
 }>;
 
-/** An inventory is an ownership claim, not permission to overwrite edited files. */
+/** Owned targets may be replaced with warnings; uncertain stale files are preserved. */
 export async function synchronizeOutputs(
   output: string,
   expected: Files,
   inputs: readonly string[],
   check: boolean,
+  onWarning?: (warning: OutputWarning) => void,
 ): Promise<OutputResult> {
   const root = await outputDirectory(output);
   filenames(Object.keys(expected));
   const protectedInputs = new Set(
     await Promise.all(inputs.map((input) => realpath(input))),
   );
-  const pending = await snapshot(root, journalName, protectedInputs);
   if (check) {
-    if (pending) readJournal(pending.content);
     const plan = await inspectOutputs(root, expected, protectedInputs);
-    const changes = [
-      ...(pending ? [`interrupted generation: ${journalName}`] : []),
-      ...plan.conflicts,
-      ...plan.changes,
-    ];
-    return { output: root, clean: changes.length === 0, changes };
+    for (const warning of plan.warnings) onWarning?.(warning);
+    const changes = [...plan.conflicts, ...plan.changes];
+    return {
+      output: root,
+      clean: changes.length === 0,
+      changes,
+      warnings: plan.warnings,
+    };
   }
   await mkdir(root, { recursive: true });
   const path = join(root, lockName);
@@ -247,59 +213,23 @@ export async function synchronizeOutputs(
     });
     lock.ready = true;
     await safeDirectory(root);
-    const currentJournal = await snapshot(root, journalName, protectedInputs);
-    let recovered = false;
-    if (currentJournal) {
-      const pending = readJournal(currentJournal.content);
-      const plan = await inspectRecovery(
-        root,
-        pending,
-        currentJournal,
-        protectedInputs,
-      );
-      // Validate the new request too before completing the prior publication.
-      // Recovery must not hide an input overlap or an unrelated unowned target.
-      filenames([...Object.keys(pending.before), ...Object.keys(expected)]);
-      for (const name of Object.keys(expected)) {
-        const current = await snapshot(root, name, protectedInputs);
-        if (!Object.hasOwn(pending.before, name) && current)
-          fail(join(root, name), `unowned output: ${name}`);
-      }
-      stage = await mkdtemp(join(path, '.pom-stage-'));
-      await stageFiles(stage, pending.files, plan);
-      await publish(root, stage, pending.files, plan, lock);
-      recovered = true;
-    }
     const plan = await inspectOutputs(root, expected, protectedInputs);
     if (plan.conflicts.length)
       fail(
         root,
         `refusing to replace protected files: ${plan.conflicts.join('; ')}`,
       );
-    if (plan.changes.length === 0)
-      return {
-        output: root,
-        clean: !recovered,
-        changes: recovered ? ['recovered interrupted generation'] : [],
-      };
-    plan.snapshots.set(journalName, undefined);
-    stage ??= await mkdtemp(join(path, '.pom-stage-'));
-    await stageFiles(stage, expected, plan);
-    await publish(
-      root,
-      stage,
-      expected,
-      plan,
-      lock,
-      JSON.stringify(journal(plan, expected)) + '\n',
-    );
+    for (const warning of plan.warnings) onWarning?.(warning);
+    if (plan.changes.length > 0) {
+      stage = await mkdtemp(join(path, '.pom-stage-'));
+      await stageFiles(stage, expected, plan);
+      await publish(root, stage, expected, plan, lock);
+    }
     return {
       output: root,
-      clean: false,
-      changes: [
-        ...(recovered ? ['recovered interrupted generation'] : []),
-        ...plan.changes,
-      ],
+      clean: plan.changes.length === 0,
+      changes: plan.changes,
+      warnings: plan.warnings,
     };
   } catch (error) {
     primaryError =

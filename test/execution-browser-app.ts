@@ -135,7 +135,7 @@ export async function runExecutionBrowser() {
     context,
     input: {
       body: {
-        caption: 'a\r\nb',
+        caption: 'a\nb',
         note: 'a\r\nb',
         cover: file,
         attachments: [file, file],

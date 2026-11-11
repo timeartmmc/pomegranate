@@ -25,6 +25,12 @@
 import type { Policy } from './policy-types.ts';
 export type { Policy } from './policy-types.ts';
 
+// Required and nullable contract values need distinct null and undefined types.
+// Keep an initializer so checking generated source rejects disabled null checks.
+export const requiresStrictNullChecks: undefined extends {}
+  ? 'Pomegranate output requires strictNullChecks'
+  : true = true;
+
 // Generated validators are ordinary functions over unknown input. A parser
 // returns a fresh value of its declared type, or `invalid` after recording at
 // least one issue in the caller's sink. Contract types remain independent of
@@ -109,8 +115,7 @@ export function recursiveParse<T>(
     // An aborted traversal is final for this value. Keep its primary cause
     // ahead of ordinary issues; a full quota replaces one of those issues.
     if (ownsTraversal && traversal.abort !== undefined) {
-      // Annotate the empty path: non-strict consumers would infer any[].
-      const cause: Problem = {
+      const cause = {
         path: [],
         message: traversal.abort,
         fatal: true,
@@ -378,7 +383,7 @@ export function validator<T>(run: Parse<T>): Validator<T> {
     safeParse,
     parse: (input: unknown): T => {
       const result = safeParse(input);
-      if (result.success === true) return result.data;
+      if (result.success) return result.data;
       throw result.error;
     },
   });
@@ -393,25 +398,8 @@ export function objectValue(input: unknown, issues: Issues): object | Invalid {
     : report(issues, 'expected an object', true);
 }
 
-// Fixed fields use TypeScript's structural semantics: inherited and accessor
-// fields count, except from Object.prototype. Contract fields cannot use its
-// names, so a key held there is prototype pollution rather than input.
-// A value already read proves presence unless Object.prototype could have
-// supplied it. One read of that key is the measured cheapest test (an `in` or
-// own-key test costs more per field); the chain walk is the rare path.
-// This covers polluted data. An accessor installed there is application code,
-// which could equally replace these builtins; gating reads costs ~14% per field.
-function present(source: object, key: string, value: unknown): boolean {
-  if (value !== undefined)
-    return (
-      Reflect.get(Object.prototype, key) === undefined || holds(source, key)
-    );
-  return key in source && holds(source, key);
-}
-
-// Whether an input object before Object.prototype owns the key. A key reported
-// only by a proxy trap stays present unless Object.prototype owns it. Bound
-// the walk: a proxy can report an unending prototype chain.
+// Structural fields include class accessors and inherited data, but never
+// defaults supplied solely by Object.prototype. Bound prototype traversal too.
 function holds(source: object, key: string): boolean {
   let holder: object | null = source;
   for (let depth = 0; holder !== null && depth < 1024; depth++) {
@@ -419,35 +407,26 @@ function holds(source: object, key: string): boolean {
     if (Object.hasOwn(holder, key)) return true;
     holder = Reflect.getPrototypeOf(holder);
   }
-  return !Object.hasOwn(Object.prototype, key);
+  return false;
 }
 
 function missingProperty(issues: Issues, key: string): Invalid {
   return report(issues, 'expected a required property', true, [key]);
 }
 
-// Snapshot requirements before reading values. Speculative union attempts stop
-// at the first missing key; ordinary objects retain the missing names so fields
-// report them in order alongside other issues. Later getters cannot repair or
-// cause reads of a requirement that was absent at this object's entry.
+// Reject impossible speculative branches before visiting recursive children;
+// otherwise nested alternatives can repeat work exponentially. Committed
+// objects check required fields as they parse, retaining sibling diagnostics.
 export function requiredKeys(
   source: object,
   names: readonly string[],
   issues: Issues,
-): ReadonlySet<string> | Invalid | undefined {
+): Invalid | undefined {
   if (stopped(issues)) return invalid;
-  let missing: Set<string> | undefined;
+  if (!issues[speculativeAttempt]) return undefined;
   for (const name of names)
-    if (
-      // An own descriptor proves presence without reading its value. Inherited
-      // or virtual members use the same prototype exclusion as field parsing.
-      !Object.hasOwn(source, name) &&
-      !present(source, name, undefined)
-    ) {
-      if (issues[speculativeAttempt]) return missingProperty(issues, name);
-      (missing ??= new Set()).add(name);
-    }
-  return missing;
+    if (!holds(source, name)) return missingProperty(issues, name);
+  return undefined;
 }
 
 // Public configuration and response evidence retain structural class fields.
@@ -461,22 +440,18 @@ export function structuralField<T extends object, K extends keyof T & string>(
     (typeof source !== 'object' && typeof source !== 'function')
   )
     return undefined;
-  const value = Reflect.get(source, key) as T[K];
-  return present(source, key, value) ? value : undefined;
+  return holds(source, key) ? Reflect.get(source, key) : undefined;
 }
 
-// Read once. A value that was read proves presence, so validation and output
-// use that one value even if its accessor then removes the key; an undefined
-// read still tests membership.
+// Parse the captured field value and return that parser's result.
 export function field<T>(
   source: object,
   key: string,
   parse: Parse<T>,
   issues: Issues,
-  missing?: ReadonlySet<string>,
 ): T | Invalid {
   if (stopped(issues)) return invalid;
-  if (missing?.has(key)) return missingProperty(issues, key);
+  if (!holds(source, key)) return missingProperty(issues, key);
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
   const result = recursiveCalls
@@ -487,7 +462,7 @@ export function field<T>(
     within(issues, start, key);
     return invalid;
   }
-  return present(source, key, value) ? result : missingProperty(issues, key);
+  return result;
 }
 
 export function optionalField<T>(
@@ -497,14 +472,10 @@ export function optionalField<T>(
   issues: Issues,
 ): T | undefined | Absent | Invalid {
   if (stopped(issues)) return invalid;
+  if (!holds(source, key)) return absent;
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
-  // The common absent case costs one membership test, as an explicit
-  // undefined still needs an input holder.
-  if (value === undefined)
-    return key in source && holds(source, key) ? undefined : absent;
-  // Excluded prototype defaults must not consume validation or traversal work.
-  if (!present(source, key, value)) return absent;
+  if (value === undefined) return undefined;
   const result = recursiveCalls
     ? recursiveChild(value, issues, parse)
     : parse(value, issues);
@@ -563,7 +534,7 @@ export function forbiddenKeys(
     if (stopped(issues)) return true;
     // Known read-only fields follow structural presence even when they are
     // non-enumerable. Test membership without invoking an excluded getter.
-    if (key in source && holds(source, key)) {
+    if (holds(source, key)) {
       report(issues, 'read-only property is forbidden in requests', false, [
         key,
       ]);
@@ -1190,19 +1161,11 @@ export function propertyCount(
 ): boolean {
   const keys = Object.keys(source);
   let count = keys.length;
-  // Requests count the detached parsed object as JSON will serialize it:
+  // Fixed requests count the detached parsed object as JSON will serialize it:
   // optional undefined disappears, while inherited fields became own fields.
-  // Responses count original members before stripping, without reading values.
+  // Maps and fixed responses count original members without reading values.
   if (omitUndefined)
     for (const key of keys) if (Reflect.get(source, key) === undefined) count--;
-  return propertyBounds(count, issues, rules);
-}
-
-function propertyBounds(
-  count: number,
-  issues: Issues,
-  rules: ObjectRules,
-): boolean {
   const { maxProperties, minProperties } = objectSettings(rules);
   if (maxProperties !== undefined && count > maxProperties) {
     report(
@@ -1447,7 +1410,8 @@ export function map<T>(
   // Dynamic JSON keys are data: inspect own entries of plain records and build
   // the result with fromEntries so keys such as __proto__ stay own properties.
   if (!plainRecord(input)) return report(issues, 'expected an object', true);
-  // Count the original own JSON keys before reading values or projecting data.
+  // Successful map parsing retains every entry, so the original key count is
+  // also the result's count. Check bounds before reading values.
   if (rules && propertyCount(input, issues, rules)) return invalid;
   const start = issues.length;
   const entries: [string, T][] = [];
@@ -1470,22 +1434,12 @@ export function map<T>(
       within(issues, before, name);
     } else entries.push([name, parsed]);
   }
-  // Getters may remove members or make hidden members enumerable while
-  // their values are captured. Check the detached count too, without
-  // another enumeration or getter read.
-  if (
-    rules &&
-    issues.length === start &&
-    propertyBounds(entries.length, issues, rules)
-  )
-    return invalid;
   return issues.length === start ? Object.fromEntries(entries) : invalid;
 }
 
-// Constrained references delegate to one terminal parser instead of rebuilding
-// its children. Responses count raw members before stripping; requests count the
-// detached JSON snapshot. Maps check both counts, including getter-driven changes
-// while their entries are captured. Alias chains become one wrapper.
+// Constrained references delegate to one terminal parser. Maps and fixed
+// responses count original members; fixed requests count their detached JSON.
+// Alias chains become one wrapper.
 export function refineObject<T extends object>(
   input: unknown,
   issues: Issues,
@@ -1505,10 +1459,8 @@ export function refineObject<T extends object>(
   const start = issues.length;
   const value = base(input, issues);
   if (value === invalid || issues.length !== start) return invalid;
-  if (mode === 'response') return value;
-  return propertyCount(value, issues, rules, mode === 'request')
-    ? invalid
-    : value;
+  if (mode !== 'request') return value;
+  return propertyCount(value, issues, rules, true) ? invalid : value;
 }
 
 export function emptyOptions(
@@ -1605,15 +1557,14 @@ export function taggedUnion<T>(
 
 // Independent T specifies every key, exact requiredness and parser output type.
 // A false slot denotes a directionally forbidden optional-never property.
-// Without strictNullChecks, Exclude<null, undefined> erases null too. Restore
-// nullable members, and use Required to identify optional-never separately.
-type FieldValue<T> = Exclude<T, undefined> | Extract<T, null>;
 export type FieldTable<T extends object> = {
-  readonly [K in keyof T]-?: [FieldValue<Required<T>[K]>] extends [never]
+  readonly [K in keyof T]-?: [Exclude<Required<T>[K], undefined>] extends [
+    never,
+  ]
     ? false
     : {} extends Pick<T, K>
-      ? readonly [Parse<FieldValue<T[K]>>]
-      : Parse<FieldValue<T[K]>>;
+      ? readonly [Parse<Exclude<T[K], undefined>>]
+      : Parse<Exclude<T[K], undefined>>;
 };
 
 // The emitter supplies finite own-property literals with an explicit independent
@@ -1658,8 +1609,7 @@ export function fixedObject<T extends object>(
           } else ordered.push({ name, required: false, parse: slot[0] });
         }
       slots = ordered;
-      // This private template holds only undefined, never parsed caller data.
-      // All-required results keep every own slot; optional tables avoid deletes.
+      // Cache only undefined slots; every parse still constructs a fresh result.
       if (ordered.every(({ required }) => required))
         template = Object.fromEntries(
           ordered.map(({ name }): [string, undefined] => [name, undefined]),
@@ -1668,10 +1618,7 @@ export function fixedObject<T extends object>(
       forbidden = blocked;
       requiredNames = needed;
     }
-    const missing = requiredNames.length
-      ? requiredKeys(source, requiredNames, issues)
-      : undefined;
-    if (missing === invalid) return invalid;
+    if (requiredKeys(source, requiredNames, issues) === invalid) return invalid;
     if (!strict && rules && propertyCount(source, issues, rules))
       return invalid;
     const start = issues.length;
@@ -1679,15 +1626,13 @@ export function fixedObject<T extends object>(
     let failed = false;
     for (const { name, required, parse } of slots) {
       const value = required
-        ? field(source, name, parse, issues, missing)
+        ? field(source, name, parse, issues)
         : optionalField(source, name, parse, issues);
       failed ||= value === invalid;
       if (value !== absent) {
-        // Template slots are writable own data. Otherwise guard each write:
-        // input getters may add prototype setters after this parser was cached.
         if (template || !(name in Object.prototype)) output[name] = value;
         else {
-          // A null prototype keeps inherited get/set data out of the descriptor.
+          // Avoid inherited setters, including polluted descriptor accessors.
           const descriptor: PropertyDescriptor & { __proto__: null } = {
             __proto__: null,
             value,
@@ -1739,6 +1684,17 @@ export function taggedParser<T>(
 }
 export function textParser(rules: StringRules): Parse<string> {
   return (input, issues) => text(input, issues, rules);
+}
+// Multipart encoders use CRLF on the wire. Validate that detached string so every
+// constraint describes the value the application will serialize.
+export function multipartTextParser<T extends string>(
+  parse: Parse<T>,
+): Parse<T> {
+  return (input, issues) =>
+    parse(
+      typeof input === 'string' ? input.replace(/\r\n|\r|\n/g, '\r\n') : input,
+      issues,
+    );
 }
 export function numberParser(rules: NumberRules): Parse<number> {
   return (input, issues) => numeric(input, issues, rules);
@@ -1824,12 +1780,7 @@ function* jsonObjectEntries(
 ): Generator<readonly [string, unknown]> {
   // Snapshot names without capturing every value or allocating every entry
   // pair. Recursive traversal can then stop reading at its work allowance.
-  for (const key of Reflect.ownKeys(input))
-    if (
-      typeof key === 'string' &&
-      Object.getOwnPropertyDescriptor(input, key)?.enumerable
-    )
-      yield [key, Reflect.get(input, key)];
+  for (const key of Object.keys(input)) yield [key, Reflect.get(input, key)];
 }
 
 export function jsonValue(input: unknown, issues: Issues): JsonValue | Invalid {
@@ -2089,10 +2040,8 @@ type CommonResponseData = Readonly<{
   contentType: string | undefined;
   data: unknown;
 }>;
-// Generic executors see the common evidence shape; concrete tables correlate
-// each media key with its parser output directly. Without strictNullChecks,
-// the common contentType is a string; intersecting it with a bodyless
-// response's undefined erases that response.
+// Generic executors and error guards need a common evidence shape. Concrete
+// tables correlate each media key with its parser output instead.
 type ResponseData<S extends ResponseSpec> = ResponseSpec extends S
   ? CommonResponseData
   : S extends {
@@ -2138,8 +2087,8 @@ type Fallback<
       >
     : never
   : never;
-// Body availability comes from response metadata rather than payload types,
-// because undefined is assignable to every payload without strictNullChecks.
+// Body availability follows the response declarations, including the status
+// range or default that can receive an otherwise undeclared success status.
 export type SuccessResponseSpecs<R extends Responses> = R extends Responses
   ?
       | {
@@ -2242,28 +2191,13 @@ type PreparedBodyKind<O, B extends BodyKind> = B extends 'json' | 'text'
     : B | 'none'
   : B;
 
-// Without strictNullChecks, undefined is assignable to every required wrapper.
-// Generated wrappers admit {} exactly when all their groups are optional. Keep
-// strict-mode union semantics, where an explicit undefined arm permits omission.
-export type InputOptional<Input> = undefined extends {}
-  ? [Input] extends [never]
-    ? false
-    : {} extends Input
-      ? true
-      : [Input] extends [void]
-        ? true
-        : false
-  : undefined extends Input
-    ? true
-    : false;
-
 export interface Operation<
   O extends RequestParts | undefined,
   R extends Responses,
   B extends BodyKind,
 > {
   readonly build: (
-    ...args: InputOptional<O> extends true ? [options?: O] : [options: O]
+    ...args: undefined extends O ? [options?: O] : [options: O]
   ) => PreparedRequest<R, B, RequestBody<O>>;
   readonly parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
 }
@@ -2744,18 +2678,8 @@ function validateMultipart(
           message: 'a required file array must contain at least one file',
         },
       ]);
-    if (field.kind === 'text' && typeof value === 'string') {
+    if (field.kind === 'text' && typeof value === 'string')
       requireWellFormed(value, operationId, ['body', field.name]);
-      // Standard multipart encoding rewrites isolated CR and LF to CRLF.
-      // Require canonical line breaks to preserve the validated text exactly.
-      if (/\r(?!\n)|(?:^|[^\r])\n/.test(value))
-        throw new RequestValidationError(operationId, [
-          {
-            path: ['body', field.name],
-            message: 'line breaks must use CRLF',
-          },
-        ]);
-    }
   }
 }
 
@@ -2939,7 +2863,7 @@ export function defineOperation<
     definition.headers,
   );
   function build(
-    ...args: InputOptional<O> extends true ? [options?: O] : [options: O]
+    ...args: undefined extends O ? [options?: O] : [options: O]
   ): PreparedRequest<R, PreparedBodyKind<O, B>, RequestBody<O>> {
     if (args.length > 1)
       throw new RequestValidationError(definition.operationId, [

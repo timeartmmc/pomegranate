@@ -501,16 +501,30 @@ void test('execution output drift is read-only and stale cleanup preserves modif
     const drift = await runProject(config, { check: true });
     assert.equal(drift.clean, false);
     assert.deepEqual(await snapshot(), before);
+    const originals = new Map<string, string>();
     for (const path of [
       target,
       join(output, 'execution-runtime.ts'),
       join(output, 'call-runtime.ts'),
     ]) {
       const source = await readFile(path, 'utf8');
+      originals.set(path, source);
       await writeFile(path, `${source}\n// application edit\n`);
-      const modified = await snapshot();
-      await assert.rejects(runProject(config), /modified owned output/);
-      assert.deepEqual(await snapshot(), modified);
+    }
+    const modified = await snapshot();
+    const result = await runProject(config);
+    assert.deepEqual((await snapshot()).root, modified.root);
+    for (const [path, source] of originals) {
+      assert.ok(
+        result.warnings.some(
+          (warning) =>
+            warning.code === 'preserved-stale-output' && warning.path === path,
+        ),
+      );
+      assert.equal(
+        await readFile(path, 'utf8'),
+        `${source}\n// application edit\n`,
+      );
       await writeFile(path, source);
     }
     await runProject(config);

@@ -165,10 +165,7 @@ import {
 } from '../test/execution-fixture.ts';
 import { verifyExecutionDeclarations } from '../test/execution-declarations.ts';
 import { verifyQueryPlatform } from '../test/query-platform-check.ts';
-import {
-  consumerModesFixture,
-  verifyConsumerModes,
-} from '../test/consumer-modes.ts';
+import { verifyStrictNullChecks } from '../test/strict-null-checks.ts';
 import {
   aliasDeclarationFixture,
   verifyAliasDeclarations,
@@ -288,6 +285,7 @@ try {
           'package.json',
           'LICENSE',
           'README.md',
+          'CHANGELOG.md',
           'REFERENCE.md',
           'QUERIES.md',
           'EXECUTION.md',
@@ -969,12 +967,17 @@ ${await readFile(rewritingWorker, 'utf8')}`,
   await writeFile(
     join(consumer, 'extension-generated/consumer.ts'),
     `
-    import type { CompileOptions } from 'pomegranate-compiler';
+    import { runProject } from 'pomegranate-compiler';
+    import type { CompileOptions, OutputResult, OutputWarning } from 'pomegranate-compiler';
     import { operations } from './client.consumer.ts';
     const options: CompileOptions = {clients: ['consumer'], ignoreExtensions: ['x-note']};
     export const request = operations.echo.build({path: {id: 'id'}, query: {'x-note': 'query'}, headers: {'x-note': 'request'}, body: {'x-note': 'kept'}});
     const retained: string = request.body['x-note'];
     void [retained, options];
+    export async function inspectOutput(): Promise<OutputResult> {
+      const warnings: OutputWarning[] = [];
+      return runProject('../extension-pom.json', {check: true, onWarning: warning => {warnings.push(warning);}});
+    }
     // @ts-expect-error Ignoring annotations preserves required data fields.
     operations.echo.build({path: {id: 'id'}, body: {}});
   `,
@@ -1745,7 +1748,25 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     },
     changed,
   );
-  await writeFile(generatedIndex, original);
+  await run(process.execPath, [
+    '--input-type=module',
+    '-e',
+    `
+    import assert from 'node:assert/strict';
+    import {readFileSync} from 'node:fs';
+    import {runProject} from 'pomegranate-compiler';
+    const warnings=[];
+    const result=await runProject('./pom.json', {onWarning(warning) {
+      assert.equal(readFileSync(${JSON.stringify(generatedIndex)}, 'utf8'), ${JSON.stringify(changed.source)});
+      warnings.push(warning);
+    }});
+    assert.deepEqual(result.warnings,warnings);
+    assert.equal(warnings.length,1);
+    assert.equal(warnings[0].code,'modified-output');
+    assert.equal(warnings[0].path,${JSON.stringify(generatedIndex)});
+    assert.equal(readFileSync(${JSON.stringify(generatedIndex)}, 'utf8'),${JSON.stringify(original)});
+  `,
+  ]);
   await run(binary, ['check', '--config', join(consumer, 'pom.json')]);
   for (const path of [
     'generated/runtime.ts',
@@ -1792,29 +1813,9 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     '-p',
     join(consumer, 'tsconfig.json'),
   ]);
-  const modes = consumerModesFixture();
-  await writeFile(
-    join(consumer, 'consumer-modes-openapi.json'),
-    JSON.stringify(modes.document),
-  );
-  await writeFile(
-    join(consumer, 'consumer-modes-pom.json'),
-    JSON.stringify({
-      version: 2,
-      openapi: './consumer-modes-openapi.json',
-      output: './consumer-modes-generated',
-      ...modes.options,
-    }),
-  );
-  await run(binary, [
-    'generate',
-    '--config',
-    join(consumer, 'consumer-modes-pom.json'),
-  ]);
-  await verifyConsumerModes(
-    join(consumer, 'consumer-modes-generated'),
+  await verifyStrictNullChecks(
+    join(consumer, 'execution-generated'),
     join(consumer, 'node_modules/typescript/bin/tsc'),
-    'pomegranate-compiler',
   );
   const aliasTypes = aliasDeclarationFixture();
   await mkdir(join(consumer, 'alias-types'));

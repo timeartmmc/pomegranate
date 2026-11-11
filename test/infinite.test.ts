@@ -693,6 +693,16 @@ void test('infinite outputs retain read-only drift and safe cleanup ownership', 
     JSON.stringify({ ...config, infiniteQueries: {} }),
   );
   const edited = await fileSnapshot(output);
-  await assert.rejects(runProject(configFile), /modified/);
-  assert.deepEqual(await fileSnapshot(output), edited);
+  const preserved = await runProject(configFile);
+  assert.ok(
+    preserved.warnings.some(
+      (warning) =>
+        warning.code === 'preserved-stale-output' &&
+        warning.path === join(output, 'client.consumer.queries.ts'),
+    ),
+  );
+  assert.deepEqual(
+    (await fileSnapshot(output))['client.consumer.queries.ts'],
+    edited['client.consumer.queries.ts'],
+  );
 });

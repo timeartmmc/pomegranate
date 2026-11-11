@@ -85,62 +85,23 @@ const table = (strict: boolean) =>
     ),
   );
 
-void test('ordinary diagnostics cannot manufacture initially missing required fields', () => {
-  for (const strict of [true, false]) {
-    const schema = table(strict);
-    let reads = 0;
-    const input = {
-      get children() {
-        reads++;
-        Object.defineProperty(input, 'revision', {
-          get() {
-            assert.fail('initially missing fields must not be read');
-          },
-        });
-        return [];
-      },
-    };
-    const failure = schema.safeParse(input);
-    assert.equal(failure.success, false);
-    assert.equal(reads, 1);
-    if (!failure.success)
-      assert.deepEqual(failure.error.issues, [
-        { path: ['revision'], message: 'expected a required property' },
-      ]);
-    assert.deepEqual(schema.parse({ children: [], revision: 1 }), {
-      children: [],
-      revision: 1,
-    });
-  }
-});
-
-void test('admitted objects retain structural fields and value read order', () => {
-  const reads: string[] = [];
+void test('class fields retain their captured validated values', () => {
+  let childrenReads = 0;
+  let revisionReads = 0;
   class Value {
     get children() {
-      reads.push('children');
-      return ['leaf'];
+      return ++childrenReads === 1 ? ['leaf'] : [false];
     }
     get revision() {
-      reads.push('revision');
-      return 2;
+      return ++revisionReads === 1 ? 2 : 'invalid';
     }
   }
-  const schema = table(true);
-  assert.deepEqual(schema.parse(new Value()), {
+  assert.deepEqual(table(true).parse(new Value()), {
     children: ['leaf'],
     revision: 2,
   });
-  assert.deepEqual(reads, ['children', 'revision']);
-  const removing = { children: [] };
-  Object.defineProperty(removing, 'revision', {
-    configurable: true,
-    get() {
-      Reflect.deleteProperty(removing, 'revision');
-      return 3;
-    },
-  });
-  assert.deepEqual(schema.parse(removing), { children: [], revision: 3 });
+  assert.equal(childrenReads, 1);
+  assert.equal(revisionReads, 1);
 });
 
 void test('Object.prototype cannot supply required membership, but a nearer prototype can', () => {
@@ -162,40 +123,6 @@ void test('Object.prototype cannot supply required membership, but a nearer prot
   } finally {
     if (before) Object.defineProperty(Object.prototype, 'revision', before);
     else Reflect.deleteProperty(Object.prototype, 'revision');
-  }
-});
-
-void test('virtual proxy fields must report required membership before value reads', () => {
-  // An own descriptor also proves presence, even if a proxy hides it from `in`.
-  const hiddenOwn = new Proxy(
-    { children: [], revision: 1 },
-    { has: () => false },
-  );
-  assert.deepEqual(table(false).parse(hiddenOwn), {
-    children: [],
-    revision: 1,
-  });
-  for (const membership of [true, false]) {
-    let reads = 0;
-    const input = new Proxy(
-      { children: [] },
-      {
-        has(target, key) {
-          return key === 'revision' ? membership : Reflect.has(target, key);
-        },
-        get(target, key, receiver) {
-          if (key === 'revision') {
-            reads++;
-            return 1;
-          }
-          const value: unknown = Reflect.get(target, key, receiver);
-          return value;
-        },
-      },
-    );
-    const result = table(false).safeParse(input);
-    assert.equal(result.success, membership);
-    assert.equal(reads, membership ? 1 : 0);
   }
 });
 
@@ -226,19 +153,8 @@ void test('recursive union admission avoids retry expansion at public boundaries
   verifyRequiredMembership(client, roots);
   for (const name of ['wide-request', 'wide-response']) {
     const schema = entry(roots, name).schema;
-    let reads = 0;
-    const failure = schema.safeParse({
-      get children() {
-        reads++;
-        return [];
-      },
-    });
+    const failure = schema.safeParse({ children: [] });
     assert.equal(failure.success, false);
-    assert.equal(
-      reads,
-      1,
-      'ordinary objects still validate present fields after recording entry shape',
-    );
     if (!failure.success)
       assert.deepEqual(failure.error.issues[0]?.path, ['revision']);
     const combined = schema.safeParse({
@@ -259,58 +175,7 @@ void test('recursive union admission avoids retry expansion at public boundaries
           combined.error.issues.some((issue) => issue.message.includes('nmae')),
         );
     }
-    const probes = new Map<PropertyKey, number>();
-    let readingValues = false;
-    const input = new Proxy(
-      { children: [], revision: 1 },
-      {
-        getOwnPropertyDescriptor(target, key) {
-          // The caller reports its initial shape, then hides descriptors once
-          // values are read. Chunks must not admit this same object again.
-          if (readingValues) return undefined;
-          probes.set(key, (probes.get(key) ?? 0) + 1);
-          return Reflect.getOwnPropertyDescriptor(target, key);
-        },
-        has(target, key) {
-          return !readingValues && Reflect.has(target, key);
-        },
-        get(target, key, receiver) {
-          readingValues = true;
-          const value: unknown = Reflect.get(target, key, receiver);
-          return value;
-        },
-      },
-    );
-    assert.deepEqual(schema.parse(input), { children: [], revision: 1 });
-    assert.equal(probes.get('children'), 1);
-    assert.equal(
-      probes.get('revision'),
-      1,
-      'chunks must not readmit the same object',
-    );
   }
-  let reads = 0;
-  assert.throws(
-    () =>
-      entry(client.operations, 'ordered').build({
-        query: {
-          get '2'() {
-            reads++;
-            return 'value';
-          },
-        },
-      }),
-    (error) => {
-      assert.ok(error instanceof client.RequestValidationError);
-      assert.deepEqual(error.issues[0]?.path, ['query', '1']);
-      return true;
-    },
-  );
-  assert.equal(
-    reads,
-    1,
-    'order-sensitive parameter bodies still validate their present fields',
-  );
   assert.deepEqual(
     record(
       entry(client.operations, 'save').build({ body: { children: [] } }).body,

@@ -1108,6 +1108,16 @@ void test('query outputs participate in read-only drift checks and safe stale-fi
   );
   await writeFile(configFile, JSON.stringify({ ...config, queries: {} }));
   const edited = await fileSnapshot(output);
-  await assert.rejects(runProject(configFile), /modified/);
-  assert.deepEqual(await fileSnapshot(output), edited);
+  const preserved = await runProject(configFile);
+  assert.ok(
+    preserved.warnings.some(
+      (warning) =>
+        warning.code === 'preserved-stale-output' &&
+        warning.path === join(output, 'query-runtime.ts'),
+    ),
+  );
+  assert.deepEqual(
+    (await fileSnapshot(output))['query-runtime.ts'],
+    edited['query-runtime.ts'],
+  );
 });

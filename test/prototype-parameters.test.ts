@@ -307,7 +307,7 @@ for (const profile of ['cursor', 'offset'] as const) {
 }
 
 void test('omitted multipart text is not revalidated from prototype data', async () => {
-  await withPrototype({ note: '\n' }, () => {
+  await withPrototype({ note: '\ud800' }, () => {
     const request = entry(client.operations, 'upload').build({
       body: { file: { uri: 'file:///synthetic' } },
     });
@@ -316,7 +316,7 @@ void test('omitted multipart text is not revalidated from prototype data', async
     assert.throws(
       () =>
         entry(client.operations, 'upload').build({
-          body: { file: { uri: 'file:///synthetic' }, note: '\n' },
+          body: { file: { uri: 'file:///synthetic' }, note: '\ud800' },
         }),
       client.RequestValidationError,
     );

@@ -137,7 +137,8 @@ export async function verifyMultipart(
       { ...body, caption: '' },
       { ...body, caption: 'x'.repeat(17) },
       { ...body, caption: '\ud800' },
-      { ...body, note: 'a\nb' },
+      { ...body, caption: '\udc00\n' },
+      { ...body, caption: 'x'.repeat(15) + '\n' },
       { ...body, cover: 'file.txt' },
       { ...body, extras: [upload, upload, upload] },
       { ...body, unknown: 'field' },
@@ -147,37 +148,27 @@ export async function verifyMultipart(
         () => runtimeInput(operations.upload.build, { body: value }),
         RequestValidationError,
       );
-    for (const caption of [
-      '\r',
-      '\n',
-      'a\rb',
-      'a\nb',
-      'a\r\nb\nc',
-      'a\r\r\nb',
-      'x'.repeat(15) + '\n',
-    ]) {
-      const value = { ...body, caption };
-      assert.throws(
-        () => runtimeInput(operations.upload.build, { body: value }),
-        (error) =>
-          error instanceof RequestValidationError &&
-          error.issues.some(
-            (issue) =>
-              issue.path.join('.') === 'body.caption' &&
-              issue.message.includes('CRLF'),
-          ),
-      );
-      assert.equal(value.caption, caption);
-    }
-    for (const caption of [
-      '\r\n',
-      'a\r\nb',
-      '\r\na\r\n',
-      'x'.repeat(14) + '\r\n',
-    ]) {
-      const value = { ...body, caption, note: 'a\r\nb' };
+    for (const [caption, normalized] of [
+      ['\r', '\r\n'],
+      ['\n', '\r\n'],
+      ['a\rb', 'a\r\nb'],
+      ['a\nb', 'a\r\nb'],
+      ['a\r\nb\nc', 'a\r\nb\r\nc'],
+      ['a\r\r\nb', 'a\r\n\r\nb'],
+      ['\r\n', '\r\n'],
+      ['\r\na\r\n', '\r\na\r\n'],
+      ['x'.repeat(14) + '\r\n', 'x'.repeat(14) + '\r\n'],
+    ] as const) {
+      const value = Object.freeze({ ...body, caption, note: 'a\nb' });
       const prepared = runtimeInput(operations.upload.build, { body: value });
-      assert.deepEqual(prepared.body, value);
+      assert.deepEqual(prepared.body, {
+        ...value,
+        caption: normalized,
+        note: 'a\r\nb',
+      });
+      assert.notEqual(prepared.body, value);
+      assert.equal(value.caption, caption);
+      assert.equal(value.note, 'a\nb');
       const form = new FormData();
       for (const field of prepared.multipart)
         if (field.kind === 'text') {
@@ -192,8 +183,8 @@ export async function verifyMultipart(
         body: form,
       });
       const decoded = await encoded.formData();
-      assert.equal(decoded.get('caption'), caption);
-      assert.equal(decoded.get('note'), value.note);
+      assert.equal(decoded.get('caption'), normalized);
+      assert.equal(decoded.get('note'), 'a\r\nb');
       assert.doesNotThrow(() =>
         runtimeInput(operations.upload.build, {
           body: {
@@ -203,7 +194,7 @@ export async function verifyMultipart(
           },
         }),
       );
-      assert.deepEqual(value, { ...body, caption, note: 'a\r\nb' });
+      assert.deepEqual(value, { ...body, caption, note: 'a\nb' });
     }
     assert.throws(
       () =>

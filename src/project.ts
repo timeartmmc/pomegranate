@@ -8,7 +8,7 @@ import { render } from './emit.js';
 import { ignoreExtensions } from './extensions.js';
 import { parseJson } from './json.js';
 import { synchronizeOutputs } from './outputs.js';
-import type { OutputResult } from './outputs.js';
+import type { OutputResult, OutputWarning } from './outputs.js';
 import { selectClients, selectStandalone } from './projection.js';
 import type { Descriptor } from './model.js';
 import {
@@ -108,15 +108,23 @@ export async function compile(
 
 export async function runProject(
   configFile: string,
-  options: Readonly<{ check?: boolean }> = {},
+  options: Readonly<{
+    check?: boolean;
+    onWarning?: (warning: OutputWarning) => void;
+  }> = {},
 ): Promise<OutputResult> {
   // A misspelled read-only option must never fall back to generation, including
   // for JavaScript callers that do not receive TypeScript's excess-key check.
   const execution = record(options, 'project options');
-  keys(execution, ['check'], 'project options');
+  keys(execution, ['check', 'onWarning'], 'project options');
   const check = Object.hasOwn(execution, 'check') ? execution.check : false;
   if (typeof check !== 'boolean')
     fail('project options.check', 'expected a boolean');
+  const onWarning = Object.hasOwn(execution, 'onWarning')
+    ? options.onWarning
+    : undefined;
+  if (onWarning !== undefined && typeof onWarning !== 'function')
+    fail('project options.onWarning', 'expected a function');
   const configPath = await realpath(configFile);
   const config = record(await readJson(configPath), configPath);
   keys(config, ['version', 'openapi', 'output', ...selectionKeys], configPath);
@@ -133,5 +141,11 @@ export async function runProject(
   const document = await readOpenApi(input);
   const descriptor = describeInput(document, config);
   const files = await renderSelection(descriptor, config);
-  return synchronizeOutputs(output, files, [configPath, input], check);
+  return synchronizeOutputs(
+    output,
+    files,
+    [configPath, input],
+    check,
+    onWarning,
+  );
 }

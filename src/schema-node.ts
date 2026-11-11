@@ -7,23 +7,30 @@ import type {
 
 // These constructors consume compiler-created data. Source records retain their
 // descriptor-preserving own-property view at the diagnostics.record boundary.
-export function constraintRecord(input: ConstraintInput = {}): Constraints {
-  const value = Object.assign(Object.create(null) as ConstraintInput, input);
+// Read sparse metadata directly instead of allocating a temporary own-only copy.
+function own<T extends object, K extends keyof T>(
+  value: T,
+  key: K,
+): T[K] | undefined {
+  return Object.hasOwn(value, key) ? value[key] : undefined;
+}
+
+export function constraintRecord(value: ConstraintInput = {}): Constraints {
   return {
-    minLength: value.minLength,
-    maxLength: value.maxLength,
-    pattern: value.pattern,
-    minimum: value.minimum,
-    maximum: value.maximum,
-    exclusiveMinimum: value.exclusiveMinimum,
-    exclusiveMaximum: value.exclusiveMaximum,
-    multipleOf: value.multipleOf,
-    float: value.float,
-    minItems: value.minItems,
-    maxItems: value.maxItems,
-    uniqueItems: value.uniqueItems,
-    minProperties: value.minProperties,
-    maxProperties: value.maxProperties,
+    minLength: own(value, 'minLength'),
+    maxLength: own(value, 'maxLength'),
+    pattern: own(value, 'pattern'),
+    minimum: own(value, 'minimum'),
+    maximum: own(value, 'maximum'),
+    exclusiveMinimum: own(value, 'exclusiveMinimum'),
+    exclusiveMaximum: own(value, 'exclusiveMaximum'),
+    multipleOf: own(value, 'multipleOf'),
+    float: own(value, 'float'),
+    minItems: own(value, 'minItems'),
+    maxItems: own(value, 'maxItems'),
+    uniqueItems: own(value, 'uniqueItems'),
+    minProperties: own(value, 'minProperties'),
+    maxProperties: own(value, 'maxProperties'),
   };
 }
 
@@ -37,11 +44,10 @@ export function hasConstraints(value: Constraints): boolean {
   return Object.values(value).some((value) => value !== undefined);
 }
 
-export function schemaNode(input: SchemaDraft): Schema {
-  const value = Object.assign(Object.create(null) as SchemaDraft, input);
+export function schemaNode(value: SchemaDraft): Schema {
   const access = {
-    readOnly: value.readOnly === true,
-    writeOnly: value.writeOnly === true,
+    readOnly: own(value, 'readOnly') === true,
+    writeOnly: own(value, 'writeOnly') === true,
   };
   switch (value.kind) {
     case 'json':
@@ -61,78 +67,78 @@ export function schemaNode(input: SchemaDraft): Schema {
         ...access,
         branches: value.branches,
         location: value.location,
-        branchLocations: value.branchLocations,
-        literals: value.literals,
+        branchLocations: own(value, 'branchLocations'),
+        literals: own(value, 'literals'),
       };
     case 'map':
       return {
         kind: value.kind,
         ...access,
         additionalPropertiesExplicit:
-          value.additionalPropertiesExplicit === true,
+          own(value, 'additionalPropertiesExplicit') === true,
         values: value.values,
-        minProperties: value.minProperties,
-        maxProperties: value.maxProperties,
+        minProperties: own(value, 'minProperties'),
+        maxProperties: own(value, 'maxProperties'),
       };
     case 'union':
       return {
         kind: value.kind,
         ...access,
         branches: value.branches,
-        cardinality: value.cardinality ?? 'any',
-        sourceTypeArray: value.sourceTypeArray,
-        sourceLiterals: value.sourceLiterals,
-        discriminator: value.discriminator,
+        cardinality: own(value, 'cardinality') ?? 'any',
+        sourceTypeArray: own(value, 'sourceTypeArray'),
+        sourceLiterals: own(value, 'sourceLiterals'),
+        discriminator: own(value, 'discriminator'),
       };
     case 'object':
       return {
         kind: value.kind,
         ...access,
-        closed: value.closed === true,
-        typeExplicit: value.typeExplicit !== false,
+        closed: own(value, 'closed') === true,
+        typeExplicit: own(value, 'typeExplicit') !== false,
         additionalPropertiesExplicit:
-          value.additionalPropertiesExplicit === true,
+          own(value, 'additionalPropertiesExplicit') === true,
         properties: value.properties,
         required: value.required,
-        forbidden: value.forbidden,
-        minProperties: value.minProperties,
-        maxProperties: value.maxProperties,
+        forbidden: own(value, 'forbidden'),
+        minProperties: own(value, 'minProperties'),
+        maxProperties: own(value, 'maxProperties'),
       };
     case 'array':
       return {
         kind: value.kind,
         ...access,
         items: value.items,
-        minItems: value.minItems,
-        maxItems: value.maxItems,
-        uniqueItems: value.uniqueItems,
+        minItems: own(value, 'minItems'),
+        maxItems: own(value, 'maxItems'),
+        uniqueItems: own(value, 'uniqueItems'),
       };
     case 'string':
       return {
         kind: value.kind,
         ...access,
-        format: value.format,
-        literals: value.literals,
-        minLength: value.minLength,
-        maxLength: value.maxLength,
-        pattern: value.pattern,
+        format: own(value, 'format'),
+        literals: own(value, 'literals'),
+        minLength: own(value, 'minLength'),
+        maxLength: own(value, 'maxLength'),
+        pattern: own(value, 'pattern'),
       };
     case 'number':
     case 'integer':
       return {
         kind: value.kind,
         ...access,
-        literals: value.literals,
-        minimum: value.minimum,
-        maximum: value.maximum,
-        exclusiveMinimum: value.exclusiveMinimum,
-        exclusiveMaximum: value.exclusiveMaximum,
-        multipleOf: value.multipleOf,
-        float: value.float,
+        literals: own(value, 'literals'),
+        minimum: own(value, 'minimum'),
+        maximum: own(value, 'maximum'),
+        exclusiveMinimum: own(value, 'exclusiveMinimum'),
+        exclusiveMaximum: own(value, 'exclusiveMaximum'),
+        multipleOf: own(value, 'multipleOf'),
+        float: own(value, 'float'),
       };
     case 'boolean':
     case 'null':
-      return { kind: value.kind, ...access, literals: value.literals };
+      return { kind: value.kind, ...access, literals: own(value, 'literals') };
   }
 }
 

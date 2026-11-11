@@ -513,6 +513,16 @@ void test('offset output drift is read-only and cleanup preserves application ed
   );
   await writeFile(path, JSON.stringify({ ...config, infiniteQueries: {} }));
   const edited = await fileSnapshot(output);
-  await assert.rejects(runProject(path), /modified/);
-  assert.deepEqual(await fileSnapshot(output), edited);
+  const preserved = await runProject(path);
+  assert.ok(
+    preserved.warnings.some(
+      (warning) =>
+        warning.code === 'preserved-stale-output' &&
+        warning.path === join(output, 'client.consumer.queries.ts'),
+    ),
+  );
+  assert.deepEqual(
+    (await fileSnapshot(output))['client.consumer.queries.ts'],
+    edited['client.consumer.queries.ts'],
+  );
 });

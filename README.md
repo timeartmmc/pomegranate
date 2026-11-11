@@ -42,11 +42,14 @@ npx --package=pomegranate-compiler pom check --config pom.json
 
 Generate the complete output set with one compiler version. `check` reports drift
 without writing files. Keep `.pom-manifest.json` with generated artifacts and
-exclude generated files from application formatter rewrites. This guide describes
+exclude generated files from application formatter rewrites. Generation warns
+before overwriting edited owned targets and preserves edited or uncertain stale
+files. This guide describes
 the source checkout; use a [local tarball](CONTRIBUTING.md#before-publication) to
 try changes that have not been released.
 
 Generated sources use ES modules, explicit `.ts` imports, and erasable TypeScript.
+They require `strictNullChecks: true`, either directly or through `strict: true`.
 Supported Node versions and Bun can run them directly in a package with
 `"type": "module"`; TypeScript-aware bundlers can also consume them. See
 [generated TypeScript](REFERENCE.md#generated-typescript) for compilation and
@@ -130,6 +133,7 @@ server overrides, which the example refuses.
 
 ## Further reading
 
+- [Release notes](CHANGELOG.md): breaking changes and upgrade guidance.
 - [Contract and configuration](REFERENCE.md): input vocabulary, validation,
   generated TypeScript, programmatic compilation, and output recovery.
 - [Architecture](ARCHITECTURE.md): ownership, compiler boundaries, and design constraints.

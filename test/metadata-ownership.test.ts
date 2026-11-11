@@ -249,6 +249,38 @@ for (const version of ['3.0.4', '3.1.2'])
     assert.notDeepEqual(await compile(input, selection), baseline);
   });
 
+void test('overlapping compilations isolate caller mutations and reuse no stale metadata', async () => {
+  const input = document();
+  const root: { schema: string; usage: 'request' | 'response' } = {
+    ...selection.standalone.root,
+  };
+  const options = { ...selection, standalone: { root } };
+  const before = structuredClone(input);
+  const beforeOptions = structuredClone(options);
+  const first = compile(input, options);
+
+  input.components.schemas.Root.properties.customerId.maxLength = 10;
+  root.usage = 'response';
+  const changed = structuredClone(input);
+  const changedOptions = structuredClone(options);
+  const second = compile(input, options);
+
+  input.components.schemas.Root.properties.customerId.maxLength = 20;
+  root.usage = 'request';
+  const third = compile(input, options);
+  const [firstOutput, secondOutput, thirdOutput] = await Promise.all([
+    first,
+    second,
+    third,
+  ]);
+  assert.deepEqual(firstOutput, await compile(before, beforeOptions));
+  assert.deepEqual(secondOutput, await compile(changed, changedOptions));
+  assert.notDeepEqual(secondOutput, firstOutput);
+  assert.deepEqual(thirdOutput, firstOutput);
+  assert.deepEqual(input, before);
+  assert.deepEqual(options, beforeOptions);
+});
+
 void test('compiler metadata ownership rejects custom source prototypes at the original location', async () => {
   const input = document();
   Object.setPrototypeOf(input.components.schemas.Root.properties.count, {

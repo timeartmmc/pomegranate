@@ -825,9 +825,10 @@ objects and maps. Fixed request objects count validated fields, excluding
 copies them into the snapshot. Fixed response objects count original own
 enumerable string keys, including extra fields and fields later omitted by
 directional parsing, so a parsed response can have fewer keys than the declared
-minimum. Maps check bounds against both original own enumerable string keys
-and captured parsed entries. Reference constraints intersect with the target's
-bounds. For multipart inputs, see the [file array restriction](#multipart-requests).
+minimum. Maps check bounds against original own enumerable string keys before
+parsing values; successful parsing retains every map entry.
+Reference constraints intersect with the target's bounds. For multipart inputs,
+see the [file array restriction](#multipart-requests).
 
 Path and query names/values must contain well-formed Unicode. Header values use
 HTTP byte characters, permit internal horizontal tabs, and reject other ASCII
@@ -1263,10 +1264,11 @@ constraints can supply that minimum.
 The application owns file access, `FormData`, progress, and fresh retry bodies.
 Let the transport set multipart Content-Type and its boundary. POM neither reads
 files nor serializes uploads. Multipart names must be ASCII HTTP tokens; text
-values must contain well-formed Unicode and use CRLF pairs for line breaks.
-Builders reject isolated CR or LF instead of silently normalizing text: FormData
-would expand those characters after schema validation, changing lengths, patterns,
-or literal values. Already paired CRLF text is preserved. Nested objects, nullable
+values must contain well-formed Unicode. Builders normalize isolated CR and LF
+to CRLF in detached text values before schema validation, preserving existing
+CRLF pairs and leaving caller inputs unchanged. Length, pattern, literal and
+format constraints apply to the normalized value returned in the prepared body,
+so FormData serialization preserves the validated text. Nested objects, nullable
 files, custom part encodings, and binary values in JSON or standalone validators
 are unsupported.
 
@@ -1280,17 +1282,16 @@ An object schema without `properties` entries, `required` names, or
 JSON members, as in JSON Schema.
 Declare `additionalProperties: false` for an object that must be empty.
 Fixed objects validate structural fields, including fields supplied by class
-instances or prototypes, and return fresh plain objects. Required keys must be
-present when object validation begins, before any field values are read. Own
-properties or inherited structural members establish presence. Union attempts
-reject a missing requirement immediately. Ordinary objects report missing keys,
-validate present fields, and check unknown request keys within the issue budget.
-An initially missing required key remains invalid even if another getter adds it
-during parsing. Field values retain the declared read order.
-Discriminator values in tagged unions must remain stable during parsing. Data on `Object.prototype`
-never supplies a field or an unknown request key, so prototype pollution through
-data, such as an unsafe merge, cannot fill a missing value. Accessors installed
-there run application code and are not covered.
+instances or prototypes, and return fresh plain objects. Each field's captured
+value is validated and used to construct the result. Required fields must be
+present; union attempts reject missing requirements before visiting recursive
+children. Ordinary objects report missing keys, validate present fields, and check
+unknown request keys within the issue budget.
+Inputs must retain their field membership, prototypes, and discriminator values
+during parsing. Field-read order is unspecified; shape-changing getters and
+unstable proxies are outside the supported input contract.
+`Object.prototype` never supplies a field or an unknown request key, so prototype
+pollution through data, such as an unsafe merge, cannot fill a missing value.
 Dynamic maps require plain records and read each enumerable value once as it is
 validated.
 Schema registries and standalone `schema` exports expose `parse(unknown)` and
@@ -1372,13 +1373,18 @@ generated modules have no package runtime dependencies; optional query modules
 need Query Core. Deployed applications do not need the compiler.
 Generated modules support `isolatedDeclarations`. Application exports inferred
 from them still need the annotations required by that TypeScript option.
-Consumers may enable or disable `strict`, including using `noImplicitAny` with
-`strict: false`. Generated modules also support `noUnusedLocals` and
-`noUnusedParameters`. These settings do not change runtime validation.
+Generated output requires `strictNullChecks: true` so required and nullable values
+retain their contract types. Enable it directly or through `strict: true`; the
+other strict flags are optional. Generated `runtime.ts` reports
+`Pomegranate output requires strictNullChecks` when checked with null checks
+disabled. The guard applies when checking generated sources; emitted declarations
+and execution without type checking cannot enforce the compiler setting.
+Generated modules also support `noUnusedLocals` and `noUnusedParameters`.
+Compiler settings do not change runtime validation.
 
 Generated parsers declare independent contract types and reuse local scalar and
 container constructors. Object field tables check field types and requiredness
-against those types. Large or order-sensitive objects use explicit parser bodies.
+against those types. Large objects use explicit parser bodies.
 
 Generated `schema-types.<digest>.ts` modules share component type identities across
 standalone validators and clients, including identical request and response
@@ -1411,6 +1417,13 @@ checks as the CLI; omit `{ check: true }` to generate files. In check mode,
 selecting clients. The same [schema-normalization limits](#supported-vocabulary)
 apply to programmatic inputs.
 
+`result.warnings` contains structured `{ code, path, message }` warnings. Pass
+`onWarning(warning)` to `runProject` for synchronous notifications before output
+publication. The CLI writes these warnings to stderr without prompting. Codes
+are `modified-output`, `preserved-stale-output`, `recovered-manifest`, and
+`recovered-output`. Check mode reports the same ownership warnings without
+changing files.
+
 ## Generated output
 
 Shared runtime helpers are authored in POM and copied once into each output set;
@@ -1433,10 +1446,13 @@ Generated bytes use LF line endings. Preserve them in Git, including on Windows;
 for an output directory named `generated`, add `generated/** text eol=lf` to the
 consumer's `.gitattributes`. Line-ending conversion causes drift on checkout.
 
-The manifest records owned files and their content hashes. Generation updates
-unchanged owned files, removes unchanged stale files, and preserves unrelated
-files. An existing target without ownership or an edited generated file causes
-a conflict. Keep the manifest with generated artifacts.
+The manifest records owned files and their SHA-256 content hashes. Generation
+warns before overwriting modified owned targets, removes unchanged stale files,
+and preserves unrelated files. Edited stale files are preserved with a warning;
+their original hashes stay in the manifest so later runs cannot mistake edits
+for disposable generated content. Keep the manifest with generated artifacts.
+An existing target with neither recorded ownership nor the exact POM banner
+blocks the complete batch before output files change.
 Inventory names must be distinct ignoring ASCII case, including on
 case-sensitive filesystems; aliases are rejected before outputs change.
 Changing the client selection uses this same inventory to remove unchanged
@@ -1446,17 +1462,24 @@ outputs for previously selected clients.
 are `0` for success, `1` for drift or an input/execution failure, and `2` for
 invalid command usage. Bare `pom` and `pom --help` print usage and exit `0`.
 
-Generation stages the complete output and records its prior and intended states
-in `.pom-journal.json` before replacing files individually. It publishes the
-manifest last, then removes the journal. A valid pending journal lets the next
-`generate` finish the interrupted output set before applying the current inputs.
-Recovery accepts only recorded prior or intended file states and preserves
-conflicting edits. `check` reports interrupted output without recovering it.
+Generation stages the complete output, atomically replaces individual files,
+and publishes the manifest last. The whole directory is not an atomic unit.
+After an interruption, rerun generation using the current inputs. Files already
+published are checked against the manifest or recovered by their banner; an
+earlier output set is never replayed.
+
+If the manifest is missing or corrupt, POM recognizes existing targets only when
+their content starts with the exact line `// Generated by Pomegranate. Do not edit.`
+followed by LF. Recovery warns before replacing such targets because their prior
+hashes are unavailable. Banner-marked files outside the current output set are
+uncertain stale files: POM preserves them and warns, even on later runs. Unsafe
+inventory filenames, case aliases, input overlaps, and symlinks remain errors.
+Preserved stale files remain drift in `check`; move or remove them explicitly,
+or restore an edited stale file to its recorded bytes to allow normal cleanup.
 
 An interruption can leave a `.pom-lock` directory. Confirm that the writer has
-stopped before removing a leftover lock, then retry generation with the journal
-intact. Generation checks lock ownership before publishing and cleaning up.
-If recovery evidence is invalid or files conflict, preserve uncertain files and
-generate into a fresh directory, or restore a known matching output set and
-manifest before retrying. An absent manifest alone does not authorize replacing
-existing target files.
+stopped before removing a leftover lock, then retry generation. Generation checks
+lock ownership before publishing and cleaning up; it preserves a replacement
+writer's lock. Edits made after inspection abort publication instead of being
+overwritten. Keep uncertain files or generate into a fresh directory when their
+ownership cannot be established.

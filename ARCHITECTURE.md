@@ -133,18 +133,21 @@ parents. Do not execute configuration or read consumer formatter settings.
 Identical supported inputs and compiler versions must produce identical bytes.
 Render and validate the complete output set before any write.
 
-The manifest is the compiler's ownership record. Detect conflicts before
-replacing files; preserve unrelated files and modified generated files. Remove
-stale output only when prior ownership and unchanged contents are established.
+The manifest records ownership and content hashes. Warn before replacing edited
+owned targets; preserve unrelated files and edited or uncertain stale files.
+Remove stale output only when a recorded hash proves it is unchanged. Without a
+valid manifest, recover ownership only from the exact generated source banner;
+the banner alone never authorizes stale deletion.
 Generated paths must not overlap inputs, escape the intended output, or alias
 another inventory name ignoring ASCII case. Output directories and owned target
 files must not be symlinks.
 
 `check` is read-only on success and failure. Generation replaces individual files
 rather than claiming filesystem-wide atomicity. Interrupted work must be
-detectable, and recovery must preserve uncertain ownership and conflicting edits.
-See the [output reference](REFERENCE.md#generated-output) for manifest, journal,
-lock, and recovery instructions.
+detectable through output drift. Regenerate from current inputs after an
+interruption; preserve uncertain stale files instead of replaying an earlier
+output set. See the [output reference](REFERENCE.md#generated-output) for
+manifest, lock, and recovery instructions.
 
 ## Application adoption
 

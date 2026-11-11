@@ -23,7 +23,6 @@
  */
 import type {
   DeclaredResponse,
-  InputOptional,
   ObservedResponse,
   PreparedRequest,
   ProtocolFailure,
@@ -295,15 +294,12 @@ export function contextEntries(
       .sort()
       .map((name) => {
         const value = context[name];
-        let scalar: ExecutionContext[string];
-        if (value === null) scalar = null;
-        else if (
-          typeof value === 'string' ||
-          typeof value === 'boolean' ||
-          (typeof value === 'number' && Number.isFinite(value))
+        if (
+          value !== null &&
+          typeof value !== 'string' &&
+          typeof value !== 'boolean' &&
+          !(typeof value === 'number' && Number.isFinite(value))
         )
-          scalar = value;
-        else
           throw new TypeError(
             `${location}.${name} must be a finite JSON scalar`,
           );
@@ -311,7 +307,7 @@ export function contextEntries(
         // TanStack hash can drop while rebuilding sorted object properties.
         // JSON hashing and hydration turn -0 into 0. Normalize the shared
         // snapshot so execute observes the same value represented by its key.
-        return Object.freeze([name, scalar === 0 ? 0 : scalar] as const);
+        return Object.freeze([name, value === 0 ? 0 : value] as const);
       }),
   );
 }
@@ -525,7 +521,7 @@ export { QueryResponseError as ResponseError };
 export type { TypedQueryResponseError as TypedResponseError };
 
 export type InputArguments<Input> = Readonly<{ context: ExecutionContext }> &
-  (InputOptional<Input> extends true
+  (undefined extends Input
     ? Readonly<{ input?: Input }>
     : Readonly<{ input: Input }>);
 export function executionConfig<Execute extends (...args: never[]) => unknown>(

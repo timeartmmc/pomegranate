@@ -1,65 +1,48 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve, sep } from 'node:path';
-import { fail, keys, record } from './diagnostics.js';
+import { generatedBanner } from './code.js';
+import { ContractError, fail, keys, record } from './diagnostics.js';
 
 export const inventoryName = '.pom-manifest.json';
-export const journalName = '.pom-journal.json';
 export const lockName = '.pom-lock';
 // Ownership files use a fixed protocol identifier, independent of the npm name.
-// Registry renames must not change which output inventory or journal POM owns.
+// Registry renames must not change which output inventory POM owns.
 const generator = '@pomegranate/compiler';
 export type Files = Readonly<Record<string, string>>;
-export type Existing =
-  | { content: string; hash: string; stamp: string }
-  | undefined;
-type Inventory = {
-  version: 1;
-  generator: typeof generator;
-  files: Record<string, string>;
-};
+export type Existing = { content: string; hash: string } | undefined;
 export type OutputPlan = {
   snapshots: Map<string, Existing>;
   changes: string[];
   conflicts: string[];
+  removals: string[];
+  warnings: OutputWarning[];
   nextManifest: string;
 };
-export type Journal = {
-  version: 1;
-  generator: typeof generator;
-  previousManifest: string | null;
-  nextManifest: string;
-  before: Record<string, string | null>;
-  files: Files;
-};
+export type OutputWarning = Readonly<{
+  code:
+    | 'modified-output'
+    | 'preserved-stale-output'
+    | 'recovered-manifest'
+    | 'recovered-output';
+  path: string;
+  message: string;
+}>;
 export const hash = (content: string | Uint8Array): string =>
   createHash('sha256').update(content).digest('hex');
 export const hasCode = (error: unknown, code: string): boolean =>
   error instanceof Error && 'code' in error && error.code === code;
 
-export async function existingFileStamp(
-  path: string,
-): Promise<string | undefined> {
+export async function existingFile(path: string): Promise<Existing> {
   try {
-    const stat = await lstat(path, { bigint: true });
+    const stat = await lstat(path);
     if (!stat.isFile() || stat.isSymbolicLink())
       fail(
         path,
         'output must be a regular file; symbolic links and directories are protected',
       );
-    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-  } catch (error) {
-    if (hasCode(error, 'ENOENT')) return undefined;
-    throw error;
-  }
-}
-
-export async function existingFile(path: string): Promise<Existing> {
-  try {
-    const stamp = await existingFileStamp(path);
-    if (stamp === undefined) return undefined;
     const bytes = await readFile(path);
-    return { content: bytes.toString('utf8'), hash: hash(bytes), stamp };
+    return { content: bytes.toString('utf8'), hash: hash(bytes) };
   } catch (error) {
     if (hasCode(error, 'ENOENT')) return undefined;
     throw error;
@@ -107,10 +90,12 @@ export async function outputDirectory(output: string): Promise<string> {
   }
 }
 
+const filename = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.ts$/;
+
 export function filenames(names: readonly string[]): void {
   const aliases = new Map<string, string>();
   for (const name of names) {
-    if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]*\.ts$/.test(name))
+    if (!filename.test(name))
       fail(
         'output inventory',
         `unsafe generated filename ${JSON.stringify(name)}`,
@@ -126,18 +111,14 @@ export function filenames(names: readonly string[]): void {
   }
 }
 
-function json(source: string, location: string): Record<string, unknown> {
+function inventory(source: string): Record<string, string> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(source) as unknown;
   } catch {
-    fail(location, 'invalid JSON; refusing to infer ownership');
+    fail(inventoryName, 'invalid JSON');
   }
-  return record(parsed, location);
-}
-
-function inventory(source: string): Inventory {
-  const value = json(source, inventoryName);
+  const value = record(parsed, inventoryName);
   keys(value, ['version', 'generator', 'files'], inventoryName);
   if (value.version !== 1 || value.generator !== generator)
     fail(inventoryName, 'unsupported ownership inventory');
@@ -153,23 +134,19 @@ function inventory(source: string): Inventory {
       return [name, digest];
     },
   );
-  return {
-    version: 1,
-    generator,
-    files: Object.fromEntries(entries),
-  };
+  return Object.fromEntries(entries);
 }
 
-export function manifest(files: Files): string {
+function manifest(hashes: Readonly<Record<string, string>>): string {
   return (
     JSON.stringify(
       {
         version: 1,
         generator,
         files: Object.fromEntries(
-          Object.keys(files)
+          Object.keys(hashes)
             .sort()
-            .map((name) => [name, hash(files[name]!)]),
+            .map((name) => [name, hashes[name]!]),
         ),
       },
       null,
@@ -198,150 +175,105 @@ export async function inspectOutputs(
   inputs: ReadonlySet<string>,
 ): Promise<OutputPlan> {
   const previous = await snapshot(root, inventoryName, inputs);
-  const owned = previous ? inventory(previous.content).files : {};
-  const names = [
-    ...new Set([...Object.keys(owned), ...Object.keys(expected)]),
-  ].sort();
-  filenames(names);
+  let owned: Record<string, string> = {};
+  let recovering = previous === undefined;
+  if (previous) {
+    try {
+      owned = inventory(previous.content);
+    } catch (error) {
+      // Corrupt metadata supplies no ownership. Unsafe filename claims still
+      // fail explicitly instead of bypassing the path and case checks.
+      if (
+        !(error instanceof ContractError) ||
+        error.location === 'output inventory'
+      )
+        throw error;
+      recovering = true;
+    }
+  }
+  const entries = await readdir(root, { withFileTypes: true }).catch(
+    (error: unknown) => {
+      if (hasCode(error, 'ENOENT')) return [];
+      throw error;
+    },
+  );
+  const names = new Set([...Object.keys(owned), ...Object.keys(expected)]);
+  filenames([
+    ...names,
+    ...entries.map((entry) => entry.name).filter((name) => filename.test(name)),
+  ]);
+  for (const entry of entries) {
+    if (!entry.isFile() || !filename.test(entry.name) || names.has(entry.name))
+      continue;
+    const current = await existingFile(join(root, entry.name));
+    if (current?.content.startsWith(generatedBanner)) names.add(entry.name);
+  }
   const snapshots = new Map<string, Existing>([[inventoryName, previous]]);
   const conflicts: string[] = [];
   const changes: string[] = [];
-  for (const name of names) {
+  const removals: string[] = [];
+  const warnings: OutputWarning[] = [];
+  const warn = (code: OutputWarning['code'], name: string, message: string) =>
+    warnings.push({ code, path: join(root, name), message });
+  if (
+    recovering &&
+    (previous || entries.some((entry) => names.has(entry.name)))
+  )
+    warn(
+      'recovered-manifest',
+      inventoryName,
+      `${previous ? 'invalid' : 'missing'} manifest; recovering ownership only from the exact POM banner; uncertain stale files will be preserved`,
+    );
+  const hashes = Object.fromEntries(
+    Object.entries(expected).map(([name, content]) => [name, hash(content)]),
+  );
+  for (const name of [...names].sort()) {
     const current = await snapshot(root, name, inputs);
     snapshots.set(name, current);
-    if (current && owned[name] === undefined)
-      conflicts.push(`unowned output: ${name}`);
-    else if (current && current.hash !== owned[name])
-      conflicts.push(`modified owned output: ${name}`);
+    const recorded = owned[name];
     if (Object.hasOwn(expected, name)) {
+      if (current && recorded === undefined) {
+        if (!current.content.startsWith(generatedBanner))
+          conflicts.push(`unowned output: ${name}`);
+        else
+          warn(
+            'recovered-output',
+            name,
+            current.content === expected[name]
+              ? 'recovering output ownership from the exact POM banner'
+              : 'overwriting output recovered from the exact POM banner; its prior hash is unavailable',
+          );
+      } else if (current && current.hash !== recorded) {
+        changes.push(`modified owned output: ${name}`);
+        warn(
+          'modified-output',
+          name,
+          current.content === expected[name]
+            ? 'updating the recorded hash of a modified owned output that matches the rendered output'
+            : 'overwriting modified owned output',
+        );
+      }
       if (current?.content !== expected[name])
         changes.push(`${current ? 'changed' : 'missing'}: ${name}`);
-    } else if (current) changes.push(`stale: ${name}`);
+    } else if (current) {
+      changes.push(`stale: ${name}`);
+      if (current.hash === recorded) removals.push(name);
+      else {
+        warn(
+          'preserved-stale-output',
+          name,
+          recorded === undefined
+            ? 'preserving stale output with uncertain ownership'
+            : 'preserving modified stale output',
+        );
+        // Retain the original hash, never the edit's hash. A later run must not
+        // mistake a preserved edit for unchanged, disposable generated content.
+        if (recorded !== undefined) hashes[name] = recorded;
+      }
+    }
   }
-  const nextManifest = manifest(expected);
+  const nextManifest = manifest(hashes);
   if (previous?.content !== nextManifest)
     changes.push(`changed: ${inventoryName}`);
-  return { snapshots, conflicts, changes, nextManifest };
-}
-
-export function journal(plan: OutputPlan, files: Files): Journal {
-  return {
-    version: 1,
-    generator,
-    previousManifest: plan.snapshots.get(inventoryName)?.content ?? null,
-    nextManifest: plan.nextManifest,
-    before: Object.fromEntries(
-      [...plan.snapshots]
-        .filter(([name]) => name !== inventoryName && name !== journalName)
-        .map(([name, value]) => [name, value?.hash ?? null]),
-    ),
-    files,
-  };
-}
-
-export function readJournal(source: string): Journal {
-  const value = json(source, journalName);
-  keys(
-    value,
-    [
-      'version',
-      'generator',
-      'previousManifest',
-      'nextManifest',
-      'before',
-      'files',
-    ],
-    journalName,
-  );
-  if (value.version !== 1 || value.generator !== generator)
-    fail(journalName, 'unsupported recovery journal');
-  if (
-    value.previousManifest !== null &&
-    typeof value.previousManifest !== 'string'
-  )
-    fail(journalName, 'invalid previous manifest');
-  const owned =
-    value.previousManifest === null
-      ? {}
-      : inventory(value.previousManifest).files;
-  const rawFiles = record(value.files, `${journalName}.files`);
-  const files = Object.fromEntries(
-    Object.entries(rawFiles).map(([name, content]): [string, string] => {
-      if (typeof content !== 'string')
-        fail(`${journalName}.files.${name}`, 'expected generated source');
-      return [name, content];
-    }),
-  );
-  // Detect edited or damaged recovery payloads independently of current target
-  // files, including payloads that had not reached their target before failure.
-  if (value.nextManifest !== manifest(files))
-    fail(journalName, 'intended output hashes do not match journal contents');
-  const names = [
-    ...new Set([...Object.keys(owned), ...Object.keys(files)]),
-  ].sort();
-  filenames(names);
-  const before = record(value.before, `${journalName}.before`);
-  if (
-    Object.keys(before).length !== names.length ||
-    names.some((name) => !Object.hasOwn(before, name))
-  )
-    fail(journalName, 'recovery inventory does not match its files');
-  const entries = names.map((name): [string, string | null] => {
-    const digest = before[name];
-    // A journal can record a missing owned file, but cannot retroactively claim
-    // an existing unowned file. Its old hashes must agree with the inventory.
-    if (
-      digest !== null &&
-      (typeof digest !== 'string' || digest !== owned[name])
-    )
-      fail(journalName, `invalid prior ownership for ${name}`);
-    return [name, digest];
-  });
-  return {
-    version: 1,
-    generator,
-    previousManifest: value.previousManifest,
-    nextManifest: value.nextManifest,
-    before: Object.fromEntries(entries),
-    files,
-  };
-}
-
-export async function inspectRecovery(
-  root: string,
-  pending: Journal,
-  currentJournal: NonNullable<Existing>,
-  inputs: ReadonlySet<string>,
-): Promise<OutputPlan> {
-  const snapshots = new Map<string, Existing>([[journalName, currentJournal]]);
-  const nextManifest = manifest(pending.files);
-  const previous = await snapshot(root, inventoryName, inputs);
-  const priorHash =
-    pending.previousManifest === null
-      ? undefined
-      : hash(pending.previousManifest);
-  if (previous?.hash !== priorHash && previous?.hash !== hash(nextManifest))
-    fail(
-      inventoryName,
-      'manifest changed during interrupted generation; preserving recovery files',
-    );
-  snapshots.set(inventoryName, previous);
-  for (const [name, oldHash] of Object.entries(pending.before)) {
-    const current = await snapshot(root, name, inputs);
-    const nextHash = Object.hasOwn(pending.files, name)
-      ? hash(pending.files[name]!)
-      : undefined;
-    if (current?.hash !== (oldHash ?? undefined) && current?.hash !== nextHash)
-      fail(
-        join(root, name),
-        `recovery conflict: output matches neither its prior nor intended contents; keep ${journalName} and preserve conflicting edits; generate into a fresh directory or restore a recorded prior or intended output state and matching manifest before retrying`,
-      );
-    snapshots.set(name, current);
-  }
-  return {
-    snapshots,
-    nextManifest,
-    conflicts: [],
-    changes: ['recovered interrupted generation'],
-  };
+  return { snapshots, conflicts, changes, removals, warnings, nextManifest };
 }

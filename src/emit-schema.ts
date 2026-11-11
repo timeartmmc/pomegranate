@@ -1,11 +1,11 @@
 import {
   array,
+  call,
   data,
   identifier,
   jsonSource,
   literal,
   object,
-  propertyKey,
 } from './code.js';
 import type { Expression } from './code.js';
 import { fail } from './diagnostics.js';
@@ -130,8 +130,8 @@ function rules(
 
 // Contract types stay independent of constructor metadata. Explicit Parse<T>
 // bindings check each constructor against its contract and keep child graphs
-// named, bounding expression and inference depth. Ordered and large objects
-// retain checked return bodies when a keyed constructor would change behavior.
+// named, bounding expression and inference depth. Large objects split their
+// fields into bounded groups whose results are checked against the contract.
 export function schemaRenderer(
   schemas: DirectionalSchemas,
   reference: (name: string, direction: Direction) => Expression,
@@ -259,10 +259,59 @@ export function schemaRenderer(
     failures.push('extra');
   }
 
+  function objectFields(
+    value: Extract<Schema, { kind: 'object' }>,
+    direction: Direction,
+    location: string,
+    scope: string,
+  ): ObjectField[] {
+    return [...value.properties].map(([field, schema]) => ({
+      name: field,
+      required: isRequired(value.required, field),
+      parse: part(schema, direction, `${location}.properties.${field}`, scope),
+    }));
+  }
+
+  // Multipart preprocessing belongs to this body use, leaving shared component
+  // validators and JSON/text uses of the same schemas unchanged.
+  function multipartParser(
+    value: Schema,
+    textFields: readonly string[],
+    location: string,
+    scope: string,
+  ): Expression {
+    const body = resolveSchema(value, schemas.request);
+    if (body.kind !== 'object')
+      fail(location, 'multipart requires a fixed object');
+    const text = new Set(textFields);
+    const bounds =
+      value.kind === 'ref'
+        ? containerConstraints(
+            value,
+            schemas.request,
+            containerBounds.request,
+            constraintRecord(body),
+          )
+        : body;
+    objectParser(
+      scope,
+      typeOf(value, 'request'),
+      objectFields(body, 'request', location, scope).map((field) => ({
+        ...field,
+        parse: text.has(field.name)
+          ? call(use('multipartTextParser'), [field.parse])
+          : field.parse,
+      })),
+      true,
+      false,
+      body.forbidden,
+      rules(bounds, objectRules),
+    );
+    return identifier(scope);
+  }
+
   // Declare a fixed-object parser. Request objects reject unknown keys; response
   // objects strip them because only declared fields enter the fresh result.
-  // Optional keys use a conditional spread: TypeScript merges it into an
-  // optional property, and declared key order is preserved.
   function objectParser(
     name: string,
     type: string,
@@ -271,7 +320,6 @@ export function schemaRenderer(
     exported = false,
     forbidden: readonly string[] = [],
     limits?: Expression,
-    chunk = false,
   ): void {
     const sizeCheck = (body: string[]) => {
       if (!limits) return;
@@ -282,21 +330,6 @@ export function schemaRenderer(
         `if (${use('propertyCount').source}(${strict ? 'output' : 'source'}, issues, ${bounds}${strict ? ', true' : ''})) return invalid;`,
       );
     };
-    const admission = (body: string[]) => {
-      // The complete object owns one entry check. Chunks must not repeat it
-      // after earlier fields have already read or changed the caller's value.
-      if (chunk) return '_missing';
-      const names = fields
-        .filter((field) => field.required)
-        .map((field) => field.name);
-      if (names.length === 0) return 'undefined';
-      const required = constant(`required_${name}`, data(names).source);
-      body.push(
-        `const missing = ${use('requiredKeys').source}(source, ${required}, issues);`,
-        'if (missing === invalid) return invalid;',
-      );
-      return 'missing';
-    };
     // Bound TypeScript's failure-condition flow graph while retaining a checked
     // return for every field. Preserve sibling issues in source order until
     // the shared issue budget stops further chunks.
@@ -306,26 +339,25 @@ export function schemaRenderer(
         `const source = ${use('objectValue').source}(input, issues);`,
         'if (source === invalid) return invalid;',
       ];
-      const missing = admission(body);
+      const names = fields
+        .filter((field) => field.required)
+        .map((field) => field.name);
+      if (names.length > 0) {
+        const required = constant(`required_${name}`, data(names).source);
+        body.push(
+          `if (${use('requiredKeys').source}(source, ${required}, issues) === invalid) return invalid;`,
+        );
+      }
       if (!strict) sizeCheck(body);
       const values: string[] = [];
       for (let start = 0; start < fields.length; start += 64) {
         const group = fields.slice(start, start + 64);
         const parser = `${name}_fields${start / 64}`;
         const picked = group.map((entry) => jsonSource(entry.name)).join(' | ');
-        objectParser(
-          parser,
-          `Pick<${type}, ${picked}>`,
-          group,
-          false,
-          false,
-          [],
-          undefined,
-          true,
-        );
+        objectParser(parser, `Pick<${type}, ${picked}>`, group, false);
         const value = `group${start / 64}`;
         values.push(value);
-        body.push(`const ${value} = ${parser}(source, issues, ${missing});`);
+        body.push(`const ${value} = ${parser}(source, issues);`);
         body.push(`if (${use('exhausted').source}(issues)) return invalid;`);
       }
       const failures = values.map((value) => `${value} === invalid`);
@@ -343,18 +375,7 @@ export function schemaRenderer(
       );
       return;
     }
-    // A keyed table enumerates integer-like names in JS own-key order.
-    // Parameter groups instead preserve the declared OpenAPI sequence, so use
-    // the original body whenever those orders differ. Empty projected objects
-    // and all chunks retain the original representation as well.
-    const order = Object.keys(
-      Object.fromEntries(fields.map((entry) => [entry.name, true])),
-    );
-    if (
-      !chunk &&
-      fields.length > 0 &&
-      fields.every((entry, index) => entry.name === order[index])
-    ) {
+    if (fields.length > 0) {
       const table = object([
         ...fields.map((entry): readonly [string, Expression] => [
           entry.name,
@@ -379,43 +400,18 @@ export function schemaRenderer(
       `const source = ${use('objectValue').source}(input, issues);`,
       'if (source === invalid) return invalid;',
     ];
-    const missing = admission(body);
     if (!strict) sizeCheck(body);
-    // Required results have no symbol except Invalid. Checking its primitive
-    // kind also handles null | Invalid widening to symbol without
-    // strictNullChecks. Optional results must keep Absent distinct.
-    const failures = fields.map((entry, index) => {
-      const helper = use(entry.required ? 'field' : 'optionalField');
-      body.push(
-        `const v${index} = ${helper.source}(source, ${jsonSource(entry.name)}, ${entry.parse.source}, issues${entry.required ? `, ${missing}` : ''});`,
-      );
-      return entry.required
-        ? `typeof v${index} === "symbol"`
-        : `v${index} === invalid`;
-    });
+    const failures: string[] = [];
     if (strict) objectChecks(body, failures, name, fields, forbidden);
     if (failures.length)
       body.push(`if (${failures.join(' || ')}) return invalid;`);
-    const properties = fields.map((entry, index) => {
-      const key = propertyKey(entry.name);
-      if (entry.required) return `${key}: v${index}`;
-      helpers.add('absent');
-      return `...(v${index} === absent ? {} : { ${key}: v${index} })`;
-    });
-    const output = `{${properties.join(',')}}`;
     if (strict && limits) {
-      body.push(`const output = ${output};`);
+      body.push('const output = {};');
       sizeCheck(body);
       body.push('return output;');
-    } else body.push(`return ${output};`);
+    } else body.push('return {};');
     append(
-      functionDeclaration(
-        name,
-        type,
-        body,
-        exported,
-        chunk ? ', _missing?: ReadonlySet<string>' : '',
-      ),
+      functionDeclaration(name, type, body, exported),
       `generated parser ${name}`,
     );
   }
@@ -720,11 +716,7 @@ export function schemaRenderer(
         return objectParser(
           name,
           type,
-          [...value.properties].map(([field, schema]) => ({
-            name: field,
-            required: isRequired(value.required, field),
-            parse: child(schema, `${location}.properties.${field}`),
-          })),
+          objectFields(value, direction, location, scope),
           direction === 'request',
           exported,
           value.forbidden,
@@ -819,6 +811,7 @@ export function schemaRenderer(
     part,
     typeOf,
     objectParser,
+    multipartParser,
     helpers,
     typeImports,
     use,
