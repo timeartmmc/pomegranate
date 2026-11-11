@@ -185,6 +185,112 @@ export const missing: Output = { kind: 'a', a: 1 };
   }
 });
 
+void test('scalar union composition applies conjunct access annotations to the whole property through aliases', async (t) => {
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const annotation of ['readOnly', 'writeOnly'] as const) {
+      const value: Schema = {
+        allOf: [
+          {
+            anyOf: [
+              { type: 'string', pattern: '^a' },
+              { type: 'string', pattern: '^b' },
+            ],
+          },
+          {
+            type: 'string',
+            minLength: 2,
+            maxLength: 4,
+            [annotation]: true,
+          },
+        ],
+      };
+      const root = await generatedTestWorkspace(
+        t,
+        await compile(
+          contract(openapi, {
+            Value: value,
+            Alias: {
+              ...ref('Value'),
+              ...(openapi.startsWith('3.1') ? { [annotation]: false } : {}),
+            },
+            AliasAgain: ref('Alias'),
+            Holder: fixed(
+              {
+                label: { type: 'string' },
+                inline: value,
+                alias: ref('AliasAgain'),
+              },
+              ['label', 'inline', 'alias'],
+            ),
+          }),
+          {
+            clients: [],
+            standalone: {
+              request: { schema: ref('Holder').$ref, usage: 'request' },
+              response: { schema: ref('Holder').$ref, usage: 'response' },
+            },
+          },
+        ),
+      );
+      const load = async (direction: string) =>
+        (
+          await importGenerated<StandaloneModule>(
+            root,
+            `standalone.${direction}.ts`,
+          )
+        ).schema;
+      const request = await load('request');
+      const response = await load('response');
+      const full = { label: 'visible', inline: 'aa', alias: 'bbb' };
+      const visible = annotation === 'readOnly' ? response : request;
+      assert.deepEqual(visible.parse(full), full);
+      for (const key of ['inline', 'alias'])
+        for (const bad of ['a', 'bbbbb', 'cc', 5])
+          assert.equal(
+            visible.safeParse({ ...full, [key]: bad }).success,
+            false,
+          );
+      if (annotation === 'readOnly') {
+        assert.deepEqual(request.parse({ label: 'visible' }), {
+          label: 'visible',
+        });
+        for (const key of ['inline', 'alias'])
+          assert.equal(
+            request.safeParse({ label: 'visible', [key]: 'aa' }).success,
+            false,
+          );
+      } else {
+        assert.equal(request.safeParse({ label: 'visible' }).success, false);
+        assert.deepEqual(
+          response.parse({ label: 'visible', inline: 5, alias: false }),
+          { label: 'visible' },
+        );
+      }
+      await typecheckConsumer(
+        root,
+        annotation === 'readOnly'
+          ? `import type { Output as Request } from './standalone.request.ts';
+import type { Output as Response } from './standalone.response.ts';
+export const request: Request = { label: 'visible' };
+export const response: Response = { label: 'visible', inline: 'aa', alias: 'bbb' };
+// @ts-expect-error A read-only field remains forbidden through an alias.
+export const forbidden: Request = { label: 'visible', alias: 'aa' };
+// @ts-expect-error Read-only fields remain required in responses.
+export const missing: Response = { label: 'visible' };
+`
+          : `import type { Output as Request } from './standalone.request.ts';
+import type { Output as Response } from './standalone.response.ts';
+export const request: Request = { label: 'visible', inline: 'aa', alias: 'bbb' };
+export const response: Response = { label: 'visible' };
+// @ts-expect-error Write-only fields remain required in requests.
+export const missing: Request = { label: 'visible' };
+// @ts-expect-error A write-only field is absent from the response type.
+export const excluded = response.alias;
+`,
+      );
+    }
+});
+
 void test('allOf union distribution diagnoses contradictions, untagged object oneOf and constrained union references', async () => {
   for (const [name, schema, location, message] of [
     [
@@ -253,23 +359,37 @@ void test('allOf union distribution diagnoses contradictions, untagged object on
 });
 
 void test('allOf distribution keeps unsupported annotations on union alternatives visible', async () => {
-  for (const annotation of ['readOnly', 'writeOnly'] as const) {
-    const input = contract('3.1.2', {
-      Annotated: fixed({ a: { type: 'integer' } }, [], { [annotation]: true }),
-      Plain: fixed({ b: { type: 'integer' } }),
-      Value: {
-        allOf: [
-          { anyOf: [ref('Annotated'), ref('Plain')] },
-          fixed({ common: { type: 'integer' } }),
-        ],
-      },
-    });
-    await assert.rejects(
-      compile(input, {
-        clients: [],
-        standalone: { value: { schema: ref('Value').$ref, usage: 'request' } },
-      }),
-      /readOnly and writeOnly on union branches are not supported/,
-    );
-  }
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const annotation of ['readOnly', 'writeOnly'] as const)
+      for (const scalar of [false, true])
+        for (const inline of [false, true]) {
+          const annotated: Schema = scalar
+            ? { type: 'string', minLength: 1, [annotation]: true }
+            : fixed({ a: { type: 'integer' } }, [], { [annotation]: true });
+          const input = contract(openapi, {
+            Annotated: annotated,
+            Plain: scalar
+              ? { type: 'string' }
+              : fixed({ b: { type: 'integer' } }),
+            Value: {
+              allOf: [
+                {
+                  anyOf: [inline ? annotated : ref('Annotated'), ref('Plain')],
+                },
+                scalar
+                  ? { type: 'string', maxLength: 4 }
+                  : fixed({ common: { type: 'integer' } }),
+              ],
+            },
+          });
+          await assert.rejects(
+            compile(input, {
+              clients: [],
+              standalone: {
+                value: { schema: ref('Value').$ref, usage: 'request' },
+              },
+            }),
+            /readOnly and writeOnly on union branches are not supported/,
+          );
+        }
 });

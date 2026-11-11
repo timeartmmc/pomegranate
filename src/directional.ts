@@ -15,31 +15,17 @@ export function schemaAccess(schema: Schema, schemas: SchemaTable): Access {
     cache = new WeakMap();
     accessByTable.set(schemas, cache);
   }
-  if (schema.kind === 'intersection') {
-    const known = cache.get(schema);
-    if (known) return known;
-    const branches = schema.branches.map((branch) =>
-      schemaAccess(branch, schemas),
-    );
-    const access = {
-      readOnly: schema.readOnly || branches.some((branch) => branch.readOnly),
-      writeOnly:
-        schema.writeOnly || branches.some((branch) => branch.writeOnly),
-    };
-    cache.set(schema, access);
-    return access;
-  }
   const path: Schema[] = [];
   let target: Schema = schema;
   // Same-value reference cycles are rejected before projection. Productive
   // recursion stops at its container; access flags do not flow through children.
   // True annotations accumulate through aliases; a local false cannot undo one.
+  // Composition already owns effective access on its canonical node. Retained
+  // scalar conjuncts still carry source flags that distribution may have moved
+  // to an enclosing union, so traversing them here would restore excluded flags.
   while (!cache.has(target)) {
     path.push(target);
-    if (target.kind !== 'ref') {
-      if (target.kind === 'intersection') schemaAccess(target, schemas);
-      break;
-    }
+    if (target.kind !== 'ref') break;
     const next = schemas.get(target.name);
     if (!next) fail(target.location, `unresolved reference ${target.name}`);
     target = next;
