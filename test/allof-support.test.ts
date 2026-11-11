@@ -626,11 +626,6 @@ const invalid: readonly [string, Schema, RegExp][] = [
     /allOf members without object keywords require an explicit type/,
   ],
   [
-    'untyped literal sibling',
-    { allOf: [ref('Combined')], enum: ['A'] },
-    /allOf members without object keywords require an explicit type/,
-  ],
-  [
     'nullable type beside object branches',
     {
       type: ['object', 'null'],

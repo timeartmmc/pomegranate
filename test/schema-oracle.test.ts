@@ -308,6 +308,54 @@ const cases: SchemaCase[] = [
       [{ name: 1, extra: 1 }, false],
     ],
   },
+  {
+    name: 'UntypedStringEnum',
+    schema: { enum: ['ready', 'done'] },
+    samples: [
+      ['ready', true],
+      ['done', true],
+      ['pending', false],
+      [null, false],
+      [1, false],
+    ],
+  },
+  {
+    name: 'UntypedMixedEnum',
+    schema: { enum: ['a', 1, 1.5, true, null] },
+    samples: [
+      ['a', true],
+      [1, true],
+      [1.5, true],
+      [true, true],
+      [null, true],
+      [false, false],
+      ['b', false],
+      [2, false],
+      ['1', false],
+      [[], false],
+      [{}, false],
+    ],
+  },
+  {
+    name: 'UntypedConst',
+    schema: { const: 0 },
+    samples: [
+      [0, true],
+      ['0', false],
+      [false, false],
+      [null, false],
+    ],
+  },
+  {
+    name: 'UntypedNullEnum',
+    schema: { enum: [null] },
+    samples: [
+      [null, true],
+      [0, false],
+      ['', false],
+      [false, false],
+    ],
+  },
   ...compositionCases,
 ];
 

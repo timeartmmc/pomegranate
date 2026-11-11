@@ -683,6 +683,15 @@ functions, sparse arrays, class instances, and cycles. An explicit
 `{ "minimum": 1 }` remain unsupported. References to unconstrained JSON cannot
 add constraints that POM cannot represent.
 
+`enum` and `const` need no `type`: the listed values are the only accepted
+values, so they also fix the type. `{ "enum": ["ready", "done"] }` is a string
+enum and `{ "enum": [1, 2] }` an integer enum, exactly as with the type
+declared. Values of several JSON types generate one literal alternative per
+type, such as `'a' | 1 | null`. Members must be strings, finite numbers,
+booleans, or null. Other assertions beside an untyped `enum` or `const`,
+including `format` and length or numeric bounds, need a declared `type`. In
+3.0, `nullable: true` still requires a `type`, and `const` remains a 3.1 keyword.
+
 An exceeded string `maxLength` stops validation before pattern or format
 predicates run and reports only the length failure. Lengths count Unicode code
 points, including surrogate pairs as one code point.
@@ -844,8 +853,9 @@ Multiple scalar branches must have the same kind, except that `number` and
 `type`, with one exception: string, numeric, and array constraints beside a
 single referenced branch restrict that reference, as 3.1 reference siblings do.
 For example, `{ "allOf": [{ "$ref": "#/components/schemas/Codes" }], "maxItems": 2 }`
-limits the referenced array, including in 3.0. Declare a type beside
-`enum`, `const`, or `format`, and in branches such as `{ "maxLength": 3 }`.
+limits the referenced array, including in 3.0. Sibling or branch `enum` and
+`const` restrict the composition without a type. Declare a type beside
+`format`, and in branches such as `{ "maxLength": 3 }`.
 
 For example, a reusable base may declare shared fields and an operation-specific
 schema may add fields:

@@ -236,7 +236,6 @@ void test('empty schema support does not infer types or discard reference constr
   for (const schema of [
     { properties: { value: {} } },
     { minimum: 1 },
-    { enum: [1, null] },
     { items: {} },
     { additionalProperties: {} },
   ] satisfies Schema[])

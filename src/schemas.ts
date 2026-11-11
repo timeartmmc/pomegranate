@@ -286,9 +286,10 @@ function scalarValue(value: unknown): value is Scalar {
   );
 }
 
+// Without a kind, every scalar is admitted and the caller derives the types.
 function literals(
   value: Record<string, unknown>,
-  kind: string,
+  kind: string | undefined,
   location: string,
   nullable = false,
   work?: WorkCounter,
@@ -305,13 +306,19 @@ function literals(
   const seen = new Set<Scalar>();
   for (const item of arrayValues(raw)) {
     const matches =
-      kind === 'null'
+      kind === undefined ||
+      (kind === 'null'
         ? item === null
         : kind === 'integer'
           ? typeof item === 'number' && Number.isInteger(item)
-          : typeof item === kind;
+          : typeof item === kind);
     if ((!matches && !(nullable && item === null)) || !scalarValue(item))
-      fail(location, `literal must match type ${kind}`);
+      fail(
+        location,
+        kind === undefined
+          ? 'enum and const values must be strings, finite numbers, booleans or null'
+          : `literal must match type ${kind}`,
+      );
     if (seen.has(item)) fail(location, 'duplicate literal');
     seen.add(item);
     result.push(item);
@@ -791,6 +798,47 @@ function normalizeScalar(
     : scalar;
 }
 
+// Without a type, enum and const alone decide what a value may be, so the
+// listed values also fix its type. Values of several JSON types become one
+// literal alternative per type, in order of first appearance.
+function normalizeLiterals(
+  value: Record<string, unknown>,
+  location: string,
+  nesting: number,
+  work?: WorkCounter,
+): Schema {
+  // Other assertions apply per JSON type. Only a declared type says which one
+  // they constrain, so they are not inferred from the listed values.
+  for (const key of [...constraintKeys, 'format'])
+    if (Object.hasOwn(value, key))
+      fail(
+        `${location}.${key}`,
+        'enum and const fix the type only on their own; declare a type beside this keyword',
+      );
+  keys(value, [...annotationKeys, 'const', 'enum'], location, 'schema');
+  const groups = new Map<string, Scalar[]>();
+  for (const item of literals(value, undefined, location, false, work)!) {
+    const type = item === null ? 'null' : typeof item;
+    const group = groups.get(type);
+    if (group) group.push(item);
+    else groups.set(type, [item]);
+  }
+  const branches = Array.from(groups, ([type, items]): Schema => {
+    if (type === 'null') return schemaNode({ kind: 'null' });
+    if (type === 'string' || type === 'boolean')
+      return schemaNode({ kind: type, literals: items });
+    // The listed numbers already say whether fractions are accepted.
+    return schemaNode({
+      kind: items.every(Number.isInteger) ? 'integer' : 'number',
+      literals: items,
+    });
+  });
+  if (branches.length === 1) return branches[0]!;
+  // The alternatives count just like explicit anyOf branches.
+  assertInlineSchemaNesting(nesting + 1, location);
+  return schemaNode({ kind: 'union', branches });
+}
+
 function normalizeNullableType(
   value: Record<string, unknown>,
   location: string,
@@ -907,6 +955,11 @@ function normalizeShapeValue(
     return normalizeUnion(value, location, nesting, registered, work);
   if (Object.keys(value).every((key) => annotationKeys.includes(key)))
     return { kind: 'json' };
+  if (
+    !Object.hasOwn(value, 'type') &&
+    (Object.hasOwn(value, 'enum') || Object.hasOwn(value, 'const'))
+  )
+    return normalizeLiterals(value, location, nesting, work);
   const kind = value.type;
   if (Array.isArray(kind))
     return normalizeNullableType(value, location, nesting, registered, work);
