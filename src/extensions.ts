@@ -213,6 +213,7 @@ function walkDocument(
     return target;
   }
   const result = visit(document, 'document', 'OpenAPI');
+  let openApi30 = false;
   // Iteration and context-specific identity caching bound shared/cyclic input
   // graphs without a new recursion limit. The owning parsers still diagnose
   // malformed containers and unsupported schema structure.
@@ -227,6 +228,12 @@ function walkDocument(
           )
         : frame.source;
     const descriptors = Object.getOwnPropertyDescriptors(source);
+    if (names !== undefined && frame.context === 'document') {
+      const version: unknown = Object.hasOwn(source, 'openapi')
+        ? Reflect.get(source, 'openapi')
+        : undefined;
+      openApi30 = typeof version === 'string' && version.startsWith('3.0.');
+    }
     const reference = Object.hasOwn(frame.source, '$ref');
     for (const key of Object.keys(descriptors)) {
       const descriptor = descriptors[key]!;
@@ -266,7 +273,8 @@ function walkDocument(
       if (!context) continue;
       if (!readAccessors && !Object.hasOwn(descriptor, 'value')) continue;
       // Semantic siblings of Reference Objects remain the owning parser's
-      // error. A Schema Object ref permits only its externalDocs child here.
+      // error. Only 3.1 schema refs interpret externalDocs; 3.0 discards that
+      // sibling, including nested extensions, before annotation validation.
       if (
         reference &&
         (frame.context === 'parameter' ||
@@ -275,7 +283,11 @@ function walkDocument(
           frame.context === 'header')
       )
         continue;
-      if (reference && frame.context === 'schema' && key !== 'externalDocs')
+      if (
+        reference &&
+        frame.context === 'schema' &&
+        (key !== 'externalDocs' || openApi30)
+      )
         continue;
       const value: unknown =
         'value' in descriptor ? descriptor.value : Reflect.get(source, key);

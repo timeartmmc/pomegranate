@@ -23,6 +23,7 @@
  */
 import type {
   DeclaredResponse,
+  InputOptional,
   ObservedResponse,
   PreparedRequest,
   ProtocolFailure,
@@ -524,7 +525,7 @@ export { QueryResponseError as ResponseError };
 export type { TypedQueryResponseError as TypedResponseError };
 
 export type InputArguments<Input> = Readonly<{ context: ExecutionContext }> &
-  (undefined extends Input
+  (InputOptional<Input> extends true
     ? Readonly<{ input?: Input }>
     : Readonly<{ input: Input }>);
 export function executionConfig<Execute extends (...args: never[]) => unknown>(

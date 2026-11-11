@@ -197,7 +197,7 @@ void test('OpenAPI 3.0 ignores annotation siblings of every reference without in
       description: 'Ignored',
       example: { any: ['json', null] },
       deprecated: true,
-      externalDocs: { url: './docs' },
+      externalDocs: { url: 'https://example.test/docs', 'x-doc': 'Ignored' },
     },
     // Ignored values are not annotations of the reference, so their shapes
     // are not checked either.
@@ -219,6 +219,52 @@ void test('OpenAPI 3.0 ignores annotation siblings of every reference without in
       expected,
     );
   }
+  const shared = fixture();
+  const docs = { url: 'https://example.test/docs', 'x-doc': 'Documentation' };
+  Object.assign(shared.components.schemas.Alias!, { externalDocs: docs });
+  Object.assign(shared.components.schemas.Record!, { externalDocs: docs });
+  await assert.rejects(compile(shared, selection), (error) => {
+    assert.ok(error instanceof ContractError);
+    assert.equal(
+      error.location,
+      'components.schemas.Record.externalDocs.x-doc',
+    );
+    return true;
+  });
+});
+
+void test('OpenAPI 3.1 keeps reference documentation and extension boundaries', async () => {
+  const input = fixture(true);
+  const docs = { url: 'https://example.test/docs', 'x-doc': 'Documentation' };
+  Object.assign(input.components.schemas.Alias!, { externalDocs: docs });
+  await assert.rejects(compile(input, selection), (error) => {
+    assert.ok(error instanceof ContractError);
+    assert.equal(error.location, 'components.schemas.Alias.externalDocs.x-doc');
+    return true;
+  });
+  const expected = fixture(true);
+  Object.assign(expected.components.schemas.Alias!, {
+    externalDocs: { url: docs.url },
+  });
+  assert.deepEqual(
+    await compile(input, { ...selection, ignoreExtensions: ['x-doc'] }),
+    await compile(expected, selection),
+  );
+  for (const [section, name] of referenceAliases) {
+    if (section === 'schemas') continue;
+    const other = fixture(true);
+    Object.assign(record(record(other.components[section])[name]), {
+      externalDocs: docs,
+    });
+    await assert.rejects(compile(other, selection), (error) => {
+      assert.ok(error instanceof ContractError);
+      assert.equal(
+        error.location,
+        `components.${section}.${name}.externalDocs`,
+      );
+      return true;
+    });
+  }
 });
 
 void test('OpenAPI 3.0 keeps rejecting reference siblings that could carry meaning', async () => {
@@ -231,7 +277,13 @@ void test('OpenAPI 3.0 keeps rejecting reference siblings that could carry meani
   ) => {
     const input = fixture();
     // An ignored annotation beside it does not excuse the other sibling.
-    Object.assign(change(input), { description: 'Ignored' }, sibling);
+    Object.assign(
+      change(input),
+      {
+        externalDocs: { url: 'https://example.test/docs', 'x-doc': 'Ignored' },
+      },
+      sibling,
+    );
     await assert.rejects(compile(input, selection), (error) => {
       assert.ok(error instanceof ContractError, location);
       assert.equal(error.location, location);

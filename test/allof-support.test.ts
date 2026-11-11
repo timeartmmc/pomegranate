@@ -1378,3 +1378,161 @@ void test('schema-valued map composition with additional property bounds remains
     return true;
   });
 });
+
+void test('idempotent recursive references retain inherited constraints and directional fields', async (t) => {
+  for (const openapi of ['3.0.4', '3.1.2']) {
+    const recursive = ref('Combined');
+    const variants: readonly [Schema, boolean][] = [
+      [recursive, true],
+      [{ allOf: [recursive, recursive] }, false],
+      [{ allOf: [recursive, {}] }, false],
+      [{ allOf: [{}, recursive] }, false],
+      [{ allOf: [recursive, ref('EmptyAlias')] }, false],
+      [{ allOf: [ref('EmptyAlias'), recursive] }, false],
+    ];
+    for (const [next, redeclare] of variants) {
+      const input = {
+        ...document({
+          Empty: {},
+          EmptyAlias: ref('Empty'),
+          Base: {
+            type: 'object',
+            properties: {
+              value: { type: 'integer', minimum: 1 },
+              next,
+              id: { type: 'string', readOnly: true },
+              secret: { type: 'string', writeOnly: true },
+            },
+            required: ['value'],
+          },
+          Combined: {
+            allOf: [
+              ref('Base'),
+              {
+                type: 'object',
+                properties: {
+                  label: { type: 'string', minLength: 1 },
+                  ...(redeclare ? { next: recursive } : {}),
+                },
+                required: ['label'],
+              },
+            ],
+          },
+        }),
+        openapi,
+      };
+      const root = await generatedTestWorkspace(
+        t,
+        await compile(input, selection),
+      );
+      const client = await importGenerated<RuntimeClient>(
+        root,
+        'client.consumer.ts',
+      );
+      for (const usage of ['request', 'response']) {
+        const { schema } = await importGenerated<StandaloneModule>(
+          root,
+          `standalone.${usage}.ts`,
+        );
+        const visible = usage === 'request' ? 'secret' : 'id';
+        const child = { value: 2, label: 'child', [visible]: 'child-value' };
+        const value = {
+          value: 1,
+          label: 'root',
+          [visible]: 'root-value',
+          next: child,
+        };
+        const parsed = record(schema.parse(value));
+        assert.deepEqual(parsed, value);
+        assert.notEqual(parsed.next, child);
+        assert.equal(
+          schema.safeParse({ ...value, next: { ...child, value: 0 } }).success,
+          false,
+        );
+        assert.equal(
+          schema.safeParse({ ...value, next: { value: 2 } }).success,
+          false,
+        );
+        if (usage === 'request') {
+          assert.equal(
+            schema.safeParse({ ...value, id: 'forbidden' }).success,
+            false,
+          );
+          assert.deepEqual(
+            entry(client.operations, 'save').build({ body: value }).body,
+            value,
+          );
+        } else {
+          assert.deepEqual(schema.parse({ ...value, secret: 'hidden' }), value);
+          const response = entry(client.operations, 'save').parseResponse({
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(value),
+          });
+          assert.equal(response.kind, 'success');
+          if (response.kind === 'success')
+            assert.deepEqual(response.data, value);
+        }
+        const cyclic: Record<string, unknown> = { ...value };
+        cyclic.next = cyclic;
+        assert.equal(schema.safeParse(cyclic).success, false);
+        assert.deepEqual(schema.parse(value), value);
+      }
+    }
+  }
+});
+
+void test('neutral recursive wrappers preserve access inherited from aliases', async (t) => {
+  for (const access of ['readOnly', 'writeOnly']) {
+    const input = document({
+      Alias: { allOf: [ref('Combined')], [access]: true },
+      Combined: {
+        allOf: [
+          {
+            type: 'object',
+            properties: {
+              value: { type: 'integer' },
+              next: { allOf: [ref('Alias'), {}, ref('Alias')] },
+            },
+            required: ['value'],
+          },
+          { type: 'object', properties: { label: { type: 'string' } } },
+        ],
+      },
+    });
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(input, selection),
+    );
+    const request = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.request.ts',
+    );
+    const response = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.response.ts',
+    );
+    const value = { value: 1, next: { value: 2 } };
+    if (access === 'readOnly') {
+      assert.equal(request.schema.safeParse(value).success, false);
+      assert.deepEqual(response.schema.parse(value), value);
+    } else {
+      assert.deepEqual(request.schema.parse(value), value);
+      assert.deepEqual(response.schema.parse(value), { value: 1 });
+    }
+    const conflicted = document({
+      ...input.components.schemas,
+      Alias: {
+        allOf: [
+          ref('Combined'),
+          { [access === 'readOnly' ? 'writeOnly' : 'readOnly']: true },
+        ],
+        [access]: true,
+      },
+    });
+    await assert.rejects(
+      compile(conflicted, selection),
+      /readOnly and writeOnly cannot both be true/,
+    );
+  }
+});

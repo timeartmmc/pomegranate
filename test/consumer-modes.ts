@@ -133,6 +133,7 @@ export function consumerModesFixture() {
         content: { 'text/plain': { schema: { type: 'string' } } },
       },
     },
+    requiredQuery: { 200: item },
   };
   Object.assign(
     document.paths,
@@ -148,12 +149,38 @@ export function consumerModesFixture() {
               timeout: 'interactive',
               surfaces: ['consumer'],
             },
+            parameters: [
+              {
+                name: 'page',
+                in: 'query',
+                required: operationId === 'requiredQuery',
+                schema: { type: 'integer' },
+              },
+            ],
             responses,
           },
         },
       ]),
     ),
   );
+  const items = document.paths['/collections/{collection}/items'].get;
+  const records = document.paths['/records/{category}'].get;
+  Object.assign(document.paths, {
+    '/consumer-modes/unscoped-items': {
+      get: {
+        ...items,
+        operationId: 'unscopedItems',
+        parameters: items.parameters.filter(({ name }) => name === 'after'),
+      },
+    },
+    '/consumer-modes/unscoped-records': {
+      get: {
+        ...records,
+        operationId: 'unscopedRecords',
+        parameters: records.parameters.filter(({ name }) => name === 'start'),
+      },
+    },
+  });
   return {
     document,
     options: {
@@ -165,6 +192,14 @@ export function consumerModesFixture() {
           ...executionSelection.queries.consumer,
           ...Object.keys(queryResponses),
         ],
+      },
+      infiniteQueries: {
+        consumer: {
+          ...executionSelection.infiniteQueries.consumer,
+          unscopedItems: executionSelection.infiniteQueries.consumer.listItems,
+          unscopedRecords:
+            executionSelection.infiniteQueries.consumer.listRecords,
+        },
       },
     },
   };
@@ -209,6 +244,56 @@ export async function verifyConsumerModes(
     };
     export const parsed: string = schema.parse('valid');
     export const prepared = operations.createWidget.build(input);
+    operations.maybeCreate.build();
+    operations.maybeCreate.build(undefined);
+    operations.commandOptions.build();
+    operations.commandOptions.build(undefined);
+    client.maybeCreate.call({ context: {} });
+    client.maybeCreate.call({ context: {}, input: undefined });
+    client.maybeCreateNullable.call({ context: {} });
+    queries.health.options({ context: {} });
+    queries.health.options({ context: {}, input: undefined });
+    queries.rangedBody.options({ context: {} });
+    queries.rangedBody.options({ context: {}, input: undefined });
+    queries.rangedBody.options({ context: {}, input: { query: { page: 1 } } });
+    infinite.unscopedItems.options({ context: {} });
+    infinite.unscopedItems.options({ context: {}, input: undefined });
+    infinite.unscopedRecords.options({ context: {} });
+    infinite.unscopedRecords.options({ context: {}, input: undefined });
+    // @ts-expect-error Required path groups require an options argument in every mode.
+    operations.readItem.build();
+    // @ts-expect-error Required body/header groups require an options argument.
+    operations.createWidget.build();
+    // @ts-expect-error A required query group requires an options argument.
+    operations.requiredQuery.build();
+    // @ts-expect-error A required null-only body still requires its wrapper.
+    operations.saveNulls.build();
+    // @ts-expect-error An optional body does not make required path/header groups optional.
+    operations.maybeUpdate.build();
+    // @ts-expect-error Required call input cannot be omitted in non-strict consumers.
+    client.readItem.call({ context: {} });
+    // @ts-expect-error Required body/header input cannot be omitted.
+    client.createWidget.call({ context: {} });
+    // @ts-expect-error A required query group requires call input.
+    client.requiredQuery.call({ context: {} });
+    // @ts-expect-error Optional body requiredness is independent of other input groups.
+    client.maybeUpdate.call({ context: {} });
+    // @ts-expect-error Ordinary query options retain required input.
+    queries.readItem.options({ context: {} });
+    // @ts-expect-error A required query group requires query input.
+    queries.requiredQuery.options({ context: {} });
+    // @ts-expect-error Ordinary query keys retain required input.
+    queries.readItem.key({ context: {} });
+    // @ts-expect-error Body query options retain required input.
+    queries.readItem.body().options({ context: {} });
+    // @ts-expect-error Cursor pagination retains its required base path.
+    infinite.listItems.options({ context: {} });
+    // @ts-expect-error Cursor pagination keys retain their required base path.
+    infinite.listItems.key({ context: {} });
+    // @ts-expect-error Offset pagination retains its required base path.
+    infinite.listRecords.options({ context: {} });
+    // @ts-expect-error Body pagination retains its required base path.
+    infinite.listRecords.body().options({ context: {} });
     export async function create() {
       const result = await client.createWidget.call({ context: {}, input });
       if (result.status === 201) {

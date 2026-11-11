@@ -459,7 +459,7 @@ export function createIntersectionNormalizer(
     location: string,
   ): Schema {
     const pending: Schema[] = [input];
-    const branches: Schema[] = [];
+    let branches: Schema[] = [];
     const seen = new Set<Schema>();
     const references = new Set<string>();
     let access: Access = { readOnly: false, writeOnly: false };
@@ -480,17 +480,44 @@ export function createIntersectionNormalizer(
           current.kind === 'object'
             ? objectChildren(current, location)
             : normalize(current, location);
-        const target = resolve(branch, location);
-        access = accessFlags(access, target, location);
         // Repeating the same unrefined component adds no assertion. Keep the
-        // reference (including its alias chain), and accumulate access first.
+        // reference (including its alias chain), and accumulate own access first.
         // Different names or use-site constraints can carry distinct checks.
         if (branch.kind === 'ref' && !hasConstraints(branch.constraints)) {
           if (references.has(branch.name)) continue;
           references.add(branch.name);
         }
-        if (target.schema.kind !== 'json') branches.push(branch);
+        access = accessFlags(access, branch, location);
+        if (branch.kind !== 'json') branches.push(branch);
       }
+    }
+    // Discover neutral JSON aliases without composing their targets. Resolving
+    // a recursive reference first would reenter its active allOf even when the
+    // other conjunct adds no assertion. Cache this pure-link classification per
+    // intersection; the component table is still being composed.
+    if (branches.length > 1) {
+      const neutral = new WeakMap<Schema, boolean>();
+      const json = (input: Schema): boolean => {
+        const path: Schema[] = [];
+        let current = input;
+        while (
+          current.kind === 'ref' &&
+          !hasConstraints(current.constraints) &&
+          !neutral.has(current)
+        ) {
+          charge(1, location);
+          path.push(current);
+          current = referenceTarget(current, schemas);
+        }
+        const value = neutral.get(current) ?? current.kind === 'json';
+        for (const link of path) neutral.set(link, value);
+        return value;
+      };
+      branches = branches.filter((branch) => {
+        if (!json(branch)) return true;
+        access = accessFlags(access, resolve(branch, location), location);
+        return false;
+      });
     }
     if (branches.length === 0) return schemaNode({ kind: 'json', ...access });
     if (branches.length === 1) {
@@ -498,6 +525,8 @@ export function createIntersectionNormalizer(
       return materializeObject({ ...branch, ...access }, location);
     }
     const targets = branches.map((branch) => resolve(branch, location));
+    for (const target of targets)
+      access = accessFlags(access, target, location);
     // A nullable type is a union with null, so every other conjunct would also
     // need to accept null. Name the supported nullable form instead of the
     // generic union restriction below.

@@ -2221,13 +2221,28 @@ type PreparedBodyKind<O, B extends BodyKind> = B extends 'json' | 'text'
     : B | 'none'
   : B;
 
+// Without strictNullChecks, undefined is assignable to every required wrapper.
+// Generated wrappers admit {} exactly when all their groups are optional. Keep
+// strict-mode union semantics, where an explicit undefined arm permits omission.
+export type InputOptional<Input> = undefined extends {}
+  ? [Input] extends [never]
+    ? false
+    : {} extends Input
+      ? true
+      : [Input] extends [void]
+        ? true
+        : false
+  : undefined extends Input
+    ? true
+    : false;
+
 export interface Operation<
   O extends RequestParts | undefined,
   R extends Responses,
   B extends BodyKind,
 > {
   readonly build: (
-    ...args: undefined extends O ? [options?: O] : [options: O]
+    ...args: InputOptional<O> extends true ? [options?: O] : [options: O]
   ) => PreparedRequest<R, B, RequestBody<O>>;
   readonly parseResponse: (response: ObservedResponse) => ProtocolResult<R>;
 }
@@ -2903,7 +2918,7 @@ export function defineOperation<
     definition.headers,
   );
   function build(
-    ...args: undefined extends O ? [options?: O] : [options: O]
+    ...args: InputOptional<O> extends true ? [options?: O] : [options: O]
   ): PreparedRequest<R, PreparedBodyKind<O, B>, RequestBody<O>> {
     if (args.length > 1)
       throw new RequestValidationError(definition.operationId, [
