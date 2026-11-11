@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { format } from 'oxfmt';
 import {
+  array,
   call,
   data,
   identifier,
@@ -23,6 +24,7 @@ import type {
   Direction,
   Operation,
   ResponseKey,
+  Server,
   Standalone,
 } from './model.js';
 import { successKey, successResponses } from './response-status.js';
@@ -222,6 +224,32 @@ function requestHeaders(operation: Operation, renderer: SchemaRenderer) {
       }),
   );
   return { schemas, specs };
+}
+
+// Emitted only for an override, so other operations keep sharing profiles.
+function serverEntry(servers: readonly Server[]): Entries[number] {
+  return [
+    'servers',
+    array(
+      servers.map(({ url, variables }) =>
+        object([
+          ['url', literal(url)],
+          [
+            'variables',
+            object(
+              [...variables].map(([name, { default: value, enum: values }]) => [
+                name,
+                object([
+                  ['default', literal(value)],
+                  ['enum', values ? data(values) : identifier('undefined')],
+                ]),
+              ]),
+            ),
+          ],
+        ]),
+      ),
+    ),
+  ];
 }
 
 type PreparedResponse = {
@@ -465,6 +493,7 @@ function prepareOperation(
       ['security', data(operation.security)],
       ['policy', data(Object.fromEntries(operation.policy))],
       ['headers', headers.specs],
+      ...(operation.servers ? [serverEntry(operation.servers)] : []),
     ]),
     location,
   );
@@ -863,7 +892,7 @@ export const ${operationScope(operation.id)}: ${defined.typeName} = /* @__PURE__
     export { operations } from './client.${moduleName(client.name)}.operations.ts';
     export type { RequestTypes, ResponseTypes } from './client.${moduleName(client.name)}.schemas.ts';
     export { RequestValidationError } from './runtime.ts';
-    export type { PreparedRequest, Policy, Security, SecurityRequirement, Responses, ProtocolResult, ProtocolFailure, ObservedResponse, HeaderContext, MultipartField } from './runtime.ts';
+    export type { PreparedRequest, Policy, Security, SecurityRequirement, Server, Responses, ProtocolResult, ProtocolFailure, ObservedResponse, HeaderContext, MultipartField } from './runtime.ts';
     ${
       client.execution
         ? `export { createClient, ResponseError } from './client.${moduleName(client.name)}.execute.ts';

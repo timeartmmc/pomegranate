@@ -64,6 +64,23 @@ for (const [baseUrl, basePath] of [
   });
 }
 
+void test('example transports refuse server overrides instead of addressing the document server', async () => {
+  const send: typeof fetch = async () =>
+    assert.fail('an overridden operation must not reach the document server');
+  const tokenFor = async () => 'synthetic-token';
+  // A non-empty override names another host; an empty one names none.
+  for (const servers of [
+    [{ url: 'https://uploads.invalid', variables: {} }],
+    [],
+  ]) {
+    const request = { ...operations.checkHealth.build(), servers };
+    await assert.rejects(
+      execute(request, send, tokenFor, 'https://example.invalid'),
+      /does not implement server overrides/,
+    );
+  }
+});
+
 void test('example transports clear server query and fragment when the contract has no query', async () => {
   const sent: string[] = [];
   const send: typeof fetch = async (input) => {

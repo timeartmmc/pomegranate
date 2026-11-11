@@ -125,7 +125,8 @@ POST /api/widgets/demo%2Fwidget/preparations → 202 synthetic-123
 ```
 
 `examples/json/transport.ts` demonstrates serialization and token resolution;
-applications supply their own policy, recovery, deadlines, and session checks.
+applications supply their own policy, recovery, deadlines, session checks, and
+server overrides, which the example refuses.
 
 ## Further reading
 

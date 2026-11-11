@@ -63,11 +63,13 @@ const children: Readonly<Record<Node, Fields>> = {
     head: 'operation',
     options: 'operation',
     parameters: 'list:parameter',
+    servers: 'list:server',
   },
   operation: {
     parameters: 'list:parameter',
     requestBody: 'requestBody',
     responses: 'responses',
+    servers: 'list:server',
     externalDocs: 'annotation',
   },
   parameter: { schema: 'schema', examples: 'map:example' },

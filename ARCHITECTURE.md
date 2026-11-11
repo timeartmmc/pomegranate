@@ -17,8 +17,9 @@ POM never discovers consumer repositories, invokes their backends, reads their
 databases, fetches remote contracts, or implements authentication providers.
 Applications provide the inputs. Drift checks compare generated files with
 those inputs; they do not test a running backend.
-Document-level server configuration belongs to the application transport:
-applications select and expand endpoints and append the generated contract paths.
+Server configuration belongs to the application transport: applications select
+and expand endpoints and append the generated contract paths. Generated requests
+only pass Path Item and Operation server overrides through to that transport.
 
 Use one versioned policy format and generated API across applications. Keep
 application-specific behavior in adapters. OpenAPI security preserves inherited

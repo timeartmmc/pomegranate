@@ -1880,6 +1880,35 @@ function securitySnapshot(input: Security): Security {
     }),
   );
 }
+// A Path Item or Operation server override. POM passes the declared template
+// and variables through; the application chooses and expands one.
+export type Server = Readonly<{
+  url: string;
+  variables: Readonly<
+    Record<
+      string,
+      Readonly<{ default: string; enum: readonly string[] | undefined }>
+    >
+  >;
+}>;
+
+function serverSnapshot(input: Server): Server {
+  const source = ownFields(input);
+  const variables = dictionary<Server['variables'][string]>();
+  for (const [name, declared] of Object.entries(source.variables)) {
+    const variable = ownFields(declared);
+    // Both slots are own fields: an undeclared enum is an own undefined.
+    variables[name] = Object.freeze(
+      ownFields({
+        default: variable.default,
+        enum: variable.enum && Object.freeze([...variable.enum]),
+      }),
+    );
+  }
+  return Object.freeze(
+    ownFields({ url: source.url, variables: Object.freeze(variables) }),
+  );
+}
 export type HeaderContext = Readonly<Record<string, string>>;
 export type ObservedResponse = Readonly<{
   status: number;
@@ -2050,6 +2079,8 @@ export type PreparedRequest<
   method: string;
   url: string;
   security: Security;
+  // Present only as an override; otherwise the document's servers apply.
+  servers: readonly Server[] | undefined;
   policy: Readonly<P>;
   headers: HeaderContext;
   validateHeaders: (headers: HeaderContext) => HeaderContext;
@@ -2123,12 +2154,13 @@ type Definition<
   B extends BodyKind,
 > = Omit<
   OperationSettings<O, R, B>,
-  'contentType' | 'multipart' | 'parameters'
+  'contentType' | 'multipart' | 'parameters' | 'servers'
 > &
   Readonly<{
     contentType?: string;
     multipart?: readonly MultipartField[];
     parameters: readonly Parameter[];
+    servers?: readonly Server[];
   }>;
 
 type SerializedParameter = Readonly<{
@@ -2146,6 +2178,7 @@ type OperationSettings<
   method: string;
   path: string;
   security: Security;
+  servers: readonly Server[] | undefined;
   policy: Policy;
   bodyKind: B;
   contentType: string;
@@ -2169,6 +2202,7 @@ function operationSettings<
     method: source.method,
     path: source.path,
     security: source.security,
+    servers: source.servers,
     policy: source.policy,
     bodyKind: source.bodyKind,
     contentType:
@@ -2703,6 +2737,8 @@ export function defineOperation<
   // Freezing own fields does not freeze Object.prototype. Metadata snapshots
   // exclude it so omitted fields cannot gain values after construction.
   const security = securitySnapshot(definition.security);
+  const servers =
+    definition.servers && Object.freeze(definition.servers.map(serverSnapshot));
   const policy = Object.freeze(ownFields(definition.policy));
   const requestContentType = definition.contentType;
   const multipart = Object.freeze(
@@ -2748,6 +2784,7 @@ export function defineOperation<
       method: definition.method,
       url: serialized.url,
       security,
+      servers,
       policy,
       headers: serialized.headers,
       validateHeaders,

@@ -8,6 +8,7 @@ export type {
   Policy,
   Security,
   SecurityRequirement,
+  Server,
   Responses,
   ProtocolResult,
   ProtocolFailure,

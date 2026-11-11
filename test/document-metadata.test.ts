@@ -125,16 +125,22 @@ const invalidServers: [unknown, string][] = [
     'servers[0].variables.v.type',
   ],
 ];
-void test('all server declarations validate even when a later server would not be selected', async () => {
-  for (const [servers, location] of invalidServers) {
-    const document = fixture();
-    Object.assign(document, { servers });
-    await assert.rejects(compile(document, selection), (error) => {
-      assert.ok(error instanceof ContractError);
-      assert.equal(error.location, location);
-      return true;
-    });
-  }
+void test('document, path-item and operation servers all validate, including servers that would not be selected', async () => {
+  const levels: [Target, string][] = [
+    [(d) => d, ''],
+    [(d) => d.paths['/api/health'], 'paths./api/health.'],
+    [(d) => d.paths['/api/health'].head, 'paths./api/health.head.'],
+  ];
+  for (const [target, prefix] of levels)
+    for (const [servers, location] of invalidServers) {
+      const document = fixture();
+      Object.assign(target(document), { servers });
+      await assert.rejects(compile(document, selection), (error) => {
+        assert.ok(error instanceof ContractError);
+        assert.equal(error.location, `${prefix}${location}`);
+        return true;
+      });
+    }
   const document = fixture();
   Object.assign(document, { servers: [{ url: '/' }, { url: false }] });
   await assert.rejects(compile(document, selection), /servers\[1\].url/);
@@ -168,15 +174,8 @@ void test('contact and terms validate shapes while URI and email spelling remain
   }
 });
 
-void test('metadata cannot hide unsupported server overrides, extensions or unused schemas', async () => {
+void test('metadata cannot hide unsupported keywords, extensions or unused schemas', async () => {
   for (const [target, key, value, expected] of [
-    [(d: Fixture) => d.paths['/api/health'], 'servers', [], /paths.*servers/],
-    [
-      (d: Fixture) => d.paths['/api/health'].head,
-      'servers',
-      [{ url: '/v2' }],
-      /paths.*servers/,
-    ],
     [preparation, 'callbacks', {}, /callbacks.*unsupported keyword/],
     [
       (d: Fixture) => d,

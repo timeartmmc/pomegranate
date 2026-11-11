@@ -52,6 +52,12 @@ async function executeRaw(
   ) {
     throw new Error('The example transport does not implement this policy');
   }
+  // A Path Item or Operation can replace the document's servers. Sending such
+  // a request to baseUrl would address the host its contract overrides.
+  if (request.servers !== undefined)
+    throw new Error(
+      'The example transport does not implement server overrides',
+    );
   const authHeaders: Record<string, string> = {};
   if (request.security.transport === 'bearer') {
     const token = await tokenFor(request.security.scheme, request.policy.auth);

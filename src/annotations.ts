@@ -12,6 +12,7 @@ import {
   localComponentReference,
   validateComponentAliases,
 } from './component-references.js';
+import type { Server, ServerVariable } from './model.js';
 
 export const exampleKeys = ['example', 'examples'];
 export const schemaAnnotationKeys = [
@@ -117,36 +118,49 @@ export function externalDocsAnnotation(
   stringFields(docs, ['description'], path);
 }
 
-export function serverAnnotations(value: Record<string, unknown>): void {
-  if (!Object.hasOwn(value, 'servers')) return;
-  if (!Array.isArray(value.servers)) fail('servers', 'expected an array');
-  // Only document-level endpoint configuration is accepted. Applications choose
-  // and expand it, then append the generated contract path (OAS 3.1.1 §4.8.8).
-  // Path/operation overrides remain unsupported rather than losing routing data.
-  let index = 0;
-  for (const input of arrayValues(value.servers)) {
-    const location = `servers[${index++}]`;
-    const server = record(input, location);
-    keys(server, ['url', 'description', 'variables'], location);
+// Shapes only: POM never parses URLs or expands variables. The document's list
+// is the application's endpoint configuration and stays out of generated
+// output. A Path Item or Operation list replaces it for those operations, so
+// their requests carry it to the transport (OAS 3.1.1 §4.8.9, §4.8.10).
+export function serverList(
+  input: unknown,
+  location: string,
+): readonly Server[] {
+  if (!Array.isArray(input)) fail(location, 'expected an array');
+  return Array.from(arrayValues(input), (entry, index) => {
+    const path = `${location}[${index}]`;
+    const server = record(entry, path);
+    keys(server, ['url', 'description', 'variables'], path);
     if (typeof server.url !== 'string')
-      fail(`${location}.url`, 'expected a string');
-    stringFields(server, ['description'], location);
-    if (!Object.hasOwn(server, 'variables')) continue;
-    const variables = record(server.variables, `${location}.variables`);
-    for (const [name, entry] of Object.entries(variables)) {
-      const path = `${location}.variables.${name}`;
-      const variable = record(entry, path);
-      keys(variable, ['default', 'enum', 'description'], path);
-      if (typeof variable.default !== 'string')
-        fail(`${path}.default`, 'expected a string');
-      stringFields(variable, ['description'], path);
-      if (!Object.hasOwn(variable, 'enum')) continue;
-      if (!stringArray(variable.enum) || variable.enum.length === 0)
-        fail(`${path}.enum`, 'expected a nonempty array of strings');
-      if (!variable.enum.includes(variable.default))
-        fail(`${path}.default`, 'default must be a member of enum');
+      fail(`${path}.url`, 'expected a string');
+    stringFields(server, ['description'], path);
+    const variables = new Map<string, ServerVariable>();
+    if (Object.hasOwn(server, 'variables')) {
+      const declared = record(server.variables, `${path}.variables`);
+      // Variables are a map: sorted names keep output independent of their order.
+      for (const name of Object.keys(declared).sort()) {
+        const variablePath = `${path}.variables.${name}`;
+        const variable = record(declared[name], variablePath);
+        keys(variable, ['default', 'enum', 'description'], variablePath);
+        if (typeof variable.default !== 'string')
+          fail(`${variablePath}.default`, 'expected a string');
+        stringFields(variable, ['description'], variablePath);
+        let values: readonly string[] | undefined;
+        if (Object.hasOwn(variable, 'enum')) {
+          if (!stringArray(variable.enum) || variable.enum.length === 0)
+            fail(
+              `${variablePath}.enum`,
+              'expected a nonempty array of strings',
+            );
+          if (!variable.enum.includes(variable.default))
+            fail(`${variablePath}.default`, 'default must be a member of enum');
+          values = [...variable.enum];
+        }
+        variables.set(name, { default: variable.default, enum: values });
+      }
     }
-  }
+    return { url: server.url, variables };
+  });
 }
 
 export function schemaAnnotations(

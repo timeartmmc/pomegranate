@@ -232,6 +232,17 @@ export type ContractResponse = {
   readonly headers: readonly ResponseHeader[];
 };
 
+// Descriptions are documentation; the URL template and its variables are what
+// a transport needs to address an operation that overrides the document's servers.
+export type ServerVariable = {
+  readonly default: string;
+  readonly enum: readonly string[] | undefined;
+};
+export type Server = {
+  readonly url: string;
+  readonly variables: ReadonlyMap<string, ServerVariable>;
+};
+
 export type Operation = {
   readonly id: string;
   readonly method:
@@ -244,6 +255,9 @@ export type Operation = {
     | 'OPTIONS';
   readonly path: string;
   readonly security: Security;
+  // The Operation's own servers, else its Path Item's; undefined when the
+  // document's servers apply.
+  readonly servers: readonly Server[] | undefined;
   readonly policy: Policy;
   readonly surfaces: readonly string[];
   readonly parameters: readonly Parameter[];

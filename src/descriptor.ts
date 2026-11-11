@@ -27,6 +27,7 @@ import type {
   PolicyVocabulary,
   ResponseHeader,
   Schema,
+  Server,
 } from './model.js';
 import {
   componentName,
@@ -55,7 +56,7 @@ import {
   exampleKeys,
   infoAnnotations,
   externalDocsAnnotation,
-  serverAnnotations,
+  serverList,
 } from './annotations.js';
 
 const methods = [
@@ -843,11 +844,25 @@ function operationResponses(
   return responses;
 }
 
+// The nearest declared array overrides its parents (OAS 3.1.1 §4.8.9,
+// §4.8.10), including an empty one: only the document's own empty array has a
+// defined default. Inheriting there would address the host that the
+// declaration replaced, so an empty override reaches the transport as it is.
+function serverOverride(
+  value: Record<string, unknown>,
+  location: string,
+): readonly Server[] | undefined {
+  return Object.hasOwn(value, 'servers')
+    ? serverList(value.servers, `${location}.servers`)
+    : undefined;
+}
+
 function normalizeOperation(
   input: unknown,
   method: (typeof methods)[number],
   path: string,
   inheritedParameters: readonly Parameter[],
+  inheritedServers: readonly Server[] | undefined,
   context: OperationContext,
 ): Operation {
   const {
@@ -871,6 +886,7 @@ function normalizeOperation(
       'requestBody',
       'responses',
       'security',
+      'servers',
       'x-pom',
       'deprecated',
       'externalDocs',
@@ -953,6 +969,7 @@ function normalizeOperation(
     method: method.toUpperCase() as Operation['method'],
     path,
     security,
+    servers: serverOverride(value, location) ?? inheritedServers,
     policy: metadata.policy,
     surfaces: metadata.surfaces,
     parameters,
@@ -1009,7 +1026,7 @@ function validateDocumentMetadata(value: Record<string, unknown>): void {
   annotations(info, 'info');
   infoAnnotations(info);
   externalDocsAnnotation(value, 'OpenAPI');
-  serverAnnotations(value);
+  if (Object.hasOwn(value, 'servers')) serverList(value.servers, 'servers');
   if (Object.hasOwn(value, 'tags')) {
     if (!Array.isArray(value.tags)) fail('tags', 'expected an array');
     let index = 0;
@@ -1083,7 +1100,7 @@ function normalizeOperations(
     const pathItem = record(paths[path], `paths.${path}`);
     keys(
       pathItem,
-      [...methods, 'summary', 'description', 'parameters'],
+      [...methods, 'summary', 'description', 'parameters', 'servers'],
       `paths.${path}`,
     );
     annotations(pathItem, `paths.${path}`);
@@ -1096,6 +1113,7 @@ function normalizeOperations(
       parameterComponents,
       `paths.${path}.parameters`,
     );
+    const inheritedServers = serverOverride(pathItem, `paths.${path}`);
     for (const method of methods)
       if (Object.hasOwn(pathItem, method))
         operations.push(
@@ -1104,6 +1122,7 @@ function normalizeOperations(
             method,
             path,
             inheritedParameters,
+            inheritedServers,
             operationContext,
           ),
         );

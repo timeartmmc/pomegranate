@@ -448,19 +448,34 @@ such as `operations['repos/get']` or `client['get-stations']`. Private generated
 symbols escape punctuation without renaming public IDs. `__proto__`, `prototype`
 and `constructor` remain reserved operation IDs.
 
-Document-level `servers` accepts an array of objects with required string `url`,
-optional string `description`, and optional `variables`. Each variable has a
-required string `default`, optional string `description`, and optional nonempty
-string `enum` containing the default. Empty server arrays are accepted. POM checks
-these shapes without parsing URLs or resolving template variables.
+`servers` at the document, Path Item, and Operation levels accepts an array of
+objects with required string `url`, optional string `description`, and optional
+`variables`. Each variable has a required string `default`, optional string
+`description`, and optional nonempty string `enum` containing the default.
+Empty server arrays are accepted. POM checks these shapes without parsing URLs
+or resolving template variables.
 
 The application chooses and expands a server URL, then appends the generated
 contract path, including any server base path. Builders keep returning the path
-declared in `paths`; server configuration is not included in generated output.
-For example, server `https://example.invalid/v1` and generated path `/widgets`
-need `https://example.invalid/v1/widgets`. `new URL('/widgets', server)` would
-discard `/v1`. Path-item and operation-level server overrides remain unsupported
-and receive diagnostics.
+declared in `paths`; POM never builds an absolute URL. For example, server
+`https://example.invalid/v1` and generated path `/widgets` need
+`https://example.invalid/v1/widgets`. `new URL('/widgets', server)` would
+discard `/v1`.
+
+The document's servers are application configuration and are not included in
+generated output. A Path Item or Operation list overrides them for its
+operations, so those requests expose it as `request.servers`: the Operation's
+list when it declares one, else its Path Item's. An explicit empty list is
+still the nearest declaration: `request.servers` is then `[]`, and the
+operation must not be sent to a parent's or the document's server. OpenAPI
+defines the default server `/` only for the document, so the application
+decides how to address an operation whose override names no server. Each entry
+is a frozen `{ url, variables }` record in declaration order, where
+`variables` maps each name to its `default` and `enum`; `enum` is `undefined`
+when the variable declares none, and descriptions are omitted. Without a
+declared override, `request.servers` is an own `undefined` field. The
+transport selects and expands an override exactly as it does the document's
+servers. Client entries export the `Server` type.
 
 YAML anchors and aliases support shared values with at most 1,000,000 expanded
 nodes, counting mapping keys, values, and collections. Repeated small anchors

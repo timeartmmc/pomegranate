@@ -43,7 +43,7 @@ type Definition<
 type Headers = Responses[number]['headers'];
 export type EndpointProfile = Pick<
   Definition<undefined, Responses, 'none'>,
-  'security' | 'policy' | 'headers'
+  'security' | 'policy' | 'headers' | 'servers'
 >;
 type Settings<B extends BodyKind> = Pick<
   Definition<undefined, Responses, B>,
@@ -80,6 +80,7 @@ export function endpoint<
     responses,
     bodyKind: metadata.bodyKind,
     parameters: metadata.parameters ?? [],
+    ...(shared.servers === undefined ? {} : { servers: shared.servers }),
     ...(metadata.contentType === undefined
       ? {}
       : { contentType: metadata.contentType }),
