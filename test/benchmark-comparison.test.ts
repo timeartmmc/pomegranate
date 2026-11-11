@@ -26,6 +26,9 @@ const digest = (bytes: string | Buffer) =>
 const settings = {
   rounds: 2,
   seed: 7,
+  // This suite checks artifact/timing joins. The timing suite owns the profile
+  // matrix; repeating it here can exhaust the test file's deadline on Node 22.
+  profiles: [{ scenario: 'parsed-valid', records: 2 }],
   policy: { warmupMs: 0, sampleMs: 1, samples: 1, batchSize: 16 },
 };
 
@@ -87,7 +90,7 @@ void describe('artifact-to-timing comparison', () => {
     const report = await compareArtifacts(input.plan, output, settings);
     assert.equal(report.status, 'complete');
     assert.equal(report.preparation.behavior, 'verified');
-    assert.equal(report.timing.observations.length, 18);
+    assert.equal(report.timing.observations.length, 6);
     assert.equal(report.timing.qualified.length, 3);
     const controller = report.controller[0]!;
     assert.equal(report.preparation.controller.sha256, controller.sha256);
