@@ -991,6 +991,15 @@ The limits bound expansion
 of shared acyclic inputs as well as ordinary trees. The compiler's separate
 schema and generated-expression limits still apply.
 
+The work allowance covers every item in a recursive batch even when the data
+omits all optional recursive members. For example, 20,000 flat records with seven
+supplied scalar fields already contain 140,000 child field values before array
+items are counted, so they exceed this allowance. The number of records that fits
+depends on the schema and supplied values; depth or byte size alone does not
+determine it. Use smaller batches when the API permits them. If an operation
+guarantees flat data, declaring its actual nonrecursive schema avoids recursive
+traversal accounting.
+
 Speculative union trials missing required keys stop before their children are
 validated. Committed branches collect ordinary diagnostics. Overlapping
 alternatives whose keys are present can still repeat

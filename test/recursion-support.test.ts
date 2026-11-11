@@ -118,6 +118,88 @@ async function wrappedRecursive(t: TestContext, node: Schema, wrapper: Schema) {
   return { client, validators, single };
 }
 
+void test('flat batches share the recursive allowance and fail closed across public boundaries', async (t) => {
+  const properties = {
+    id: { type: 'integer', minimum: 0 },
+    label: { type: 'string', minLength: 1 },
+    category: { type: 'string' },
+    enabled: { type: 'boolean' },
+    quantity: { type: 'integer' },
+    price: { type: 'number' },
+    revision: { type: 'integer' },
+  };
+  const required = Object.keys(properties);
+  const { client, validators } = await wrappedRecursive(
+    t,
+    {
+      type: 'object',
+      properties: {
+        ...properties,
+        children: { type: 'array', items: ref('Node') },
+      },
+      required,
+    },
+    { type: 'array', items: ref('Node') },
+  );
+  const rows = Array.from({ length: 20_000 }, (_, id) => ({
+    id,
+    label: `row-${id}`,
+    category: 'synthetic',
+    enabled: id % 2 === 0,
+    quantity: id % 10,
+    price: id / 10,
+    revision: 1,
+  }));
+  const accepted = rows.slice(0, 4_000);
+  const recovery = rows.slice(0, 1);
+  const workLimit = /recursive validation work exceeds 100000 visits/;
+  // Seven supplied scalar fields alone exceed the allowance in the large batch.
+  // The smaller batch leaves ample room for container and parser accounting.
+  for (const schema of validators) {
+    assert.deepEqual(schema.parse(accepted), accepted);
+    const result = schema.safeParse(rows);
+    assert.equal(result.success, false);
+    assert.equal(Object.hasOwn(result, 'data'), false);
+    if (!result.success) assert.match(result.error.message, workLimit);
+    assert.deepEqual(schema.parse(recovery), recovery);
+  }
+  const operation = present(client.operations.batch);
+  assert.deepEqual(operation.build({ body: accepted }).body, accepted);
+  assert.throws(
+    () => operation.build({ body: rows }),
+    (error) => {
+      assert.ok(error instanceof client.RequestValidationError);
+      assert.match(error.message, workLimit);
+      return true;
+    },
+  );
+  assert.deepEqual(operation.build({ body: recovery }).body, recovery);
+  const observed = (value: unknown) =>
+    operation.parseResponse({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(value),
+    });
+  const first = observed(accepted);
+  assert.equal(first.kind, 'success');
+  if (first.kind === 'success') assert.deepEqual(first.data, accepted);
+  const failed = observed(rows);
+  assert.equal(failed.kind, 'protocol');
+  assert.equal(Object.hasOwn(failed, 'data'), false);
+  if (failed.kind === 'protocol')
+    assert.ok(failed.issues.some(({ message }) => workLimit.test(message)));
+  const next = observed(recovery);
+  assert.equal(next.kind, 'success');
+  if (next.kind === 'success') assert.deepEqual(next.data, recovery);
+
+  // The same flat values do not start a recursive traversal under a flat schema.
+  const nonrecursive = await standalone(t, {
+    type: 'array',
+    items: { type: 'object', properties, required },
+  });
+  assert.deepEqual(nonrecursive.parse(rows), rows);
+});
+
 void test('productive recursive contracts preserve JSON/YAML and OpenAPI 3.0/3.1 behavior without mutating inputs', async () => {
   const input = recursionFixture();
   const before = structuredClone(input);
