@@ -36,6 +36,68 @@ function document(openapi: string, paths: Record<string, unknown>) {
   };
 }
 
+void test('empty and metadata-only path items preserve generated operations in both dialects', async () => {
+  for (const version of ['3.0.4', '3.1.2']) {
+    const paths = { '/pets': { get: operation('first', '/pets') } };
+    const options = {
+      clients: ['selected'],
+      surfaces: { selected: ['first'] },
+    };
+    const expected = await compile(document(version, paths), options);
+    assert.deepEqual(
+      await compile(
+        document(version, {
+          ...paths,
+          '/empty/{id}': {},
+          '/hidden': {
+            summary: 'Reserved path',
+            description: 'Synthetic path with no published operations',
+            parameters: [
+              { name: 'q', in: 'query', schema: { type: 'string' } },
+            ],
+            servers: [{ url: 'https://example.invalid' }],
+          },
+        }),
+        options,
+      ),
+      expected,
+    );
+  }
+});
+
+void test('path items without supported operations still validate methods, paths and metadata', async () => {
+  for (const version of ['3.0.4', '3.1.2'])
+    for (const [path, item, location] of [
+      [
+        '/hidden',
+        { trace: operation('trace', '/hidden') },
+        'paths./hidden.trace',
+      ],
+      ['/hidden', { summary: 42 }, 'paths./hidden.summary'],
+      [
+        '/hidden',
+        {
+          parameters: [{ name: 'q', in: 'query', schema: { type: 'object' } }],
+        },
+        'paths./hidden.parameters[0].schema',
+      ],
+      ['/hidden', { servers: [{ url: 42 }] }, 'paths./hidden.servers[0].url'],
+      ['relative', {}, 'paths.relative'],
+      ['/pets/{name}', {}, 'paths./pets/{name}'],
+    ] as const)
+      await assert.rejects(
+        compile(
+          document(version, {
+            '/pets/{id}': { get: operation('first', '/pets/{id}') },
+            [path]: item,
+          }),
+          { clients: ['selected'], surfaces: { selected: ['first'] } },
+        ),
+        { name: 'ContractError', location },
+        `${version}: ${location}`,
+      );
+});
+
 void test('equivalent templated paths fail before client selection regardless of method or declaration order', async () => {
   for (const version of ['3.0.4', '3.1.2'])
     for (const firstMethod of methods)

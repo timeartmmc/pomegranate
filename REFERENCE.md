@@ -400,6 +400,10 @@ selected for output.
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length and `uniqueItems`, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                    |
 | Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, `ipv6`, and `byte`; string `password` hint; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                                                 |
 
+Empty Path Items and Path Items containing only supported metadata are accepted
+and generate no operations. Their paths, annotations, parameters, and servers
+remain validated. Unsupported HTTP methods receive a diagnostic.
+
 ### OpenAPI versions
 
 Schema syntax follows the declared OpenAPI version. OpenAPI 3.0 schemas use

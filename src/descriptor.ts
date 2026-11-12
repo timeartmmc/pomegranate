@@ -1291,8 +1291,8 @@ function normalizeOperations(
       `paths.${path}`,
     );
     annotations(pathItem, `paths.${path}`);
-    if (!methods.some((method) => Object.hasOwn(pathItem, method)))
-      fail(`paths.${path}`, 'expected at least one supported operation');
+    // OpenAPI permits empty Path Items, for example after ACL filtering.
+    // Validate their metadata even when there is no operation to generate.
     const inheritedParameters = parameterList(
       Object.hasOwn(pathItem, 'parameters') ? pathItem.parameters : [],
       context,

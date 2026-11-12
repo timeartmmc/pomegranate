@@ -12,6 +12,9 @@ prepared Content-Type. See [wire serialization](REFERENCE.md#header-serializatio
 
 ### Features
 
+Empty and metadata-only Path Items are accepted without generating operations.
+Path metadata and unsupported HTTP methods remain checked.
+
 `excludeOperations` removes exact operation IDs before contract interpretation.
 Unknown, duplicate, or ambiguous IDs fail. Exclusive local component dependencies
 are removed while retained and standalone dependencies stay validated. Project

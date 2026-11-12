@@ -57,6 +57,8 @@ export function interoperabilityFixture(openapi = '3.0.4') {
       },
     },
     paths: {
+      '/reserved/{id}': {},
+      '/metadata': { summary: 'No published operations' },
       '/legacy.xml': {
         get: {
           operationId: 'legacyXml',
