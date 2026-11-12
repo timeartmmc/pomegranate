@@ -167,6 +167,7 @@ export async function synchronizeOutputs(
   inputs: readonly string[],
   check: boolean,
   onWarning?: (warning: OutputWarning) => void,
+  excludedOperations: readonly string[] = [],
 ): Promise<OutputResult> {
   const root = await outputDirectory(output);
   filenames(Object.keys(expected));
@@ -174,7 +175,12 @@ export async function synchronizeOutputs(
     await Promise.all(inputs.map((input) => realpath(input))),
   );
   if (check) {
-    const plan = await inspectOutputs(root, expected, protectedInputs);
+    const plan = await inspectOutputs(
+      root,
+      expected,
+      protectedInputs,
+      excludedOperations,
+    );
     for (const warning of plan.warnings) onWarning?.(warning);
     const changes = [...plan.conflicts, ...plan.changes];
     return {
@@ -213,7 +219,12 @@ export async function synchronizeOutputs(
     });
     lock.ready = true;
     await safeDirectory(root);
-    const plan = await inspectOutputs(root, expected, protectedInputs);
+    const plan = await inspectOutputs(
+      root,
+      expected,
+      protectedInputs,
+      excludedOperations,
+    );
     if (plan.conflicts.length)
       fail(
         root,

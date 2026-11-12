@@ -1,4 +1,5 @@
 import { fail, ownRecord } from './diagnostics.js';
+import { openApiMethods } from './operations.js';
 
 type Node =
   | 'document'
@@ -58,13 +59,9 @@ const children: Readonly<Record<Node, Fields>> = {
     securitySchemes: 'map:securityScheme',
   },
   pathItem: {
-    get: 'operation',
-    post: 'operation',
-    put: 'operation',
-    patch: 'operation',
-    delete: 'operation',
-    head: 'operation',
-    options: 'operation',
+    ...Object.fromEntries(
+      openApiMethods.map((method) => [method, 'operation' as const]),
+    ),
     parameters: 'list:parameter',
     servers: 'list:server',
   },
@@ -75,16 +72,16 @@ const children: Readonly<Record<Node, Fields>> = {
     servers: 'list:server',
     externalDocs: 'annotation',
   },
-  parameter: { schema: 'schema', examples: 'map:example' },
+  parameter: { schema: 'schema', examples: 'map:example', content: 'content' },
   requestBody: { content: 'content' },
   media: {
     schema: 'schema',
     examples: 'map:example',
     encoding: 'map:encoding',
   },
-  encoding: {},
+  encoding: { headers: 'map:header' },
   response: { content: 'content', headers: 'map:header', links: 'map:link' },
-  header: { schema: 'schema', examples: 'map:example' },
+  header: { schema: 'schema', examples: 'map:example', content: 'content' },
   schema: {
     properties: 'map:schema',
     items: 'schema',

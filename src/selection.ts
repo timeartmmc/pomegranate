@@ -31,6 +31,7 @@ export type CompileOptions = Readonly<{
     >
   >;
   ignoreExtensions?: readonly string[];
+  excludeOperations?: readonly string[];
   surfaces?: Readonly<Record<string, readonly string[]>>;
   executionClients?: readonly string[];
   transportHeaders?: readonly string[];
@@ -48,6 +49,7 @@ export const selectionKeys = [
   'recursiveWorkLimit',
   'formats',
   'ignoreExtensions',
+  'excludeOperations',
   'surfaces',
   'executionClients',
   'transportHeaders',
@@ -100,7 +102,9 @@ export function parseIgnoredExtensions(
   return names;
 }
 
-function standaloneSelections(input: unknown = {}): readonly RootSelection[] {
+export function standaloneSelections(
+  input: unknown = {},
+): readonly RootSelection[] {
   const selections = record(input, 'standalone');
   const names = Object.keys(selections);
   if (names.length === 0) return [];

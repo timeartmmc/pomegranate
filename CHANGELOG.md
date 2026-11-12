@@ -12,6 +12,11 @@ prepared Content-Type. See [wire serialization](REFERENCE.md#header-serializatio
 
 ### Features
 
+`excludeOperations` removes exact operation IDs before contract interpretation.
+Unknown, duplicate, or ambiguous IDs fail. Exclusive local component dependencies
+are removed while retained and standalone dependencies stay validated. Project
+manifests record exclusions, and drift checks remain read-only.
+
 `oneOf` and `anyOf` support shared object fields and required lists beside the
 alternatives, using the existing `allOf` rules. Branch constraints, directional
 fields, property counts, closure, and union matching remain enforced.

@@ -18,6 +18,7 @@ const labels = {
   links: 'link',
 } as const;
 type Section = keyof typeof labels;
+export const componentSections = Object.keys(labels) as readonly Section[];
 type ReusableSection =
   | 'parameters'
   | 'responses'

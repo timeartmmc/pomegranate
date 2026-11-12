@@ -26,8 +26,13 @@ domain behavior in application adapters.
 
 ## One contract interpretation
 
-Validate the complete document before selecting output, including unused
-components and unselected operations. Normalize OpenAPI 3.0 and 3.1 into one
+Apply explicit operation exclusions to a copy before contract interpretation.
+Remove their exclusive local component dependencies while preserving definitions
+needed by retained operations, standalone roots, or otherwise-unused components.
+Record exclusions in the output manifest; unknown or ambiguous IDs fail.
+
+Validate the remaining document before selecting output, including unused
+components and unselected retained operations. Normalize OpenAPI 3.0 and 3.1 into one
 compiler model used by types, validators, builders and protocol helpers. Reject
 unsupported declarations with a useful error; never silently drop an operation
 or response.
@@ -112,7 +117,8 @@ formatter settings. Identical supported inputs and compiler versions must
 produce identical bytes. Use the pinned formatter, format modules sequentially,
 and render and validate the complete output set before writing.
 
-The manifest records generated files and their hashes. Warn before replacing
+The manifest records generated files, their hashes, and explicit operation
+exclusions. Warn before replacing
 edited generated files. Delete a stale file only when its recorded hash matches;
 preserve unrelated or uncertain files. Without a valid manifest, the exact POM
 banner can establish ownership for replacement, but never authorize stale

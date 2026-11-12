@@ -6,6 +6,7 @@ import { buildDescriptor, openApiDocument } from './descriptor.js';
 import { fail, keys, record, text } from './diagnostics.js';
 import { render } from './emit.js';
 import { ignoreExtensions } from './extensions.js';
+import { excludeOperations } from './exclusions.js';
 import { parseJson } from './json.js';
 import { synchronizeOutputs } from './outputs.js';
 import type { OutputResult, OutputWarning } from './outputs.js';
@@ -79,13 +80,19 @@ function renderSelection(
 function describeInput(
   document: unknown,
   selection: Record<string, unknown>,
-): Descriptor {
-  return buildDescriptor(
+): { descriptor: Descriptor; excluded: readonly string[] } {
+  const filtered = excludeOperations(
+    openApiDocument(document),
+    selection.excludeOperations,
+    selection.standalone,
+  );
+  const descriptor = buildDescriptor(
     ignoreExtensions(
-      openApiDocument(document),
+      filtered.document,
       parseIgnoredExtensions(selection.ignoreExtensions),
     ),
     {
+      excludedOperations: filtered.excluded,
       ...(Object.hasOwn(selection, 'surfaces')
         ? { surfaces: selection.surfaces }
         : {}),
@@ -94,6 +101,7 @@ function describeInput(
         : {}),
     },
   );
+  return { descriptor, excluded: filtered.excluded };
 }
 
 export async function compile(
@@ -102,7 +110,7 @@ export async function compile(
 ): Promise<Readonly<Record<string, string>>> {
   const selection = record(options, 'compile options');
   keys(selection, selectionKeys, 'compile options');
-  const descriptor = describeInput(document, selection);
+  const { descriptor } = describeInput(document, selection);
   return renderSelection(descriptor, selection);
 }
 
@@ -139,7 +147,7 @@ export async function runProject(
     text(config.output, `${configPath}.output`),
   );
   const document = await readOpenApi(input);
-  const descriptor = describeInput(document, config);
+  const { descriptor, excluded } = describeInput(document, config);
   const files = await renderSelection(descriptor, config);
   return synchronizeOutputs(
     output,
@@ -147,5 +155,6 @@ export async function runProject(
     [configPath, input],
     check,
     onWarning,
+    excluded,
   );
 }

@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { generatedBanner } from './code.js';
-import { ContractError, fail, keys, record } from './diagnostics.js';
+import {
+  ContractError,
+  fail,
+  keys,
+  record,
+  stringArray,
+} from './diagnostics.js';
 
 export const inventoryName = '.pom-manifest.json';
 export const lockName = '.pom-lock';
@@ -119,9 +125,25 @@ function inventory(source: string): Record<string, string> {
     fail(inventoryName, 'invalid JSON');
   }
   const value = record(parsed, inventoryName);
-  keys(value, ['version', 'generator', 'files'], inventoryName);
+  keys(
+    value,
+    ['version', 'generator', 'files', 'excludedOperations'],
+    inventoryName,
+  );
   if (value.version !== 1 || value.generator !== generator)
     fail(inventoryName, 'unsupported ownership inventory');
+  if (Object.hasOwn(value, 'excludedOperations')) {
+    const excluded = value.excludedOperations;
+    if (
+      !stringArray(excluded) ||
+      excluded.some((id) => id.length === 0) ||
+      new Set(excluded).size !== excluded.length
+    )
+      fail(
+        `${inventoryName}.excludedOperations`,
+        'expected unique nonempty operation IDs',
+      );
+  }
   const files = record(value.files, `${inventoryName}.files`);
   filenames(Object.keys(files));
   const entries = Object.entries(files).map(
@@ -137,12 +159,18 @@ function inventory(source: string): Record<string, string> {
   return Object.fromEntries(entries);
 }
 
-function manifest(hashes: Readonly<Record<string, string>>): string {
+function manifest(
+  hashes: Readonly<Record<string, string>>,
+  excludedOperations: readonly string[],
+): string {
   return (
     JSON.stringify(
       {
         version: 1,
         generator,
+        ...(excludedOperations.length > 0
+          ? { excludedOperations: [...excludedOperations].sort() }
+          : {}),
         files: Object.fromEntries(
           Object.keys(hashes)
             .sort()
@@ -173,6 +201,7 @@ export async function inspectOutputs(
   root: string,
   expected: Files,
   inputs: ReadonlySet<string>,
+  excludedOperations: readonly string[] = [],
 ): Promise<OutputPlan> {
   const previous = await snapshot(root, inventoryName, inputs);
   let owned: Record<string, string> = {};
@@ -272,7 +301,7 @@ export async function inspectOutputs(
       }
     }
   }
-  const nextManifest = manifest(hashes);
+  const nextManifest = manifest(hashes, excludedOperations);
   if (previous?.content !== nextManifest)
     changes.push(`changed: ${inventoryName}`);
   return { snapshots, conflicts, changes, removals, warnings, nextManifest };

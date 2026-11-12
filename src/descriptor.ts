@@ -57,6 +57,10 @@ import { createIntersectionNormalizer } from './intersections.js';
 import { linkComponents, responseLinks } from './links.js';
 import { flatParameterShape } from './parameter-shape.js';
 import {
+  operationIdentifier,
+  supportedMethods as methods,
+} from './operations.js';
+import {
   deprecatedAnnotation,
   exampleAnnotations,
   exampleComponents,
@@ -65,16 +69,6 @@ import {
   externalDocsAnnotation,
   serverList,
 } from './annotations.js';
-
-const methods = [
-  'get',
-  'post',
-  'put',
-  'patch',
-  'delete',
-  'head',
-  'options',
-] as const;
 
 type Validation = ReturnType<typeof schemaValidation>;
 type ResponseDefinition = Omit<ContractResponse, 'status'>;
@@ -1102,15 +1096,11 @@ function normalizeOperation(
     ? normalizeSecurity(value.security, securitySchemes, `${location}.security`)
     : inheritedSecurity;
   const id = safeKey(
-    Object.hasOwn(value, 'operationId')
-      ? text(value.operationId, `${location}.operationId`)
-      : `${method.toUpperCase()} ${path}`,
+    operationIdentifier(value, method, path),
     `${location}.operationId`,
   );
   // Operation IDs are public, case-sensitive strings, not TypeScript symbols.
   // The emitter encodes private names without changing keys or cache identity.
-  // A missing ID uses the exact method and path: slugging or suffix counters
-  // would merge distinct routes or change identities when another route is added.
   const metadata = normalizeOperationPolicy(
     Object.hasOwn(value, 'x-pom') ? value['x-pom'] : {},
     vocabulary,
@@ -1286,6 +1276,7 @@ function normalizeOperations(
   input: unknown,
   operationContext: OperationContext,
   configured: ReadonlyMap<string, readonly string[]> | undefined,
+  excluded: ReadonlySet<string>,
 ): Operation[] {
   const { schemas: context, examples, parameterComponents } = operationContext;
   const paths = record(input, 'paths');
@@ -1348,7 +1339,7 @@ function normalizeOperations(
     // bad config entry first, then require complete coverage of the known IDs.
     for (const [surface, configuredIds] of configured) {
       for (const [index, id] of configuredIds.entries()) {
-        if (!ids.has(id))
+        if (!ids.has(id) && !excluded.has(id))
           fail(
             `surfaces.${surface}[${index}]`,
             `unknown operation identifier ${JSON.stringify(id)}`,
@@ -1372,7 +1363,11 @@ function normalizeOperations(
 function describeDocument(
   source: Record<string, unknown>,
   openApi30: boolean,
-  membershipInput: { surfaces?: unknown; formats?: unknown } = {},
+  membershipInput: {
+    surfaces?: unknown;
+    formats?: unknown;
+    excludedOperations?: readonly string[];
+  } = {},
 ): Descriptor {
   const rawMembership = ownRecord(membershipInput);
   const value = openApi30
@@ -1496,13 +1491,22 @@ function describeDocument(
     policy: vocabulary,
     schemas: context.projection.schemas,
     schemaOrder,
-    operations: normalizeOperations(value.paths, operationContext, configured),
+    operations: normalizeOperations(
+      value.paths,
+      operationContext,
+      configured,
+      new Set(rawMembership.excludedOperations),
+    ),
   };
 }
 
 export function buildDescriptor(
   input: unknown,
-  membershipInput: { surfaces?: unknown; formats?: unknown } = {},
+  membershipInput: {
+    surfaces?: unknown;
+    formats?: unknown;
+    excludedOperations?: readonly string[];
+  } = {},
 ): Descriptor {
   const source = openApiDocument(input);
   const openApi30 =

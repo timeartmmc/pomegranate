@@ -39,6 +39,8 @@ export function interoperabilityFixture(openapi = '3.0.4') {
     },
     Value: { type: 'object', required: ['id'], anyOf: [ref('Animal')] },
     Single: { type: 'object', ...shared, oneOf: [ref('Cat')] },
+    Legacy: { nullable: true, allOf: [ref('LegacyValue')] },
+    LegacyValue: { type: 'string', minimum: 0 },
   };
   const content = { 'text/json; charset=UTF-8': { schema: ref('Value') } };
   return {
@@ -55,6 +57,18 @@ export function interoperabilityFixture(openapi = '3.0.4') {
       },
     },
     paths: {
+      '/legacy.xml': {
+        get: {
+          operationId: 'legacyXml',
+          'x-legacy-export': true,
+          responses: {
+            200: {
+              description: 'Legacy',
+              content: { 'application/xml': { schema: ref('Legacy') } },
+            },
+          },
+        },
+      },
       '/records/{id}.json': {
         delete: {
           operationId: 'remove',
@@ -100,6 +114,7 @@ export function interoperabilityFixture(openapi = '3.0.4') {
 
 export const interoperabilitySelection = {
   clients: ['consumer'],
+  excludeOperations: ['legacyXml'],
   surfaces: { consumer: ['remove', 'text0', 'text1', 'text2'] },
   formats: {
     uint32: { type: 'integer', minimum: 0, maximum: 4_294_967_295 },
@@ -112,6 +127,7 @@ export function verifyInteroperability(
   client: MediaClient,
   standalone: StandaloneModule,
 ): void {
+  assert.equal(Object.hasOwn(client.operations, 'legacyXml'), false);
   const operation = present(client.operations.remove);
   const body = {
     kind: 'Cat',
