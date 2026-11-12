@@ -249,9 +249,7 @@ function walkDocument(
         ? `${frame.location}[${key}]`
         : `${frame.location}.${key}`;
       if (
-        names !== undefined &&
         frame.shape.keywords &&
-        descriptor.enumerable &&
         key.startsWith('x-') &&
         // A concrete media type can itself start with x-. The slash makes it
         // a content declaration rather than an extension keyword.
@@ -259,6 +257,9 @@ function walkDocument(
         key !== 'x-pom' &&
         key !== 'x-pom-policy'
       ) {
+        // Extension payloads are opaque to dependency and dialect walks.
+        // Filtering still owns whether an extension may be removed.
+        if (names === undefined || !descriptor.enumerable) continue;
         // This flag declares path semantics, not documentation. Keep it visible
         // as an unsupported contract until multi-segment handling is defined.
         if (key === 'x-multi-segment')

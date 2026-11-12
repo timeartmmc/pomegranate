@@ -12,6 +12,11 @@ prepared Content-Type. See [wire serialization](REFERENCE.md#header-serializatio
 
 ### Features
 
+`pruneUnusedComponents: true` removes unreachable components before validation,
+independently or alongside operation exclusions. Retained operations, global
+security, and standalone roots keep their dependencies and validation. The
+default remains strict; manifests record pruned component references.
+
 Empty and metadata-only Path Items are accepted without generating operations.
 Path metadata and unsupported HTTP methods remain checked.
 

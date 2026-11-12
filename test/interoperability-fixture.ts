@@ -41,6 +41,7 @@ export function interoperabilityFixture(openapi = '3.0.4') {
     Single: { type: 'object', ...shared, oneOf: [ref('Cat')] },
     Legacy: { nullable: true, allOf: [ref('LegacyValue')] },
     LegacyValue: { type: 'string', minimum: 0 },
+    UnusedAlias: ref('LegacyValue'),
   };
   const content = { 'text/json; charset=UTF-8': { schema: ref('Value') } };
   return {
@@ -117,6 +118,7 @@ export function interoperabilityFixture(openapi = '3.0.4') {
 export const interoperabilitySelection = {
   clients: ['consumer'],
   excludeOperations: ['legacyXml'],
+  pruneUnusedComponents: true,
   surfaces: { consumer: ['remove', 'text0', 'text1', 'text2'] },
   formats: {
     uint32: { type: 'integer', minimum: 0, maximum: 4_294_967_295 },

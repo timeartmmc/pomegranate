@@ -21,8 +21,13 @@ import {
   outputDirectory,
   safeDirectory,
 } from './output-state.js';
-import type { Files, OutputPlan, OutputWarning } from './output-state.js';
-export type { OutputWarning } from './output-state.js';
+import type {
+  Files,
+  OutputMetadata,
+  OutputPlan,
+  OutputWarning,
+} from './output-state.js';
+export type { OutputMetadata, OutputWarning } from './output-state.js';
 
 type Lock = {
   path: string;
@@ -167,7 +172,7 @@ export async function synchronizeOutputs(
   inputs: readonly string[],
   check: boolean,
   onWarning?: (warning: OutputWarning) => void,
-  excludedOperations: readonly string[] = [],
+  metadata: OutputMetadata = { excludedOperations: [], prunedComponents: [] },
 ): Promise<OutputResult> {
   const root = await outputDirectory(output);
   filenames(Object.keys(expected));
@@ -179,7 +184,7 @@ export async function synchronizeOutputs(
       root,
       expected,
       protectedInputs,
-      excludedOperations,
+      metadata,
     );
     for (const warning of plan.warnings) onWarning?.(warning);
     const changes = [...plan.conflicts, ...plan.changes];
@@ -223,7 +228,7 @@ export async function synchronizeOutputs(
       root,
       expected,
       protectedInputs,
-      excludedOperations,
+      metadata,
     );
     if (plan.conflicts.length)
       fail(

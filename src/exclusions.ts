@@ -47,13 +47,20 @@ export function excludeOperations(
   document: Record<string, unknown>,
   input: unknown = [],
   standalone: unknown = {},
-): { document: Record<string, unknown>; excluded: readonly string[] } {
+  pruneUnused: unknown = false,
+): {
+  document: Record<string, unknown>;
+  excluded: readonly string[];
+  pruned: readonly string[];
+} {
+  if (typeof pruneUnused !== 'boolean')
+    fail('pruneUnusedComponents', 'expected a boolean');
   let remaining = 1_000_000;
   const charge = (amount: number): void => {
     if ((remaining -= amount) < 0)
       fail(
-        'excludeOperations',
-        'exclusion processing exceeds the supported limit of 1000000 work units; reduce or split the input contract',
+        pruneUnused ? 'pruneUnusedComponents' : 'excludeOperations',
+        `${pruneUnused ? 'component pruning' : 'exclusion processing'} exceeds the supported limit of 1000000 work units; reduce or split the input contract`,
       );
   };
   if (Array.isArray(input)) charge(input.length);
@@ -67,7 +74,8 @@ export function excludeOperations(
       fail(location, `duplicate operation identifier ${JSON.stringify(id)}`);
     excluded.add(id);
   }
-  if (excluded.size === 0) return { document, excluded: [] };
+  if (excluded.size === 0 && !pruneUnused)
+    return { document, excluded: [], pruned: [] };
   const paths = record(document.paths, 'paths');
   const operations = new Map<string, { path: string; method: string }>();
   for (const path of Object.keys(paths)) {
@@ -199,24 +207,35 @@ export function excludeOperations(
     }
     return visited;
   };
-  const removed = closure(
-    dependencies({ paths: Object.fromEntries(removedPaths) }),
-  );
   const roots = dependencies(copy(filtered, ['components']));
   for (const root of standaloneSelections(standalone))
     if (declarations.has(root.schema)) roots.add(root.schema);
-  // Otherwise-unused components keep their existing validation guarantee,
-  // including references back into the excluded subgraph.
-  for (const reference of declarations.keys())
-    if (!removed.has(reference)) roots.add(reference);
+  // Strict mode keeps otherwise-unused declarations and their dependencies.
+  // Opt-in pruning roots only in retained document uses and standalone exports;
+  // client selection must never hide dependencies of an unselected operation.
+  let candidates: Iterable<string> = declarations.keys();
+  if (!pruneUnused) {
+    const removed = closure(
+      dependencies({ paths: Object.fromEntries(removedPaths) }),
+    );
+    for (const reference of declarations.keys())
+      if (!removed.has(reference)) roots.add(reference);
+    candidates = removed;
+  }
   const protectedComponents = closure(roots);
   const pruned = new Map<string, string[]>();
-  for (const reference of removed) {
+  const prunedReferences: string[] = [];
+  for (const reference of candidates) {
+    if (pruneUnused) charge(1);
     if (protectedComponents.has(reference)) continue;
     const { section, name } = declarations.get(reference)!;
     const names = pruned.get(section) ?? [];
     names.push(name);
     pruned.set(section, names);
+    if (pruneUnused)
+      prunedReferences.push(
+        `#/components/${section}/${name.replace(/~/g, '~0').replace(/\//g, '~1')}`,
+      );
   }
   if (pruned.size > 0) {
     const replacements = Object.fromEntries(
@@ -229,5 +248,9 @@ export function excludeOperations(
       components: copy(components, [], replacements),
     });
   }
-  return { document: filtered, excluded: [...excluded].sort() };
+  return {
+    document: filtered,
+    excluded: [...excluded].sort(),
+    pruned: prunedReferences.sort(),
+  };
 }

@@ -9,7 +9,7 @@ import { ignoreExtensions } from './extensions.js';
 import { excludeOperations } from './exclusions.js';
 import { parseJson } from './json.js';
 import { synchronizeOutputs } from './outputs.js';
-import type { OutputResult, OutputWarning } from './outputs.js';
+import type { OutputMetadata, OutputResult, OutputWarning } from './outputs.js';
 import { selectClients, selectStandalone } from './projection.js';
 import type { Descriptor } from './model.js';
 import {
@@ -80,11 +80,12 @@ function renderSelection(
 function describeInput(
   document: unknown,
   selection: Record<string, unknown>,
-): { descriptor: Descriptor; excluded: readonly string[] } {
+): { descriptor: Descriptor; metadata: OutputMetadata } {
   const filtered = excludeOperations(
     openApiDocument(document),
     selection.excludeOperations,
     selection.standalone,
+    selection.pruneUnusedComponents,
   );
   const descriptor = buildDescriptor(
     ignoreExtensions(
@@ -101,7 +102,13 @@ function describeInput(
         : {}),
     },
   );
-  return { descriptor, excluded: filtered.excluded };
+  return {
+    descriptor,
+    metadata: {
+      excludedOperations: filtered.excluded,
+      prunedComponents: filtered.pruned,
+    },
+  };
 }
 
 export async function compile(
@@ -147,7 +154,7 @@ export async function runProject(
     text(config.output, `${configPath}.output`),
   );
   const document = await readOpenApi(input);
-  const { descriptor, excluded } = describeInput(document, config);
+  const { descriptor, metadata } = describeInput(document, config);
   const files = await renderSelection(descriptor, config);
   return synchronizeOutputs(
     output,
@@ -155,6 +162,6 @@ export async function runProject(
     [configPath, input],
     check,
     onWarning,
-    excluded,
+    metadata,
   );
 }

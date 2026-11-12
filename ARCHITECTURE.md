@@ -29,9 +29,13 @@ domain behavior in application adapters.
 Apply explicit operation exclusions to a copy before contract interpretation.
 Remove their exclusive local component dependencies while preserving definitions
 needed by retained operations, standalone roots, or otherwise-unused components.
+Opt-in component pruning instead removes every component unreachable from the
+retained document and standalone roots. Preserve security and discriminator
+dependencies; do not use client selection to decide which operations need
+validation. Record pruned component references in the output manifest.
 Record exclusions in the output manifest; unknown or ambiguous IDs fail.
 
-Validate the remaining document before selecting output, including unused
+Validate the remaining document before selecting output, including retained unused
 components and unselected retained operations. Normalize OpenAPI 3.0 and 3.1 into one
 compiler model used by types, validators, builders and protocol helpers. Reject
 unsupported declarations with a useful error; never silently drop an operation

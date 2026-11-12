@@ -16,6 +16,10 @@ export const lockName = '.pom-lock';
 // Registry renames must not change which output inventory POM owns.
 const generator = '@pomegranate/compiler';
 export type Files = Readonly<Record<string, string>>;
+export type OutputMetadata = Readonly<{
+  excludedOperations: readonly string[];
+  prunedComponents: readonly string[];
+}>;
 export type Existing = { content: string; hash: string } | undefined;
 export type OutputPlan = {
   snapshots: Map<string, Existing>;
@@ -127,22 +131,23 @@ function inventory(source: string): Record<string, string> {
   const value = record(parsed, inventoryName);
   keys(
     value,
-    ['version', 'generator', 'files', 'excludedOperations'],
+    ['version', 'generator', 'files', 'excludedOperations', 'prunedComponents'],
     inventoryName,
   );
   if (value.version !== 1 || value.generator !== generator)
     fail(inventoryName, 'unsupported ownership inventory');
-  if (Object.hasOwn(value, 'excludedOperations')) {
-    const excluded = value.excludedOperations;
+  for (const [key, label] of [
+    ['excludedOperations', 'operation IDs'],
+    ['prunedComponents', 'component references'],
+  ] as const) {
+    if (!Object.hasOwn(value, key)) continue;
+    const entries = value[key];
     if (
-      !stringArray(excluded) ||
-      excluded.some((id) => id.length === 0) ||
-      new Set(excluded).size !== excluded.length
+      !stringArray(entries) ||
+      entries.some((entry) => entry.length === 0) ||
+      new Set(entries).size !== entries.length
     )
-      fail(
-        `${inventoryName}.excludedOperations`,
-        'expected unique nonempty operation IDs',
-      );
+      fail(`${inventoryName}.${key}`, `expected unique nonempty ${label}`);
   }
   const files = record(value.files, `${inventoryName}.files`);
   filenames(Object.keys(files));
@@ -161,15 +166,18 @@ function inventory(source: string): Record<string, string> {
 
 function manifest(
   hashes: Readonly<Record<string, string>>,
-  excludedOperations: readonly string[],
+  metadata: OutputMetadata,
 ): string {
   return (
     JSON.stringify(
       {
         version: 1,
         generator,
-        ...(excludedOperations.length > 0
-          ? { excludedOperations: [...excludedOperations].sort() }
+        ...(metadata.excludedOperations.length > 0
+          ? { excludedOperations: [...metadata.excludedOperations].sort() }
+          : {}),
+        ...(metadata.prunedComponents.length > 0
+          ? { prunedComponents: [...metadata.prunedComponents].sort() }
           : {}),
         files: Object.fromEntries(
           Object.keys(hashes)
@@ -201,7 +209,7 @@ export async function inspectOutputs(
   root: string,
   expected: Files,
   inputs: ReadonlySet<string>,
-  excludedOperations: readonly string[] = [],
+  metadata: OutputMetadata = { excludedOperations: [], prunedComponents: [] },
 ): Promise<OutputPlan> {
   const previous = await snapshot(root, inventoryName, inputs);
   let owned: Record<string, string> = {};
@@ -301,7 +309,7 @@ export async function inspectOutputs(
       }
     }
   }
-  const nextManifest = manifest(hashes, excludedOperations);
+  const nextManifest = manifest(hashes, metadata);
   if (previous?.content !== nextManifest)
     changes.push(`changed: ${inventoryName}`);
   return { snapshots, conflicts, changes, removals, warnings, nextManifest };

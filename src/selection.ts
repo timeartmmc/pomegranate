@@ -32,6 +32,7 @@ export type CompileOptions = Readonly<{
   >;
   ignoreExtensions?: readonly string[];
   excludeOperations?: readonly string[];
+  pruneUnusedComponents?: boolean;
   surfaces?: Readonly<Record<string, readonly string[]>>;
   executionClients?: readonly string[];
   transportHeaders?: readonly string[];
@@ -50,6 +51,7 @@ export const selectionKeys = [
   'formats',
   'ignoreExtensions',
   'excludeOperations',
+  'pruneUnusedComponents',
   'surfaces',
   'executionClients',
   'transportHeaders',

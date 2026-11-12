@@ -29,20 +29,21 @@ sequences fail before outputs change.
 
 These selection keys are shared with programmatic compilation:
 
-| Key                  | Purpose                                                                                                                                         |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `surfaces`           | Optional complete map of surface names to operation IDs for contracts without inline membership; see [surfaces](#client-surfaces-and-security). |
-| `formats`            | Optional named string-pattern validators; see [registered formats](#registered-formats).                                                        |
-| `clients`            | Required array of declared surfaces; may be empty when `standalone` selects at least one root.                                                  |
-| `ignoreExtensions`   | Exact unrelated `x-…` annotation keywords to ignore; POM metadata remains validated.                                                            |
-| `excludeOperations`  | Exact operation IDs to remove before contract interpretation; unknown or ambiguous IDs fail.                                                    |
-| `standalone`         | Named component roots with `schema` and `usage: "request"` or `"response"`; see [standalone validators](#standalone-validators).                |
-| `recursiveWorkLimit` | Positive safe integer setting the generated recursive traversal visit cap; defaults to 100,000. See [recursive schemas](#recursive-schemas).    |
-| `transportHeaders`   | Declared request headers supplied by the transport; see [requests](#build-and-validate-a-request).                                              |
-| `targets`            | Map selected clients to `"browser"` or `"native"`; required for [multipart](#multipart-requests).                                               |
-| `executionClients`   | Surfaces that get [executable clients](EXECUTION.md#selection-and-calls).                                                                       |
-| `queries`            | Operation selections for [ordinary queries](QUERIES.md#ordinary-queries).                                                                       |
-| `infiniteQueries`    | Operation bindings for [cursor](QUERIES.md#cursor-pagination) or [offset](QUERIES.md#numeric-offsets) queries.                                  |
+| Key                     | Purpose                                                                                                                                         |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `surfaces`              | Optional complete map of surface names to operation IDs for contracts without inline membership; see [surfaces](#client-surfaces-and-security). |
+| `formats`               | Optional named string-pattern validators; see [registered formats](#registered-formats).                                                        |
+| `clients`               | Required array of declared surfaces; may be empty when `standalone` selects at least one root.                                                  |
+| `ignoreExtensions`      | Exact unrelated `x-…` annotation keywords to ignore; POM metadata remains validated.                                                            |
+| `excludeOperations`     | Exact operation IDs to remove before contract interpretation; unknown or ambiguous IDs fail.                                                    |
+| `pruneUnusedComponents` | Boolean, default `false`; remove unreferenced components before validation and record removals in the manifest.                                 |
+| `standalone`            | Named component roots with `schema` and `usage: "request"` or `"response"`; see [standalone validators](#standalone-validators).                |
+| `recursiveWorkLimit`    | Positive safe integer setting the generated recursive traversal visit cap; defaults to 100,000. See [recursive schemas](#recursive-schemas).    |
+| `transportHeaders`      | Declared request headers supplied by the transport; see [requests](#build-and-validate-a-request).                                              |
+| `targets`               | Map selected clients to `"browser"` or `"native"`; required for [multipart](#multipart-requests).                                               |
+| `executionClients`      | Surfaces that get [executable clients](EXECUTION.md#selection-and-calls).                                                                       |
+| `queries`               | Operation selections for [ordinary queries](QUERIES.md#ordinary-queries).                                                                       |
+| `infiniteQueries`       | Operation bindings for [cursor](QUERIES.md#cursor-pagination) or [offset](QUERIES.md#numeric-offsets) queries.                                  |
 
 Unknown configuration keys fail validation. Optional output selections are
 disabled when omitted. `CompileOptions` accepts these keys without `version`,
@@ -77,14 +78,15 @@ Entries are exact, case-sensitive operation IDs. An operation without an explici
 ID uses `METHOD /path`, including the original placeholder names. Unknown IDs,
 duplicate entries, and ambiguous operation IDs fail before output changes.
 Excluded operations remain excluded even if a later compiler version supports
-them. An omitted or empty list preserves complete-document validation.
+them. An omitted or empty list removes no operations.
 
 Filtering uses a detached copy and keeps other methods and inherited settings on
 the same path. Local component dependencies reached only from excluded operations
 are removed transitively. Definitions needed by retained operations, standalone
-roots, or otherwise-unused components remain validated. Example/default data
-does not create component dependencies. Global document/configuration checks and
-validation of unrelated unused components still apply.
+roots, or otherwise-unused components remain validated by default. Example/default data
+does not create component dependencies. Global document and configuration checks
+always apply. Unrelated unused components remain validated unless component
+pruning is explicitly enabled below.
 
 Configured `surfaces` may keep excluded IDs; retained IDs still need valid
 membership. Explicit query selections and transport-header settings must remain
@@ -96,6 +98,40 @@ Project generation records a sorted `excludedOperations` list in
 drift checks. The programmatic `compile()` return value remains the generated
 file map. Exclusion preprocessing is bounded to 1,000,000 work units, including
 identities, traversed declarations and dependency edges.
+
+### Unused components
+
+Set `pruneUnusedComponents: true` in `pom.json` or `CompileOptions` to remove
+unreachable entries from supported component sections before extension filtering,
+dialect lowering, and contract validation. The default is `false`. Pruning works
+with or without `excludeOperations`:
+
+```json
+{
+  "excludeOperations": ["downloadReport"],
+  "pruneUnusedComponents": true
+}
+```
+
+Roots include every retained operation, including unselected surfaces, other
+document references, global security requirements, and configured standalone
+schemas. Their complete transitive dependencies remain validated, including
+security-scheme aliases and discriminator mappings. Example/default data does
+not establish dependencies. A component referenced only by other unreachable
+components is also removed, including unused reference cycles.
+
+Pruning does not remove operations. Unsupported operations, document fields,
+component sections, and malformed component containers still receive diagnostics.
+Unsupported or invalid entries that are removed receive no semantic validation;
+their errors are reported if they become reachable on a later run. Validation
+rules below apply to the retained document. Input files and caller-owned objects
+are preserved.
+
+Project generation records removed entries in a sorted `prunedComponents` array
+of JSON Pointer references in `.pom-manifest.json`, omitted when empty. Changes
+to this inventory participate in read-only drift checks even when generated
+modules are identical. The same 1,000,000-work-unit preprocessing limit applies
+when pruning is enabled.
 
 ### Registered formats
 
