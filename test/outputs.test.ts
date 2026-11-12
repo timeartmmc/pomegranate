@@ -111,6 +111,30 @@ void test('modified owned targets warn before replacement and checks remain read
   );
 });
 
+void test('modified owned bytes matching the rendered output only update ownership', async (t) => {
+  const root = await temporary(t);
+  const target = join(root, 'index.ts');
+  await synchronizeOutputs(root, { 'index.ts': 'original' }, [], false);
+  await writeFile(target, 'updated');
+  const before = await stat(target);
+  const files = { 'index.ts': 'updated' };
+  const checked = await synchronizeOutputs(root, files, [], true);
+  assert.deepEqual(checked.warnings, [
+    {
+      code: 'modified-output',
+      path: target,
+      message:
+        'updating the recorded hash of a modified owned output that matches the rendered output',
+    },
+  ]);
+  const generated = await synchronizeOutputs(root, files, [], false);
+  assert.deepEqual(generated.warnings, checked.warnings);
+  const after = await stat(target);
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.mtimeMs, before.mtimeMs);
+  assert.equal((await synchronizeOutputs(root, files, [], true)).clean, true);
+});
+
 void test('only unchanged inventoried stale files are removed', async (t) => {
   const root = await temporary(t);
   await synchronizeOutputs(

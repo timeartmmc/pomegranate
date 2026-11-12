@@ -117,7 +117,7 @@ async function publish(
   await ownLock(lock);
   await unchanged(root, plan);
   for (const [name, content] of Object.entries(files)) {
-    if (plan.snapshots.get(name)?.content === content) continue;
+    if (plan.snapshots.get(name)?.hash === hash(content)) continue;
     await ownLock(lock);
     if (
       (await existingFile(join(root, name)))?.hash !==

@@ -339,6 +339,47 @@ void test('CLI generation reports modified target warnings and succeeds without 
   assert.equal(await readFile(target, 'utf8'), source);
 });
 
+void test('generation repairs byte drift that decodes to the expected source text', async (t) => {
+  const { root, config } = await project(t);
+  const document = fixture();
+  Object.assign(document.components.schemas.PreparationInput.properties.label, {
+    const: '\ufffd',
+  });
+  await writeFile(join(root, 'openapi.json'), JSON.stringify(document));
+  await runProject(config);
+  const files = await compile(document, { clients: ['consumer', 'staff'] });
+  const literal = Object.entries(files).find(([, source]) =>
+    source.includes('\ufffd'),
+  );
+  assert.ok(literal);
+  const [name, source] = literal;
+  const target = join(root, 'generated', name);
+  const expected = Buffer.from(source);
+  const offset = expected.indexOf(Buffer.from('\ufffd'));
+  const damaged = Buffer.concat([
+    expected.subarray(0, offset),
+    Buffer.from([0xff]),
+    expected.subarray(offset + 3),
+  ]);
+  assert.equal(damaged.toString('utf8'), source);
+  await writeFile(target, damaged);
+  const checked = await runProject(config, { check: true });
+  assert.equal(checked.clean, false);
+  assert.ok(checked.changes.includes(`changed: ${name}`));
+  assert.deepEqual(checked.warnings, [
+    {
+      code: 'modified-output',
+      path: target,
+      message: 'overwriting modified owned output',
+    },
+  ]);
+  assert.deepEqual(await readFile(target), damaged);
+  const generated = await runProject(config);
+  assert.deepEqual(generated.warnings, checked.warnings);
+  assert.deepEqual(await readFile(target), expected);
+  assert.equal((await runProject(config, { check: true })).clean, true);
+});
+
 void test('contract and selection failures preserve outputs and inputs during generate and check', async (t) => {
   const { root, config } = await project(t);
   await runProject(config);

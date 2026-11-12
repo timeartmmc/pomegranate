@@ -239,7 +239,7 @@ export async function inspectOutputs(
           warn(
             'recovered-output',
             name,
-            current.content === expected[name]
+            current.hash === hashes[name]
               ? 'recovering output ownership from the exact POM banner'
               : 'overwriting output recovered from the exact POM banner; its prior hash is unavailable',
           );
@@ -248,12 +248,12 @@ export async function inspectOutputs(
         warn(
           'modified-output',
           name,
-          current.content === expected[name]
+          current.hash === hashes[name]
             ? 'updating the recorded hash of a modified owned output that matches the rendered output'
             : 'overwriting modified owned output',
         );
       }
-      if (current?.content !== expected[name])
+      if (current?.hash !== hashes[name])
         changes.push(`${current ? 'changed' : 'missing'}: ${name}`);
     } else if (current) {
       changes.push(`stale: ${name}`);
