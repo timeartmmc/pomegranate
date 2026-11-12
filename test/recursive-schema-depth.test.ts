@@ -9,6 +9,7 @@ import {
 import type { StandaloneModule } from './runtime-types.ts';
 import { object, ref } from './schema-helpers.ts';
 import type { Schema } from './schema-helpers.ts';
+import { record } from './assertions.ts';
 
 function document(schemas: Record<string, Schema>) {
   return {
@@ -122,6 +123,40 @@ void test('wide productive recursive rings and stars compile and validate shallo
     assert.notEqual(output, input);
     assert.equal(schema.safeParse({ value: 'invalid' }).success, false);
   }
+});
+
+void test('productive recursive groups support long same-value union paths', async (t) => {
+  const count = 192;
+  const schemas: Record<string, Schema> = { Safe: { type: 'string' } };
+  for (let i = 0; i < count; i++) {
+    let branch: Schema =
+      i === count - 1 ? { type: 'string' } : ref(`Union${i + 1}`);
+    for (let nesting = 0; nesting < 24; nesting++)
+      branch = { anyOf: [ref(`Object${i}`), branch] };
+    schemas[`Union${i}`] = branch;
+    // Every cycle descends through next. Predecessor edges leave long union
+    // paths uncached even though each member's inline body stays shallow.
+    schemas[`Object${i}`] = object(
+      { next: ref(`Union${(i + count - 1) % count}`) },
+      [],
+    );
+  }
+  assert.deepEqual(
+    await compile(document(schemas), selected('Safe')),
+    await compile(document({ Safe: { type: 'string' } }), selected('Safe')),
+  );
+  const schema = await generated(t, schemas, 'Union0');
+  const input = { next: {} };
+  const output = record(schema.parse(input));
+  assert.deepEqual(output, input);
+  assert.notEqual(output.next, input.next);
+  const limited = schema.safeParse('terminal string');
+  assert.equal(limited.success, false);
+  if (!limited.success)
+    assert.match(
+      limited.error.message,
+      /recursive parser depth exceeds 512 entries/,
+    );
 });
 
 void test('recursive members retain their own depth through direct, pure-alias and constrained-alias references', async () => {

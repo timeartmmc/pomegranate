@@ -134,42 +134,58 @@ function jsonTypes(schema: Schema, schemas: SchemaTable): readonly JsonType[] {
   const cache = tableCache(jsonTypesByTable, schemas);
   const known = cache.get(resolved);
   if (known) return known;
-  let types: readonly JsonType[];
-  switch (resolved.kind) {
-    case 'null':
-    case 'boolean':
-    case 'string':
-      types = [resolved.kind];
-      break;
-    case 'number':
-    case 'integer':
-      types = ['number'];
-      break;
-    case 'array':
-      types = ['array'];
-      break;
-    case 'object':
-    case 'map':
-      types = ['object'];
-      break;
-    case 'union':
-      types = [
-        ...new Set(
-          resolved.branches.flatMap((branch) => jsonTypes(branch, schemas)),
-        ),
-      ];
-      break;
-    case 'json':
-    case 'binary':
-    case 'intersection':
-    case 'ref':
-      types = allJsonTypes;
-      break;
-    default:
-      return assertNever(resolved);
+  // Same-value reference cycles were rejected before validation. Productive
+  // groups can still contain long union paths: cache children before their
+  // union on a heap stack, retaining branch order for overlap diagnostics.
+  const pending = [{ schema: resolved, next: 0 }];
+  while (pending.length > 0) {
+    const frame = pending[pending.length - 1]!;
+    const current = frame.schema;
+    if (current.kind === 'union' && frame.next < current.branches.length) {
+      const child = resolveSchema(current.branches[frame.next++]!, schemas);
+      if (!cache.has(child)) pending.push({ schema: child, next: 0 });
+      continue;
+    }
+    let types: readonly JsonType[];
+    switch (current.kind) {
+      case 'null':
+      case 'boolean':
+      case 'string':
+        types = [current.kind];
+        break;
+      case 'number':
+      case 'integer':
+        types = ['number'];
+        break;
+      case 'array':
+        types = ['array'];
+        break;
+      case 'object':
+      case 'map':
+        types = ['object'];
+        break;
+      case 'union':
+        types = [
+          ...new Set(
+            current.branches.flatMap((branch) =>
+              cache.get(resolveSchema(branch, schemas))!,
+            ),
+          ),
+        ];
+        break;
+      case 'json':
+      case 'binary':
+      case 'intersection':
+      case 'ref':
+        types = allJsonTypes;
+        break;
+      default:
+        return assertNever(current);
+    }
+    cache.set(current, types);
+    pending.pop();
   }
-  cache.set(resolved, types);
-  return types;
+  return cache.get(resolved)!;
 }
 
 // Untagged unions try branches in order, and every branch accepting a value's
