@@ -9,11 +9,9 @@ import type {
 } from './model.js';
 import type { RootSelection, Selection } from './selection.js';
 import { validatePagination } from './pagination.js';
-import {
-  normalizeSchema,
-  schemaReferences,
-  validateSchema,
-} from './schemas.js';
+import { normalizeSchema } from './schemas.js';
+import { schemaReferences } from './schema-graph.js';
+import { validateSchema } from './schema-validation.js';
 
 export function operationSchemas(
   operation: Operation,

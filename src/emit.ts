@@ -32,7 +32,7 @@ import type {
 import { successKey, successResponses } from './response-status.js';
 import { parseSymbol, schemaType, typeSymbol } from './schema-types.js';
 import { sourceBudget } from './source-budget.js';
-import { orderSchemas } from './schemas.js';
+import { orderSchemas } from './schema-graph.js';
 
 // `.d.ts` is a declaration file, and the formatter also treats `.d.` path
 // segments as declarations. `_d` cannot collide with a legal selection name,

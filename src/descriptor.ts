@@ -33,11 +33,9 @@ import {
   componentName,
   createSchemaNormalizer,
   normalizeFormats,
-  orderSchemas,
-  resolveSchema,
-  validateSchema,
-  schemaValidation,
 } from './schemas.js';
+import { orderSchemas, resolveSchema } from './schema-graph.js';
+import { validateSchema, schemaValidation } from './schema-validation.js';
 import {
   normalizeMemberships,
   normalizeOperationPolicy,

@@ -41,6 +41,11 @@ validators, builders, response parsers, and optional helpers use one normalized
 descriptor. Every operation and response must be represented or rejected with a
 useful diagnostic, including declarations excluded from selected clients.
 
+Keep raw schema normalization separate from graph analysis and usage validation.
+Those phases consume normalized nodes. Alias target and declaration-name
+resolution share one result per immutable schema table; constraint and
+directional checks retain their own passes.
+
 Fixed metadata records materialize every setting as an own field, including
 explicit defaults or `undefined` for absence. Keep sparse source and public
 configuration types at normalization boundaries; internal code consumes complete,

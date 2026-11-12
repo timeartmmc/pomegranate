@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compile, ContractError } from '../dist/index.js';
-import { normalizeSchema, validateSchema } from '../dist/schemas.js';
+import { normalizeSchema } from '../dist/schemas.js';
+import { validateSchema } from '../dist/schema-validation.js';
 import type { Schema } from '../dist/model.js';
 import { schemaType } from '../dist/schema-types.js';
 import { schemaRenderer } from '../dist/emit-schema.js';

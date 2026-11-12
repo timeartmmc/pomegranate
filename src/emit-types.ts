@@ -8,8 +8,13 @@ import type {
   Standalone,
 } from './model.js';
 import { schemaType, typeSymbol } from './schema-types.js';
-import { recursiveSchemas, schemaReferences, terminalName } from './schemas.js';
-import { schemaChildren, schemaGraph } from './schema-graph.js';
+import {
+  recursiveSchemas,
+  schemaReferences,
+  terminalName,
+  schemaChildren,
+  schemaGraph,
+} from './schema-graph.js';
 import { operationSchemas } from './projection.js';
 import { byteBudget, sourceBudget } from './source-budget.js';
 

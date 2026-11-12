@@ -5,6 +5,33 @@ import type {
   SchemaDraft,
 } from './model.js';
 
+// Admission, reference checks and emission share the same source vocabulary.
+export const stringConstraints = ['minLength', 'maxLength', 'pattern'] as const;
+export const numberConstraints = [
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'multipleOf',
+] as const;
+export const arrayConstraints = [
+  'minItems',
+  'maxItems',
+  'uniqueItems',
+] as const;
+export const objectConstraints = ['minProperties', 'maxProperties'] as const;
+// Beside a single allOf reference, these restrict it like 3.1 reference
+// siblings without repeating its type. Object count bounds instead compose as
+// object fragments.
+export const referenceConstraints: readonly string[] = [
+  ...stringConstraints,
+  ...numberConstraints,
+  ...arrayConstraints,
+];
+export const constraintKeys = [...referenceConstraints, ...objectConstraints];
+
+export const maximumSchemaNesting = 128;
+
 // These constructors consume compiler-created data. Source records retain their
 // descriptor-preserving own-property view at the diagnostics.record boundary.
 // Read sparse metadata directly instead of allocating a temporary own-only copy.
@@ -44,10 +71,17 @@ export function hasConstraints(value: Constraints): boolean {
   return Object.values(value).some((value) => value !== undefined);
 }
 
-export function schemaNode(value: SchemaDraft): Schema {
+export function schemaNode(
+  value: SchemaDraft,
+  sourceAccess?: Pick<Schema, 'readOnly' | 'writeOnly'>,
+): Schema {
   const access = {
-    readOnly: own(value, 'readOnly') === true,
-    writeOnly: own(value, 'writeOnly') === true,
+    readOnly:
+      own(value, 'readOnly') === true ||
+      (sourceAccess !== undefined && own(sourceAccess, 'readOnly') === true),
+    writeOnly:
+      own(value, 'writeOnly') === true ||
+      (sourceAccess !== undefined && own(sourceAccess, 'writeOnly') === true),
   };
   switch (value.kind) {
     case 'json':
@@ -155,4 +189,14 @@ export function unionKeyword(
   schema: Extract<Schema, { kind: 'union' }>,
 ): 'anyOf' | 'oneOf' {
   return schema.cardinality === 'one' ? 'oneOf' : 'anyOf';
+}
+
+export function schemaBranchLocation(
+  schema: Extract<Schema, { kind: 'union' }>,
+  location: string,
+  index: number,
+): string {
+  return schema.sourceTypeArray
+    ? location
+    : `${location}.${unionKeyword(schema)}[${index}]`;
 }

@@ -7,12 +7,9 @@ import { identifier } from '../dist/code.js';
 import { schemaRenderer } from '../dist/emit-schema.js';
 import { parseSymbol, schemaType } from '../dist/schema-types.js';
 import type { Schema as NormalizedSchema } from '../dist/model.js';
-import {
-  normalizeSchema,
-  orderSchemas,
-  schemaValidation,
-  validateSchema,
-} from '../dist/schemas.js';
+import { normalizeSchema } from '../dist/schemas.js';
+import { orderSchemas } from '../dist/schema-graph.js';
+import { schemaValidation, validateSchema } from '../dist/schema-validation.js';
 import type { Validator } from '../src/runtime.ts';
 import { entry, present } from './assertions.ts';
 import {

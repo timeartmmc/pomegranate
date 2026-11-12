@@ -2,12 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ContractError } from '../dist/index.js';
 import { projectSchemas, schemaAccess } from '../dist/directional.js';
-import {
-  normalizeSchema,
-  orderSchemas,
-  schemaValidation,
-  validateSchema,
-} from '../dist/schemas.js';
+import { normalizeSchema } from '../dist/schemas.js';
+import { orderSchemas } from '../dist/schema-graph.js';
+import { schemaValidation, validateSchema } from '../dist/schema-validation.js';
 import type { Schema, SchemaTable } from '../dist/model.js';
 import type { Schema as InputSchema } from './schema-helpers.ts';
 import { present } from './assertions.ts';

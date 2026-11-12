@@ -19,21 +19,25 @@ import type {
   Schema,
   SchemaFormat,
 } from './model.js';
-import { hasConstraints, constraintRecord, schemaNode } from './schema-node.js';
+import {
+  hasConstraints,
+  constraintRecord,
+  schemaNode,
+  numberConstraints,
+  objectConstraints as objectRules,
+  schemaBranchLocation,
+  stringConstraints as stringRules,
+} from './schema-node.js';
 import { hasUnicodeProperty, intersectConstraints } from './scalar-rules.js';
 import { isRequired } from './required-index.js';
 import { scalarValidationPlan } from './intersections.js';
 import { stringFormatHelpers } from './formats.js';
 import {
-  numberConstraints,
-  objectConstraints as objectRules,
   recursiveSchemas,
   resolveSchema,
-  schemaBranchLocation,
   schemaReferences,
-  stringConstraints as stringRules,
   terminalName,
-} from './schemas.js';
+} from './schema-graph.js';
 import { sourceBudget } from './source-budget.js';
 
 // Bounds are data, so sharing them by schema identity does not share emitted

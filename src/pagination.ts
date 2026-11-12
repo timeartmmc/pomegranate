@@ -7,7 +7,7 @@ import type {
   SchemaTable,
 } from './model.js';
 import { scalarValidationPlan } from './intersections.js';
-import { resolveSchema } from './schemas.js';
+import { resolveSchema } from './schema-graph.js';
 import { successResponses } from './response-status.js';
 import { literalViolation } from './scalar-rules.js';
 
