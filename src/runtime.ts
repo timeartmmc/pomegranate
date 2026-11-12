@@ -60,7 +60,22 @@ type IssueBuffer<T> = T[] & IssueState;
 export type Issues = IssueBuffer<Problem>;
 export type Parse<T> = (input: unknown, issues: Issues) => T | Invalid;
 
+// Branch decisions depend on union identity and input, but detached outputs
+// belong to an occurrence. Two fields can contain the same source object and
+// must still receive separate mutable copies. Nodes are created only once an
+// untagged union needs them; plain and directly discriminated trees need none.
+// Memoization assumes input values stay stable throughout the validation.
+type RecursivePosition = {
+  children: Map<string | number, RecursivePosition> | undefined;
+  outputs: Map<readonly unknown[], unknown> | undefined;
+};
+function recursivePosition(): RecursivePosition {
+  // Cache slots must be own fields: inherited values are never runtime state.
+  return { children: undefined, outputs: undefined };
+}
 type RecursiveTraversal = {
+  position: RecursivePosition | undefined;
+  selections: Map<readonly unknown[], Map<unknown, number>> | undefined;
   depth: number;
   parserDepth: number;
   abort: string | undefined;
@@ -90,6 +105,8 @@ export function recursiveParse<T>(
       parserDepth: 0,
       abort: undefined,
       remaining: maximumRecursiveWork,
+      position: undefined,
+      selections: undefined,
       ancestors: new Set(
         typeof input === 'object' && input !== null ? [input] : [],
       ),
@@ -175,6 +192,7 @@ function recursiveChild<T>(
   input: unknown,
   issues: Issues,
   parse: Parse<T>,
+  key: string | number,
 ): T | Invalid {
   const traversal = recursiveTraversals.get(issues);
   if (!traversal) return parse(input, issues);
@@ -183,12 +201,32 @@ function recursiveChild<T>(
     typeof input === 'object' && input !== null ? input : undefined;
   if (object !== undefined && traversal.ancestors.has(object))
     return abortValidation(issues, 'cyclic input is not supported');
+  const previous = traversal.position;
+  if (object !== undefined && previous) {
+    const children = (previous.children ??= new Map<
+      string | number,
+      RecursivePosition
+    >());
+    let position = children.get(key);
+    if (!position) children.set(key, (position = recursivePosition()));
+    traversal.position = position;
+  }
   traversal.depth++;
   if (object !== undefined) traversal.ancestors.add(object);
   try {
     return parse(input, issues);
   } finally {
     if (object !== undefined) traversal.ancestors.delete(object);
+    const position = traversal.position;
+    if (
+      object !== undefined &&
+      previous &&
+      position &&
+      !position.outputs &&
+      !position.children?.size
+    )
+      previous.children?.delete(key);
+    traversal.position = previous;
     traversal.depth--;
   }
 }
@@ -204,6 +242,7 @@ function stopped(issues: Issues): boolean {
 }
 
 const omitted = new WeakSet<readonly unknown[]>();
+const scalarParsers = new WeakSet<object>();
 const omittedMessage =
   'issue limit reached; further validation and issues may be omitted';
 
@@ -454,7 +493,7 @@ export function field<T>(
   const start = issues.length;
   const value: unknown = Reflect.get(source, key);
   const result = recursiveCalls
-    ? recursiveChild(value, issues, parse)
+    ? recursiveChild(value, issues, parse, key)
     : parse(value, issues);
   if (result === invalid) {
     rejected(issues, start);
@@ -476,7 +515,7 @@ export function optionalField<T>(
   const value: unknown = Reflect.get(source, key);
   if (value === undefined) return undefined;
   const result = recursiveCalls
-    ? recursiveChild(value, issues, parse)
+    ? recursiveChild(value, issues, parse, key)
     : parse(value, issues);
   if (result === invalid) {
     rejected(issues, start);
@@ -1090,26 +1129,31 @@ export function numeric(
 }
 
 const integerRules: NumberRules = { integer: true };
-export function stringValue(input: unknown, issues: Issues): string | Invalid {
-  return text(input, issues);
+// Register each builtin inside its pure initializer so bundlers can remove
+// unused scalar helpers and their validation rules independently.
+function scalarParser<T>(parse: Parse<T>): Parse<T> {
+  scalarParsers.add(parse);
+  return parse;
 }
-export function numberValue(input: unknown, issues: Issues): number | Invalid {
-  return numeric(input, issues);
-}
-export function integerValue(input: unknown, issues: Issues): number | Invalid {
-  return numeric(input, issues, integerRules);
-}
-export function booleanValue(
-  input: unknown,
-  issues: Issues,
-): boolean | Invalid {
-  return typeof input === 'boolean'
-    ? input
-    : report(issues, 'expected a boolean', true);
-}
-export function nullValue(input: unknown, issues: Issues): null | Invalid {
-  return input === null ? null : report(issues, 'expected null', true);
-}
+export const stringValue: Parse<string> = /* @__PURE__ */ scalarParser(
+  (input, issues) => text(input, issues),
+);
+export const numberValue: Parse<number> = /* @__PURE__ */ scalarParser(
+  (input, issues) => numeric(input, issues),
+);
+export const integerValue: Parse<number> = /* @__PURE__ */ scalarParser(
+  (input, issues) => numeric(input, issues, integerRules),
+);
+export const booleanValue: Parse<boolean> = /* @__PURE__ */ scalarParser(
+  (input, issues) =>
+    typeof input === 'boolean'
+      ? input
+      : report(issues, 'expected a boolean', true),
+);
+export const nullValue: Parse<null> = /* @__PURE__ */ scalarParser(
+  (input, issues) =>
+    input === null ? null : report(issues, 'expected null', true),
+);
 function neverValue(_input: unknown, issues: Issues): Invalid {
   return report(issues, 'expected no value', true);
 }
@@ -1231,7 +1275,7 @@ export function list<T>(
     const element = arrayItem(input, index);
     received?.push(element);
     const value = recursiveCalls
-      ? recursiveChild(element, issues, items)
+      ? recursiveChild(element, issues, items, index)
       : items(element, issues);
     if (value === invalid) {
       rejected(issues, before);
@@ -1426,7 +1470,7 @@ export function map<T>(
     const value: unknown = Reflect.get(input, name);
     const before = issues.length;
     const parsed = recursiveCalls
-      ? recursiveChild(value, issues, values)
+      ? recursiveChild(value, issues, values, name)
       : values(value, issues);
     if (parsed === invalid) {
       rejected(issues, before);
@@ -1494,10 +1538,42 @@ export function union<T>(
     if (traversal && recursiveWork(traversal, issues)) return invalid;
     return selected(input, issues);
   }
+  const subject = typeof input === 'object' && input !== null;
+  let chosen: Map<unknown, number> | undefined;
+  if (traversal) {
+    if (subject) {
+      const position = (traversal.position ??= recursivePosition());
+      if (position.outputs?.has(branches))
+        return position.outputs.get(branches) as T;
+    }
+    const selections = (traversal.selections ??= new Map<
+      readonly unknown[],
+      Map<unknown, number>
+    >());
+    chosen = selections.get(branches);
+    if (!chosen)
+      selections.set(branches, (chosen = new Map<unknown, number>()));
+    const known = chosen.get(input);
+    if (known !== undefined) {
+      if (known >= 0) {
+        // Re-parse at a new occurrence: depth and active ancestors can differ.
+        if (recursiveWork(traversal, issues)) return invalid;
+        const before = issues.length;
+        const value = branches[known]!(input, issues);
+        if (subject && value !== invalid && issues.length === before)
+          (traversal.position!.outputs ??= new Map()).set(branches, value);
+        return value;
+      }
+      // Cache ordinary failures for scalars too. Committed calls still collect
+      // the branch diagnostics; only speculative retries need a short rejection.
+      if (issues[speculativeAttempt])
+        return report(issues, 'expected a matching union branch', true);
+    }
+  }
   // Ordinary rejection is speculative. An aborted attempt cannot prove that
   // a later branch is the first match, so it must not choose another projection.
   const attempts: Issues[] = [];
-  for (const branch of branches) {
+  for (const [index, branch] of branches.entries()) {
     // Same-value alternatives consume work even when no child is visited.
     if (traversal && recursiveWork(traversal, issues)) return invalid;
     const attempt = issueBuffer<Problem>(remaining(issues), issues);
@@ -1509,9 +1585,15 @@ export function union<T>(
       mergeIssues(issues, attempt, (issue) => issue);
       return invalid;
     }
-    if (value !== invalid && attempt.length === 0) return value;
+    if (value !== invalid && attempt.length === 0) {
+      chosen?.set(input, index);
+      if (subject && traversal)
+        (traversal.position!.outputs ??= new Map()).set(branches, value);
+      return value;
+    }
     attempts.push(attempt);
   }
+  chosen?.set(input, -1);
   // Branches that accepted the value's shape but failed a constraint are the
   // closest matches. Report one such branch directly; otherwise name each one.
   const start = issues.length;
@@ -1523,11 +1605,15 @@ export function union<T>(
     for (const [index, attempt] of attempts.entries()) {
       if (stopped(issues)) break;
       if (close.length > 0 && fatalSince(attempt, 0)) continue;
-      mergeIssues(issues, attempt, ({ path, message }) => ({
-        path,
-        message: `union branch ${index + 1}: ${message}`,
-        fatal: true,
-      }));
+      mergeIssues(issues, attempt, ({ path, message }) => {
+        const context = `union branch ${index + 1}: ${message}`;
+        // Bound context rather than truncating away the underlying mismatch.
+        return {
+          path,
+          message: context.length <= maximumIssueMessage ? context : message,
+          fatal: true,
+        };
+      });
     }
   return rejected(issues, start);
 }
@@ -1585,6 +1671,7 @@ export function fixedObject<T extends object>(
   let known: readonly string[] = [];
   let forbidden: readonly string[] = [];
   let requiredNames: readonly string[] = [];
+  let speculativeSlots: typeof slots;
   return (input: unknown, issues: Issues): T | Invalid => {
     const source = objectValue(input, issues);
     if (source === invalid) return invalid;
@@ -1617,17 +1704,36 @@ export function fixedObject<T extends object>(
       forbidden = blocked;
       requiredNames = needed;
     }
+    if (issues[speculativeAttempt] && !speculativeSlots) {
+      const scalars: (typeof slots)[number][] = [];
+      const rest: typeof scalars = [];
+      for (const slot of slots)
+        (slot.required && scalarParsers.has(slot.parse) ? scalars : rest).push(
+          slot,
+        );
+      // Capture and validate required scalars before children in a trial branch.
+      // Both orders use the ordinary field helpers, reading each field once.
+      speculativeSlots = [...scalars, ...rest];
+    }
     if (requiredKeys(source, requiredNames, issues) === invalid) return invalid;
     if (!strict && rules && propertyCount(source, issues, rules))
       return invalid;
     const start = issues.length;
     const output: Record<string, unknown> = template ? { ...template } : {};
     let failed = false;
-    for (const { name, required, parse } of slots) {
+    for (const { name, required, parse } of issues[speculativeAttempt]
+      ? speculativeSlots!
+      : slots) {
       const value = required
         ? field(source, name, parse, issues)
         : optionalField(source, name, parse, issues);
       failed ||= value === invalid;
+      if (
+        value === invalid &&
+        issues[speculativeAttempt] &&
+        ((required && scalarParsers.has(parse)) || fatalSince(issues, start))
+      )
+        return invalid;
       if (value !== absent) {
         if (template || !(name in Object.prototype)) output[name] = value;
         else {
@@ -1673,7 +1779,10 @@ export function mapParser<T>(
   return (input, issues) => map(input, issues, value, rules);
 }
 export function unionParser<T>(branches: readonly Parse<T>[]): Parse<T> {
-  return (input, issues) => union(input, issues, branches);
+  const parse: Parse<T> = (input, issues) => union(input, issues, branches);
+  if (branches.every((branch) => scalarParsers.has(branch)))
+    scalarParsers.add(parse);
+  return parse;
 }
 export function taggedParser<T>(
   name: string,
@@ -1682,7 +1791,9 @@ export function taggedParser<T>(
   return (input, issues) => taggedUnion(input, issues, name, cases);
 }
 export function textParser(rules: StringRules): Parse<string> {
-  return (input, issues) => text(input, issues, rules);
+  const parse: Parse<string> = (input, issues) => text(input, issues, rules);
+  scalarParsers.add(parse);
+  return parse;
 }
 // Multipart encoders use CRLF on the wire. Validate that detached string so every
 // constraint describes the value the application will serialize.
@@ -1696,7 +1807,9 @@ export function multipartTextParser<T extends string>(
     );
 }
 export function numberParser(rules: NumberRules): Parse<number> {
-  return (input, issues) => numeric(input, issues, rules);
+  const parse: Parse<number> = (input, issues) => numeric(input, issues, rules);
+  scalarParsers.add(parse);
+  return parse;
 }
 // The compiler admits only scalar conjuncts here. Every successful parser
 // validates the same primitive, without coercion; the base parser connects the
@@ -1706,7 +1819,7 @@ export function scalarIntersection<T>(
   base: Parse<T>,
   checks: readonly Parse<unknown>[],
 ): Parse<T> {
-  return (input, issues) => {
+  const parse: Parse<T> = (input, issues) => {
     const start = issues.length;
     const value = base(input, issues);
     if (value === invalid || issues.length !== start) {
@@ -1720,6 +1833,8 @@ export function scalarIntersection<T>(
     }
     return issues.length === start ? value : invalid;
   };
+  scalarParsers.add(parse);
+  return parse;
 }
 
 export function refinedObject<T extends object>(
@@ -1747,12 +1862,14 @@ export function memberParser<
   const V extends readonly (string | number | boolean | null)[],
 >(values: V, message: string, rules?: StringRules): Parse<NoInfer<V[number]>> {
   let members: Set<unknown> | undefined;
-  return (input, issues) => {
+  const parse: Parse<NoInfer<V[number]>> = (input, issues) => {
     members ??= new Set<unknown>(values);
     if (!members.has(input)) return report(issues, message, true);
     if (rules && text(input, issues, rules) === invalid) return invalid;
     return input as V[number];
   };
+  scalarParsers.add(parse);
+  return parse;
 }
 
 export type JsonValue =

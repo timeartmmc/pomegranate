@@ -867,9 +867,10 @@ void test('a recursive union abort stops later alternatives and sibling value re
   const value = {
     id: 'cyclic',
     children,
-    get value() {
+    value: 1,
+    get payload() {
       reads++;
-      return 1;
+      return {};
     },
   };
   children.push(value);

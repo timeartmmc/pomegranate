@@ -297,8 +297,8 @@ void test('overlapping union alternatives are bounded at compile time, including
   );
 });
 
-void test('recursive union retries consume work without descending into a child', async (t) => {
-  const levels = 18;
+void test('recursive union failures memoize scalar retries and retain the underlying mismatch', async (t) => {
+  const levels = 120;
   const schemas: Record<string, Schema> = {
     U0: { type: 'object', properties: { next: ref(`U${levels}`) } },
   };
@@ -319,12 +319,28 @@ void test('recursive union retries consume work without descending into a child'
   const schema = (
     await importGenerated<StandaloneModule>(root, 'standalone.value.ts')
   ).schema;
-  const message = /^recursive validation work exceeds 100000/;
-  const failure = schema.safeParse(false);
-  assert.equal(failure.success, false);
-  if (!failure.success) {
-    assert.deepEqual(failure.error.issues[0]?.path, []);
-    assert.match(failure.error.issues[0].message, message);
+  const message = /expected an object/;
+  for (const value of [
+    false,
+    null,
+    0,
+    '',
+    true,
+    1.5,
+    undefined,
+    Symbol('invalid'),
+    NaN,
+  ]) {
+    const failure = schema.safeParse(value);
+    assert.equal(failure.success, false);
+    if (!failure.success) {
+      assert.deepEqual(failure.error.issues[0]?.path, []);
+      assert.match(failure.error.issues[0].message, message);
+      assert.ok(failure.error.issues.length <= 101);
+      assert.ok(
+        failure.error.issues.every(({ message }) => message.length <= 1024),
+      );
+    }
   }
   // A failed traversal must not spend the next call's allowance.
   assert.deepEqual(schema.parse({}), {});

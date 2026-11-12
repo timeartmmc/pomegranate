@@ -231,7 +231,7 @@ void test('directional projection preserves object bounds and counts stripped fi
   );
 });
 
-void test('wide object parsers check total counts once outside generated field chunks', () => {
+void test('wide object parsers apply total property counts', () => {
   for (const direction of [schemas.requestSchemas, schemas.responseSchemas]) {
     const wide = present(direction.Wide);
     assert.deepEqual(wide.parse({ field0: 0, field139: 139 }), {

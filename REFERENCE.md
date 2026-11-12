@@ -1025,11 +1025,26 @@ determine it. Use smaller batches when the API permits them. If an operation
 guarantees flat data, declaring its actual nonrecursive schema avoids recursive
 traversal accounting.
 
-Speculative union trials missing required keys stop before their children are
-validated. Committed branches collect ordinary diagnostics. Overlapping
-alternatives whose keys are present can still repeat
-validation and reach the work limit below the depth limit. Discriminated unions
-dispatch directly instead of retrying alternatives.
+Within a recursive traversal, untagged unions remember branch selections and
+ordinary failures for both objects and scalar values. Successful parsed values
+are reused only for the same union at the same input position. Shared children
+at different positions still produce independent copies and undergo depth and
+cycle checks in their current context. These caches are discarded after each
+validation, including when a getter throws; they do not carry decisions across
+calls or between request and response projections. The
+[input stability requirements](#schema-validation) apply throughout each
+synchronous validation call.
+
+Speculative fixed-object trials check required keys and required scalar fields
+before descending into children, and stop after an impossible match. Each field
+is captured and validated through the ordinary field helpers. Committed branches
+collect ordinary diagnostics. Nested union context is bounded so the underlying
+mismatch remains visible. Discriminated unions dispatch directly; they and plain
+recursive trees do not allocate occurrence caches unless they reach an untagged
+union. Memoization reduces repeated trials but retains temporary branch and
+output bookkeeping, which can increase peak memory for large untagged documents.
+The depth, parser-entry, visit, issue, and separate `uniqueItems` comparison limits
+still apply; memoization does not make recursive validation unbounded.
 
 ### Reusable components
 
@@ -1282,14 +1297,20 @@ An object schema without `properties` entries, `required` names, or
 JSON members, as in JSON Schema.
 Declare `additionalProperties: false` for an object that must be empty.
 Fixed objects validate structural fields, including fields supplied by class
-instances or prototypes, and return fresh plain objects. Each field's captured
-value is validated and used to construct the result. Required fields must be
+instances or prototypes, and return fresh plain objects. Each visited field is
+read once for that parser attempt, and the captured value is validated and used
+to construct the result. Required fields must be
 present; union attempts reject missing requirements before visiting recursive
 children. Ordinary objects report missing keys, validate present fields, and check
 unknown request keys within the issue budget.
-Inputs must retain their field membership, prototypes, and discriminator values
-during parsing. Field-read order is unspecified; shape-changing getters and
-unstable proxies are outside the supported input contract.
+All observed input values, including object and array identities, field
+membership, prototypes, and discriminator values, must remain stable throughout
+each synchronous validation call. Stable getters and class or prototype fields
+are supported. Getters or proxies that change values or mutate other input data
+during the call are outside the supported input contract. Field-read order is
+unspecified. Unions can retry parsers or reuse earlier results, so getter call
+counts across alternatives are also unspecified. Inputs may change between
+separate validation calls.
 `Object.prototype` never supplies a field or an unknown request key, so prototype
 pollution through data, such as an unsafe merge, cannot fill a missing value.
 Dynamic maps require plain records and read each enumerable value once as it is
@@ -1384,7 +1405,7 @@ Compiler settings do not change runtime validation.
 
 Generated parsers declare independent contract types and reuse local scalar and
 container constructors. Object field tables check field types and requiredness
-against those types. Large objects use explicit parser bodies.
+against those types, including for wide objects.
 
 Generated `schema-types.<digest>.ts` modules share component type identities across
 standalone validators and clients, including identical request and response

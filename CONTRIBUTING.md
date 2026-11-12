@@ -201,9 +201,9 @@ Every object also has a distinct literal `kind`, integer `score`, and string-arr
 `tags`. The distinct-graph series deliberately grows component/operation pairs,
 preserving the existing scale workload. Width and sharing each vary one axis
 from `base`; `shared-wide` combines them. All cases stay within existing compiler
-limits. `width-125` has 128 total properties, at the current parser-table
-boundary; `width-128` has 131 and exercises chunked parsers. Keep that
-representation change visible when interpreting width results. A separate `smoke` profile (2 components, 3 operations, 2 extra fields)
+limits. `width-125` has 128 total properties; `width-128` has 131. Both use the
+same typed field-table constructor as smaller objects, so width results measure
+growing tables without a parser representation change. A separate `smoke` profile (2 components, 3 operations, 2 extra fields)
 is available for correctness checks and excluded from the default matrix.
 
 Complete operation and request/response schema inventories qualify outside timing.

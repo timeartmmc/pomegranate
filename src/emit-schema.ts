@@ -130,8 +130,8 @@ function rules(
 
 // Contract types stay independent of constructor metadata. Explicit Parse<T>
 // bindings check each constructor against its contract and keep child graphs
-// named, bounding expression and inference depth. Large objects split their
-// fields into bounded groups whose results are checked against the contract.
+// named, bounding expression and inference depth. One checked field table per
+// object also lets speculative parsing order required scalars before all children.
 export function schemaRenderer(
   schemas: DirectionalSchemas,
   reference: (name: string, direction: Direction) => Expression,
@@ -157,7 +157,8 @@ export function schemaRenderer(
   // Equivalent scalar leaves share constructors. Composite parts share by node
   // identity within one emission scope and direction, across declaration drains.
   // Separate entry points retain the same bindings whether their source was
-  // inherited or repeated explicitly; parser reuse never reuses parsed values.
+  // inherited or repeated explicitly; sharing parsers never shares output across
+  // input positions or validations.
   const scalarParts = new Map<string, Expression>();
   const compositeParts: Record<
     Direction,
@@ -325,56 +326,11 @@ export function schemaRenderer(
       if (!limits) return;
       const bounds = constant(`rules_${name}`, limits.source, 'ObjectRules');
       // Request counts use the normalized value sent as JSON. Response counts
-      // precede stripping; chunk parsers omit bounds so only the outer counts.
+      // precede stripping.
       body.push(
         `if (${use('propertyCount').source}(${strict ? 'output' : 'source'}, issues, ${bounds}${strict ? ', true' : ''})) return invalid;`,
       );
     };
-    // Bound TypeScript's failure-condition flow graph while retaining a checked
-    // return for every field. Preserve sibling issues in source order until
-    // the shared issue budget stops further chunks.
-    if (fields.length > 128) {
-      helpers.add('invalid');
-      const body = [
-        `const source = ${use('objectValue').source}(input, issues);`,
-        'if (source === invalid) return invalid;',
-      ];
-      const names = fields
-        .filter((field) => field.required)
-        .map((field) => field.name);
-      if (names.length > 0) {
-        const required = constant(`required_${name}`, data(names).source);
-        body.push(
-          `if (${use('requiredKeys').source}(source, ${required}, issues) === invalid) return invalid;`,
-        );
-      }
-      if (!strict) sizeCheck(body);
-      const values: string[] = [];
-      for (let start = 0; start < fields.length; start += 64) {
-        const group = fields.slice(start, start + 64);
-        const parser = `${name}_fields${start / 64}`;
-        const picked = group.map((entry) => jsonSource(entry.name)).join(' | ');
-        objectParser(parser, `Pick<${type}, ${picked}>`, group, false);
-        const value = `group${start / 64}`;
-        values.push(value);
-        body.push(`const ${value} = ${parser}(source, issues);`);
-        body.push(`if (${use('exhausted').source}(issues)) return invalid;`);
-      }
-      const failures = values.map((value) => `${value} === invalid`);
-      if (strict) objectChecks(body, failures, name, fields, forbidden);
-      body.push(`if (${failures.join(' || ')}) return invalid;`);
-      const output = `{${values.map((value) => `...${value}`).join(',')}}`;
-      if (strict && limits) {
-        body.push(`const output = ${output};`);
-        sizeCheck(body);
-        body.push('return output;');
-      } else body.push(`return ${output};`);
-      append(
-        functionDeclaration(name, type, body, exported),
-        `generated parser ${name}`,
-      );
-      return;
-    }
     if (fields.length > 0) {
       const table = object([
         ...fields.map((entry): readonly [string, Expression] => [

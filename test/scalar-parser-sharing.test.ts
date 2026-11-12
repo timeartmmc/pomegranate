@@ -319,7 +319,7 @@ function sparseFixture(includeUnused: boolean) {
   };
 }
 
-void test('repeated scalar rules reduce output across wide object chunks while distinct rules remain checked', async (t) => {
+void test('repeated scalar rules reduce output across wide objects while distinct rules remain checked', async (t) => {
   const sources: string[] = [];
   for (const repeated of [true, false]) {
     const names = Array.from({ length: 180 }, (_, index) => `field${index}`);
@@ -556,4 +556,70 @@ operations.zSelected.build({query:{code:1}});
     Math.abs(sizes[0]! - sizes[1]!) < 256,
     'unselected operations must not enlarge a selected scalar parser bundle',
   );
+});
+
+void test('integer-only bundles omit unused scalar validation helpers', async (t) => {
+  const files = await compile(
+    {
+      openapi: '3.1.2',
+      info: { title: 'Synthetic scalar retention', version: '1' },
+      paths: {},
+      components: {
+        schemas: {
+          Integer: { type: 'integer' },
+          Box: {
+            type: 'object',
+            properties: { value: { type: 'integer' } },
+            required: ['value'],
+          },
+        },
+      },
+    },
+    {
+      clients: [],
+      standalone: {
+        integer: { schema: ref('Integer').$ref, usage: 'request' },
+        box: { schema: ref('Box').$ref, usage: 'request' },
+      },
+    },
+  );
+  const root = await generatedTestWorkspace(t, files);
+  for (const name of ['integer', 'box']) {
+    const input = join(root, `${name}-entry.ts`);
+    const output = join(root, `${name}-bundle.js`);
+    await writeFile(
+      input,
+      `export { schema } from './standalone.${name}.ts';\n`,
+    );
+    await build({
+      entryPoints: [input],
+      outfile: output,
+      bundle: true,
+      minify: true,
+      platform: 'browser',
+      format: 'esm',
+      target: 'es2022',
+    });
+    const bundled = await readFile(output, 'utf8');
+    assert.doesNotMatch(
+      bundled,
+      /expected a string|expected a boolean|expected null|string does not match pattern/,
+    );
+    const { schema } = await importGenerated<StandaloneModule>(
+      root,
+      `${name}-bundle.js`,
+    );
+    const valid = name === 'integer' ? 1 : { value: 1 };
+    const invalid = name === 'integer' ? 1.5 : { value: 1.5 };
+    assert.deepEqual(schema.parse(valid), valid);
+    const failure = schema.safeParse(invalid);
+    assert.equal(failure.success, false);
+    if (!failure.success)
+      assert.deepEqual(failure.error.issues, [
+        {
+          path: name === 'integer' ? [] : ['value'],
+          message: 'expected an integer',
+        },
+      ]);
+  }
 });
