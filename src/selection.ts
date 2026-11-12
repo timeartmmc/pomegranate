@@ -15,6 +15,7 @@ import { surfaceNames } from './policy.js';
 
 export type CompileOptions = Readonly<{
   clients: readonly string[];
+  recursiveWorkLimit?: number;
   formats?: Readonly<
     Record<string, Readonly<{ type: 'string'; pattern: string }>>
   >;
@@ -33,6 +34,7 @@ export type CompileOptions = Readonly<{
 }>;
 export const selectionKeys = [
   'clients',
+  'recursiveWorkLimit',
   'formats',
   'ignoreExtensions',
   'surfaces',
@@ -50,6 +52,7 @@ export type RootSelection = Readonly<{
 }>;
 export type Selection = Readonly<{
   clients: readonly string[];
+  recursiveWorkLimit: number | undefined;
   executionClients: readonly string[];
   transportHeaders: readonly string[];
   targets: ReadonlyMap<string, 'browser' | 'native'>;
@@ -107,6 +110,14 @@ function standaloneSelections(input: unknown = {}): readonly RootSelection[] {
 
 export function parseSelection(input: unknown): Selection {
   const value = record(input, 'compile options');
+  const recursiveWorkLimit = value.recursiveWorkLimit;
+  if (
+    recursiveWorkLimit !== undefined &&
+    (typeof recursiveWorkLimit !== 'number' ||
+      !Number.isSafeInteger(recursiveWorkLimit) ||
+      recursiveWorkLimit <= 0)
+  )
+    fail('recursiveWorkLimit', 'expected a positive safe integer');
   // File configuration and programmatic options share this boundary. Projection
   // receives typed selections, rather than positional unknowns and mode flags.
   // Config memberships were consumed by the complete descriptor before selection.
@@ -249,6 +260,7 @@ export function parseSelection(input: unknown): Selection {
   );
   return {
     clients,
+    recursiveWorkLimit,
     executionClients,
     transportHeaders,
     targets,

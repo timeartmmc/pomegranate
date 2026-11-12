@@ -30,18 +30,19 @@ outputs change.
 
 These selection keys are shared with programmatic compilation:
 
-| Key                | Purpose                                                                                                                                         |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `surfaces`         | Optional complete map of surface names to operation IDs for contracts without inline membership; see [surfaces](#client-surfaces-and-security). |
-| `formats`          | Optional named string-pattern validators; see [registered formats](#registered-formats).                                                        |
-| `clients`          | Required array of declared surfaces; may be empty when `standalone` selects at least one root.                                                  |
-| `ignoreExtensions` | Exact unrelated `x-…` annotation keywords to ignore; POM metadata remains validated.                                                            |
-| `standalone`       | Named component roots with `schema` and `usage: "request"` or `"response"`; see [standalone validators](#standalone-validators).                |
-| `transportHeaders` | Declared request headers supplied by the transport; see [requests](#build-and-validate-a-request).                                              |
-| `targets`          | Map selected clients to `"browser"` or `"native"`; required for [multipart](#multipart-requests).                                               |
-| `executionClients` | Surfaces that get [executable clients](EXECUTION.md#selection-and-calls).                                                                       |
-| `queries`          | Operation selections for [ordinary queries](QUERIES.md#ordinary-queries).                                                                       |
-| `infiniteQueries`  | Operation bindings for [cursor](QUERIES.md#cursor-pagination) or [offset](QUERIES.md#numeric-offsets) queries.                                  |
+| Key                  | Purpose                                                                                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `surfaces`           | Optional complete map of surface names to operation IDs for contracts without inline membership; see [surfaces](#client-surfaces-and-security). |
+| `formats`            | Optional named string-pattern validators; see [registered formats](#registered-formats).                                                        |
+| `clients`            | Required array of declared surfaces; may be empty when `standalone` selects at least one root.                                                  |
+| `ignoreExtensions`   | Exact unrelated `x-…` annotation keywords to ignore; POM metadata remains validated.                                                            |
+| `standalone`         | Named component roots with `schema` and `usage: "request"` or `"response"`; see [standalone validators](#standalone-validators).                |
+| `recursiveWorkLimit` | Positive safe integer setting the generated recursive traversal visit cap; defaults to 100,000. See [recursive schemas](#recursive-schemas).    |
+| `transportHeaders`   | Declared request headers supplied by the transport; see [requests](#build-and-validate-a-request).                                              |
+| `targets`            | Map selected clients to `"browser"` or `"native"`; required for [multipart](#multipart-requests).                                               |
+| `executionClients`   | Surfaces that get [executable clients](EXECUTION.md#selection-and-calls).                                                                       |
+| `queries`            | Operation selections for [ordinary queries](QUERIES.md#ordinary-queries).                                                                       |
+| `infiniteQueries`    | Operation bindings for [cursor](QUERIES.md#cursor-pagination) or [offset](QUERIES.md#numeric-offsets) queries.                                  |
 
 Unknown configuration keys fail validation. Optional output selections are
 disabled when omitted. `CompileOptions` accepts these keys without `version`,
@@ -999,9 +1000,31 @@ fails validation instead of producing a cyclic output. The same checks apply
 to standalone validators, request builders, and response parsing.
 
 Each recursive traversal permits at most 128 descent levels, 512 active parser
-entries, and 100,000 visits across child values and attempted union branches.
-Parser entries include nullable and union
-bindings that validate the same value without descending into a child.
+entries, and, by default, 100,000 visits across child values and attempted union
+branches. Set `recursiveWorkLimit` in `pom.json` or `CompileOptions` to a positive
+safe integer to change the visit cap:
+
+```json
+{
+  "version": 2,
+  "openapi": "./openapi.json",
+  "output": "./generated",
+  "clients": ["consumer"],
+  "recursiveWorkLimit": 1000000
+}
+```
+
+This is a generation-time setting shared by every client and standalone validator
+in that output set, including request builders and response parsers. Regenerate
+the complete set when changing it. It changes the existing recursive traversal
+counter; it does not impose a limit on nonrecursive validators or change compiler
+budgets, depth and parser-entry limits, cycle checks, issue limits, or the separate
+`uniqueItems` comparison budget. Higher caps permit more work and can increase
+peak memory, especially when shared input children expand into separate output
+copies. The cap counts visits, not input bytes or an exact memory allocation.
+
+Parser entries include nullable and union bindings that validate the same value
+without descending into a child.
 Each object property, array item, or map value adds one descent level; a child
 object inside an array property is two levels below its parent object.
 Excessive depth, parser entries, work, or a detected input cycle aborts the
@@ -1019,9 +1042,10 @@ schema and generated-expression limits still apply.
 The work allowance covers every item in a recursive batch even when the data
 omits all optional recursive members. For example, 20,000 flat records with seven
 supplied scalar fields already contain 140,000 child field values before array
-items are counted, so they exceed this allowance. The number of records that fits
-depends on the schema and supplied values; depth or byte size alone does not
-determine it. Use smaller batches when the API permits them. If an operation
+items are counted, so they exceed the default allowance. The number of records
+that fits depends on the schema and supplied values; depth or byte size alone does not
+determine it. Choose an explicit higher `recursiveWorkLimit` for larger measured
+workloads, or use smaller batches when the API permits them. If an operation
 guarantees flat data, declaring its actual nonrecursive schema avoids recursive
 traversal accounting.
 

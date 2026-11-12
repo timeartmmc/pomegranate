@@ -1172,11 +1172,27 @@ export async function render(
   descriptor: Descriptor,
   clients: readonly Client[],
   standalone: readonly Standalone[],
+  recursiveWorkLimit: number | undefined,
 ): Promise<Readonly<Record<string, string>>> {
-  const helper = await readFile(
+  let helper = await readFile(
     new URL('./templates/runtime.ts', import.meta.url),
     'utf8',
   );
+  if (recursiveWorkLimit !== undefined) {
+    // Specialize only the existing constant: validation keeps its current
+    // accounting, and deployed modules need no mutable configuration state.
+    const declaration = /^const maximumRecursiveWork = [\d_]+;$/mu;
+    if (!declaration.test(helper))
+      fail('generated runtime', 'recursive work limit declaration is missing');
+    const limit = String(recursiveWorkLimit).replace(
+      /\B(?=(\d{3})+(?!\d))/gu,
+      '_',
+    );
+    helper = helper.replace(
+      declaration,
+      () => `const maximumRecursiveWork = ${limit};`,
+    );
+  }
   const policyTemplate = await readFile(
     new URL('./templates/policy-types.ts', import.meta.url),
     'utf8',

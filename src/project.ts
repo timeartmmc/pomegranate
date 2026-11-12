@@ -73,7 +73,7 @@ function renderSelection(
   const parsed = parseSelection(selection);
   const standalone = selectStandalone(descriptor, parsed.standalone);
   const clients = selectClients(descriptor, parsed);
-  return render(descriptor, clients, standalone);
+  return render(descriptor, clients, standalone, parsed.recursiveWorkLimit);
 }
 
 function describeInput(

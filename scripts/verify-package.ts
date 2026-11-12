@@ -733,6 +733,8 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'security-generated/*.ts',
     'allof-generated/*.ts',
     'recursion-generated/*.ts',
+    'recursive-work-small/*.ts',
+    'recursive-work-large/*.ts',
     'required-membership-generated/*.ts',
     'composition-graph-generated/*.ts',
     'openapi30-generated/*.ts',
@@ -745,6 +747,17 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'extension-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
+  await writeFile(
+    join(consumer, 'recursive-work-limit-consumer.ts'),
+    `
+    import {compile} from 'pomegranate-compiler';
+    import type {CompileOptions} from 'pomegranate-compiler';
+    export function compileWithLimit(document: unknown, options: CompileOptions, recursiveWorkLimit: number) {
+      const configured: CompileOptions = {...options, recursiveWorkLimit};
+      return compile(document, configured);
+    }
+  `,
+  );
   await writeFile(
     join(consumer, 'directional-types.ts'),
     directionalTypeConsumer(),
@@ -1551,7 +1564,18 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import {toleranceFixture,toleranceSelection} from './verification/tolerance-fixture.ts';
     import {registeredFormatsFixture,registeredFormatsSelection} from './verification/registered-formats-fixture.ts';
     import {numericFormatProfilesFixture,numericFormatProfilesSelection} from './verification/numeric-format-profiles-fixture.ts';
+    import {recursionFixture,recursionSelection} from './verification/recursion-fixture.ts';
+    import {compileWithLimit} from './recursive-work-limit-consumer.ts';
     assert.deepEqual(Object.keys(pom).sort(), ['ContractError', 'compile', 'runProject']);
+    for (const [name, limit] of [['small',2], ['large',32]]) {
+      const files=await compileWithLimit(recursionFixture(), {
+        clients:[], surfaces:recursionSelection.surfaces,
+        standalone:{array:recursionSelection.standalone.array},
+      }, limit);
+      const directory='recursive-work-'+name;
+      await mkdir(directory);
+      for (const [file, source] of Object.entries(files)) await writeFile(directory+'/'+file,source);
+    }
     const openapi30Document=openapi30Fixture();
     const openapi30Before=structuredClone(openapi30Document);
     assert.deepEqual(await pom.compile(openapi30Document,openapi30Selection),await pom.compile(openapi30Fixture(true),openapi30Selection));
@@ -2080,6 +2104,15 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import * as recursionExpression from './recursion-generated/standalone.expression.ts';
     import {verifyRecursion} from './verification/recursion-fixture.ts';
     verifyRecursion(recursionClient, recursionSchemas, {request:recursionRequest,response:recursionResponse,'union-request':recursionUnionRequest,'union-response':recursionUnionResponse,mutual:recursionMutual,array:recursionArray,map:recursionMap,nullable:recursionNullable,expression:recursionExpression});
+    import {schema as smallWork} from './recursive-work-small/standalone.array.ts';
+    import {schema as largeWork} from './recursive-work-large/standalone.array.ts';
+    const recursiveInput=[[],[[]]];
+    const limited=smallWork.safeParse(recursiveInput);
+    assert.equal(limited.success,false);
+    if (!limited.success) assert.match(limited.error.message,/recursive validation work exceeds 2/);
+    assert.deepEqual(largeWork.parse(recursiveInput),recursiveInput);
+    assert.equal(smallWork.safeParse(recursiveInput).success,false);
+    assert.deepEqual(smallWork.parse([]),[]);
     import * as requiredMembershipClient from './required-membership-generated/client.consumer.ts';
     import * as requiredMembershipRequest from './required-membership-generated/standalone.request.ts';
     import * as requiredMembershipResponse from './required-membership-generated/standalone.response.ts';
