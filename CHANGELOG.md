@@ -47,6 +47,11 @@ and HTML/CSV/YAML media use string validation. Response links and reusable link
 components are accepted as validated metadata. See the [contract
 reference](REFERENCE.md) for the supported forms and limits.
 
+### Fixes
+
+Programmatic schemas without `type` preserve non-enumerable object assertions
+such as `required`, property-count bounds, and `additionalProperties`.
+
 ## 0.6.0
 
 ### Breaking changes

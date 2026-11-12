@@ -119,6 +119,85 @@ void test('properties without type preserve conditional object semantics in both
   );
 });
 
+void test('untyped object branches preserve non-enumerable assertions on frozen programmatic schemas', async (t) => {
+  for (const version of ['3.0.4', '3.1.2'])
+    for (const [keyword, constraint, valid, invalid] of [
+      ['required', ['id'], { id: 1 }, {}],
+      ['minProperties', 2, { id: 1, other: 'value' }, { id: 1 }],
+      ['maxProperties', 1, { id: 1 }, { id: 1, other: 'value' }],
+    ] as const) {
+      const value: Schema = Object.freeze(
+        Object.defineProperty(
+          {
+            properties: { id: { type: 'integer' }, other: { type: 'string' } },
+          },
+          keyword,
+          { value: constraint, enumerable: false },
+        ),
+      );
+      const root = await generatedTestWorkspace(
+        t,
+        await compile(document(value, version), selection),
+      );
+      for (const usage of ['input', 'output']) {
+        const { schema } = await importGenerated<StandaloneModule>(
+          root,
+          `standalone.${usage}.ts`,
+        );
+        assert.equal(
+          schema.safeParse(invalid).success,
+          false,
+          `${version}: ${keyword}, ${usage}`,
+        );
+        assert.deepEqual(schema.parse(valid), valid);
+        assert.equal(schema.safeParse(null).success, true);
+      }
+    }
+});
+
+void test('non-enumerable typed additional members remain unsupported for fixed objects', async () => {
+  const value: Schema = Object.freeze(
+    Object.defineProperty(
+      { properties: { id: { type: 'integer' } } },
+      'additionalProperties',
+      { value: { type: 'string' }, enumerable: false },
+    ),
+  );
+  for (const version of ['3.0.4', '3.1.2'])
+    await assert.rejects(
+      compile(document(value, version), selection),
+      /mixed fixed properties and typed dynamic maps/,
+    );
+});
+
+void test('hidden semantic keywords cannot make an untyped schema annotation-only', async (t) => {
+  const value: Schema = Object.freeze(
+    Object.defineProperties(
+      { description: 'Synthetic hidden declarations' },
+      {
+        properties: { value: { id: { type: 'integer' } }, enumerable: false },
+        required: { value: ['id'], enumerable: false },
+      },
+    ),
+  );
+  for (const version of ['3.0.4', '3.1.2']) {
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(document(value, version), selection),
+    );
+    for (const usage of ['input', 'output']) {
+      const { schema } = await importGenerated<StandaloneModule>(
+        root,
+        `standalone.${usage}.ts`,
+      );
+      assert.equal(schema.safeParse({}).success, false);
+      assert.equal(schema.safeParse({ id: 'wrong' }).success, false);
+      assert.deepEqual(schema.parse({ id: 1 }), { id: 1 });
+      assert.equal(schema.safeParse(null).success, true);
+    }
+  }
+});
+
 void test('untyped object assertions do not hide oneOf overlap with non-object branches', async () => {
   for (const branch of [
     { type: 'null' },

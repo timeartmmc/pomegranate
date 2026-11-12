@@ -793,7 +793,11 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
     }
     if (Object.hasOwn(value, 'anyOf') || Object.hasOwn(value, 'oneOf'))
       return normalizeUnion(value, location, nesting);
-    if (Object.keys(value).every((key) => annotationKeys.includes(key)))
+    if (
+      Object.getOwnPropertyNames(value).every((key) =>
+        annotationKeys.includes(key),
+      )
+    )
       return { kind: 'json' };
     if (
       !Object.hasOwn(value, 'type') &&
@@ -807,9 +811,8 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
       return {
         kind: 'union',
         branches: [
-          schemaNode(
-            normalizeObject({ ...value, type: 'object' }, location, nesting),
-          ),
+          // Keep own descriptors when selecting the object-only branch.
+          schemaNode(normalizeObject(value, location, nesting)),
           schemaNode({ kind: 'null' }),
           schemaNode({ kind: 'boolean' }),
           schemaNode({ kind: 'number' }),
