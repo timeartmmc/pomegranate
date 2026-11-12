@@ -1,7 +1,8 @@
 # Executable clients
 
-Executable clients add typed calls around an application executor. For manual
-request construction and response parsing, use the [contract reference](REFERENCE.md).
+Executable clients make typed calls through an executor you provide. For manual
+request construction and response parsing, use the [contract
+reference](REFERENCE.md).
 
 ## Selection and calls
 
@@ -18,10 +19,11 @@ Select surfaces explicitly in configuration or `CompileOptions`:
 Every execution surface must also appear in `clients`. Unknown, unselected or
 duplicate names fail before writing. Omission or `[]` disables execution output.
 Each selected surface gets `client.<surface>.execute.ts` and an explicit
-`createClient` export from its client entry. Its operations and schema maps remain
-independently usable. Execution has no package runtime dependencies. Native direct
-calls need platform declarations and implementations for `AbortController` and
-`AbortSignal`; [query-only requirements](QUERIES.md#ordinary-queries) are separate.
+`createClient` export from its client entry. Its operations and schema maps
+remain independently usable. Execution has no package runtime dependencies.
+Native direct calls need platform declarations and implementations for
+`AbortController` and `AbortSignal`; [query-only
+requirements](QUERIES.md#ordinary-queries) are separate.
 
 ```ts
 import { createClient } from './generated/client.consumer.ts';
@@ -48,102 +50,99 @@ const pending = await client.prepareWidget.call({
 ```
 
 Every operation on the surface has `call(args)` and `isError(error)`, including
-POST, PUT, PATCH, DELETE, HEAD and OPTIONS. Required path, query, header and body
-inputs retain their builder types; when all generated fields are optional,
-`call({ context })` may omit `input`. An
-[optional request body](REFERENCE.md#build-and-validate-a-request) does not relax
-other required inputs. Calls return promises. Invalid requests reject before the
-executor runs. Successes retain the observed 2xx status, raw normalized headers,
-validated declared headers and schema-validated data. Bodyless success has an own
+POST, PUT, PATCH, DELETE, HEAD and OPTIONS. Required path, query, header and
+body inputs retain their builder types; when all generated fields are optional,
+`call({ context })` may omit `input`. An [optional request
+body](REFERENCE.md#build-and-validate-a-request) does not relax other required
+inputs. Calls return promises. Invalid requests reject before the executor runs.
+Successes retain the observed 2xx status, raw normalized headers, validated
+declared headers and schema-validated data. Bodyless success has an own
 `data: undefined` field. Different success statuses retain distinct body types.
 
 `createClient` returns the exported readonly `Client` type. Its `ClientMembers`
-interface names declaration members so applications can publish inferred clients
-without expanding the entire API. Treat it as a declaration anchor; module
-augmentation does not add runtime operations.
+interface keeps inferred client declarations compact when you publish them.
+Augmenting the interface does not add runtime operations.
 
 ## One application executor
 
-Client entries export `Executor`, `Execution`, `ExecutionContext` and `ClientConfig`. An
-`Executor` accepts a `PreparedRequest` with body kind `none`, `json`, `text` or
-`multipart` and a frozen `{ signal, context, validateResponse }` execution object.
-It can return raw
-`{ status, headers, body }` evidence, with numeric status, a plain string header
-record, and body text, or an inspection handle from `validateResponse`. It may reject
-with an application error. Raw executors can ignore the callback.
+Client entries export `Executor`, `Execution`, `ExecutionContext` and
+`ClientConfig`. An `Executor` accepts a `PreparedRequest` with body kind `none`,
+`json`, `text` or `multipart` and a frozen
+`{ signal, context, validateResponse }` execution object. It can return a raw
+`{ status, headers, body }` response, with numeric status, a plain string header
+record, and body text, or an inspection handle from `validateResponse`. It may
+reject with an application error. Raw executors can ignore the callback.
 
 POM calls executors and cancellation callbacks as unbound functions. If a class
 method reads instance state, pass an arrow function or
-`adapter.execute.bind(adapter)`. POM captures the callback; it does not bind it
-to the configuration object.
+`adapter.execute.bind(adapter)`. The callback is captured when you create the
+client or query factory.
 
-The application resolves the API origin, credentials for the declared
-[security requirements](REFERENCE.md#client-surfaces-and-security), and policy labels,
+The application resolves the API origin, credentials for the declared [security
+requirements](REFERENCE.md#client-surfaces-and-security), and policy labels,
 validates merged headers with `request.validateHeaders`, serializes the prepared
 body and forwards the signal to its transport. JSON and text requests expose
-`request.contentType` for the transport's Content-Type header. For text, append a
-charset consistent with the encoded bytes, such as `text/plain; charset=utf-8`,
-and send the body directly. Serialize JSON bodies with `JSON.stringify`.
-POM invokes this executor once; the executor owns recovery, retries, deadlines,
-locale and session fencing. One executor can serve direct calls, ordinary queries, and both infinite
-query profiles without casts. `QueryExecutor` accepts only bodyless requests and is
-sufficient for query-only integrations. For adapters shared across generated
-documents with different policy vocabularies, declare the supported
-[policy type](REFERENCE.md#operation-policy) explicitly.
+`request.contentType` for the transport's Content-Type header. For text, append
+a charset consistent with the encoded bytes, such as
+`text/plain; charset=utf-8`, and send the body directly. Serialize JSON bodies
+with `JSON.stringify`. POM invokes the executor once per call. Implement
+recovery, retries, deadlines, locale and session checks there. One executor can
+serve direct calls, ordinary queries, and both infinite query profiles without
+casts. `QueryExecutor` accepts only bodyless requests and is sufficient for
+query-only integrations. For adapters shared across generated documents with
+different policy vocabularies, declare the supported [policy
+type](REFERENCE.md#operation-policy) explicitly.
 
-For raw execution, read the final body once and return its evidence. POM parses
-JSON when selected and validates text as a string. It applies the
-[matching response declaration](REFERENCE.md#response-evidence) once after the
-executor returns. When a status declares several
-media types, the observed Content-Type selects the decoder and schema; the
-returned `contentType` identifies the validated representation and narrows its
-`data` type. Bodyless results use `contentType: undefined`.
-The JSON example's `createExecutor` shows this boundary and forwards
-cancellation. Its parsed `execute` helper uses the same raw path. Returning domain
-data or reconstructing status and headers from a discarded parsed success is
-unsupported.
-Application recovery may observe and validate additional HTTP denials before the
-final response; that does not make the whole attempt sequence one response.
+For raw execution, read the final body once and return it with the observed
+status and headers. POM parses JSON when selected and validates text as a
+string. It applies the [matching response
+declaration](REFERENCE.md#response-evidence) once after the executor returns.
+When a status declares several media types, the observed Content-Type selects
+the decoder and schema; the returned `contentType` identifies the validated
+representation and narrows its `data` type. Bodyless results use
+`contentType: undefined`. The JSON example's `createExecutor` forwards
+cancellation and returns raw responses; its parsed `execute` helper uses the
+same path. Return the observed response rather than domain data or reconstructed
+status and headers.
 
-An existing transport with a response-parser hook can keep its execution path.
-One application-owned adapter can replace the prepared request's `parseResponse`
-hook with a call to `execution.validateResponse`, retain the original inspection
-handle, and return that handle after the transport completes successfully. The
-transport still owns serialization, localization, recovery, deadlines, and error
-policy. The adapter must preserve the correspondence between the transport's
-completed response and the handle it returns.
+To adapt a transport with a response-parser hook, replace the prepared request's
+`parseResponse` hook with a call to `execution.validateResponse`. Retain its
+inspection handle and return it when the transport completes successfully. The
+handle must correspond to that completed response; the transport continues to
+handle serialization, localization, recovery, deadlines, and errors.
 
 ### Context and snapshots
 
-Context is always required, including for writes and bodyless calls. Use nonsecret
-finite JSON scalars for every response-changing session revision, tenant, locale
-or transport value. Arguments and context must contain enumerable own data
-properties; omitted arguments never inherit values from `Object.prototype`.
-Names are sorted and numeric `-0` becomes
-`0`, including in the frozen executor snapshot. Never put credentials in context.
-Executor context snapshots have a null prototype: absent keys stay absent even
-if `Object.prototype` changes after capture. Use `Object.hasOwn` to check keys.
-The executor must use the snapshot for session and locale checks rather than
-rereading mutable application state.
+Context is always required, including for writes and bodyless calls. Use
+nonsecret finite JSON scalars for every response-changing session revision,
+tenant, locale or transport value. Arguments and context must contain enumerable
+own data properties; omitted arguments never inherit values from
+`Object.prototype`. Names are sorted and numeric `-0` becomes `0`, including in
+the frozen executor snapshot. Never put credentials in context. Executor context
+snapshots have a null prototype: absent keys stay absent even if
+`Object.prototype` changes after capture. Use `Object.hasOwn` to check keys. Use
+the captured context for session and locale checks; application state may have
+changed while the call was pending.
 
-Input validation and context capture happen synchronously before the call yields.
-Later caller mutation cannot change the prepared request or executor context.
-JSON bodies and native file references are copied; immutable browser `File`
-objects retain identity. A direct call's signal is optional; an omitted signal
-becomes a fresh usable signal. Pre-aborted calls do not invoke transport.
-Cancellation reasons are preserved, including falsy reasons. POM checks after
-executor settlement and evidence interpretation so late results cannot become
-success. The executor must forward cancellation to interrupt network I/O; an
-executor that never settles cannot be interrupted by a POM retry or timer.
+Input validation and context capture happen synchronously before the call
+yields. Later caller mutation cannot change the prepared request or executor
+context. JSON bodies and native file references are copied; immutable browser
+`File` objects retain identity. A direct call's signal is optional; an omitted
+signal becomes a fresh usable signal. Pre-aborted calls do not invoke transport.
+POM checks for cancellation after executor settlement and response parsing, so a
+late result cannot become success. Forward the signal to interrupt network I/O;
+POM still needs the executor to settle. See [cancellation
+mapping](#cancellation-mapping) for abort reasons and error mapping.
 
 ## Validation inside recovery and deadlines
 
-`execution.validateResponse(observed)` synchronously checks status, headers, media
-type, body, and any bound query-pagination metadata. It returns a deeply readonly,
-frozen inspection handle: a detached copy of the validated success, declared HTTP
-failure, or protocol failure. Return that same handle to select the saved response.
-POM then returns its separately owned mutable success body or throws its usual
-`ResponseError`. Inspection data cannot be used to transform the final response.
+`execution.validateResponse(observed)` synchronously checks status, headers,
+media type, body, and any bound query-pagination metadata. It returns a deeply
+readonly, frozen inspection handle: a detached copy of the validated success,
+declared HTTP failure, or protocol failure. Return that same handle to select
+the saved response. POM then returns the saved success with a separate mutable
+body or throws `ResponseError`. Editing inspection data cannot transform the
+final response.
 
 ```ts
 import type { Executor } from './generated/client.consumer.ts';
@@ -156,86 +155,86 @@ const execute: Executor = async (request, execution) => {
 };
 ```
 
-Each evidence object can be passed to the callback only once within an invocation.
-Repeated validation or returning already-inspected raw evidence throws `TypeError`;
-return its handle instead. Each additional HTTP response in a recovery loop needs
-fresh evidence. Recovery can select any handle created by that invocation.
-Fabricated, copied, and foreign handles are rejected. The callback closes when
-POM observes executor settlement, including rejection, and releases its saved
-responses. Cancellation takes precedence over callback-expiry errors.
+Each raw response object can be passed to the callback only once within an
+invocation. Repeated validation or returning an already-inspected raw response
+throws `TypeError`; return its handle instead. Each additional HTTP response in
+a recovery loop needs a new raw response object. Return any handle created by
+that invocation to select its response. Fabricated, copied, and foreign handles
+are rejected. The callback closes when POM observes executor settlement,
+including rejection, and releases its saved responses. Cancellation takes
+precedence over callback-expiry errors.
 
-`ResponseInspection<R>` describes the readonly inspection view;
-`ValidatedResponse<R>` names the output-specific branded handle type. Its brand
-does not establish runtime provenance; POM accepts only an original handle from
-the current invocation. `Execution<R, V>` defaults to the unbranded view, so
-explicitly annotated raw adapters remain assignable. A
-generic scoped adapter carries its caller's `V` and can serve independently
-generated outputs without importing a particular output's brand.
+`ResponseInspection<R>` describes the readonly view; `ValidatedResponse<R>` is
+the output-specific branded handle type. The brand is a TypeScript check; at
+runtime, POM accepts only an original handle from the current invocation.
+`Execution<R, V>` defaults to the unbranded view, so explicitly typed raw
+adapters remain assignable. A generic adapter can carry its caller's `V` across
+independently generated outputs without importing one output's brand.
 
-The inspection copy is frozen recursively, while public `parseResponse`, call,
-and query bodies remain mutable. TypeScript rejects inspection edits; strict-mode
-JavaScript assignments throw. Transform response data after the generated call
-or through application-owned domain adapters. Cache updates still need immutable
-updates as described in [query integration](QUERIES.md).
-
-Only scoped validation creates the inspection copy. Raw execution avoids that
-copy while keeping the public response body mutable.
+Inspection data is frozen recursively: TypeScript rejects edits and strict-mode
+JavaScript assignments throw. Public `parseResponse`, call, and query bodies
+remain mutable. Transform data after the generated call or in a domain adapter;
+use [immutable updates](QUERIES.md#sharing-and-hydration) when writing query
+caches. Raw execution skips the inspection copy.
 
 Status-based recovery already works with `request.parseResponse` and can leave
-successful responses for POM to parse once. Use the callback when complete response
-validation belongs inside recovery or a deadline: validating a success with
-`request.parseResponse` and then returning raw evidence would validate it again.
-The callback also includes bound pagination checks that the request parser does
-not own. This applies to malformed successful responses as well as declared
-HTTP failures; it does not interpret application errors hidden in a valid body.
+successful responses for POM to parse once. Use the callback when complete
+response validation belongs inside recovery or a deadline: validating a success
+with `request.parseResponse` and then returning the raw response would validate
+it again. The callback also includes bound pagination checks that the request
+parser does not own. This applies to malformed successful responses as well as
+declared HTTP failures; it does not interpret application errors hidden in a
+valid body.
 
 Place the callback inside each attempt or total scope whose budget includes
 validation and inspection copying. Check a monotonic clock after synchronous
 work on both resolved and rejected paths, before recovery or return; a timer
-cannot interrupt parsing or copying. POM supplies no clock, deadline, retry loop,
-or timeout-label meaning. The extra copy and peak memory belong in the
-application's measurements. A simple Fetch executor can keep the raw path.
+cannot interrupt parsing or copying. Applications define clocks, deadlines,
+retry loops, and the meaning of timeout labels. Include the inspection copy in
+time and peak-memory measurements. A Fetch executor can return a raw response
+when validation need not run inside its deadline.
 
 ## Cancellation mapping
 
 The optional `mapCancellation` configuration belongs to execution support and is
 shared by clients and query factories. Without a mapper, an observed abort wins
 over a late success or rejection and throws its defined signal reason verbatim,
-including falsy values. A missing reason receives a portable `AbortError`.
+including falsy values. Native signals may omit `throwIfAborted` or `reason`; a
+missing reason receives a portable `AbortError`.
 
 A mapper receives a frozen `CancellationEvent` with `namespace`, `client`,
 `operationId`, captured `context`, `reason`, `executorInvoked`, and an optional
-`rejection: { error }` for a terminal failure. The wrapper preserves even a caught
+`rejection: { error }` for a terminal failure. This includes a caught
 `undefined` rejection. Return a plain record containing exactly one enumerable
-own `error` data field; POM throws that value verbatim. The mapper is synchronous,
-runs once at the final cancellation exit, and its own exception propagates.
-Promises, accessors, and malformed return records throw `TypeError`. Reasons and
-application errors themselves are not frozen.
+own `error` data field; POM throws that value verbatim. The mapper is
+synchronous, runs once at the final cancellation exit, and its own exception
+propagates. Promises, accessors, and malformed return records throw `TypeError`.
+Reasons and application errors themselves are not frozen.
 
 Pre-aborted calls skip building and execution. Their event has
 `executorInvoked: false` and no rejection. Mapping covers call guards and query
 function guards after usable signal and context capture; skipped queries do not
-run it. Invalid arguments that cannot establish that context remain input errors.
-Checks inside the validation callback retain the original abort reason so
-application recovery sees it before final mapping.
+run it. Invalid arguments that cannot establish that context remain input
+errors. Checks inside the validation callback retain the original abort reason
+so application recovery sees it before final mapping.
 
 `executorInvoked` records whether POM called the executor. It does not prove a
 request was sent. An invoked write remains possibly sent unless the application
 transport has more precise delivery evidence. Use that evidence when preserving
 classified write errors; cancellation alone cannot authorize replay.
 
-The hook is most useful to direct-call consumers. TanStack owns query cancellation
-and state reversion: a cancelled query observer or `fetchQuery` caller can receive
-TanStack's cancellation result rather than the query function's mapped error.
-The hook does not replace Query Core cancellation handling. Cancellation remains
-cooperative; the executor must settle and forward its signal to network I/O.
+The hook is most useful to direct-call consumers. TanStack owns query
+cancellation and state reversion: a cancelled query observer or `fetchQuery`
+caller can receive TanStack's cancellation result rather than the query
+function's mapped error. Cancellation remains cooperative: the executor must
+forward its signal to network I/O and settle before POM can finish the call.
 
 ## Failures and application effects
 
 Declared HTTP failures and protocol failures reject with `ResponseError`.
-`ResponseError` and `QueryResponseError` name the same constructor, with
-`name: 'QueryResponseError'` and shared `instanceof` behavior. Use the operation's
-guard to recover its declared failure types:
+`ResponseError` and `QueryResponseError` refer to the same constructor, whose
+`name` is `'QueryResponseError'`; `instanceof` works with either export. Use the
+operation's guard to recover its declared failure types:
 
 ```ts
 try {
@@ -252,25 +251,27 @@ try {
 
 The guard accepts only failures validated for the same generated operation,
 surface and namespace, including across recreated clients and query factories.
-Constructed, copied, serialized, independently generated or result-replaced errors
-do not gain this provenance. Application executor errors propagate by identity.
-Malformed JavaScript executor evidence throws `TypeError`; protocol failures
-retain status and headers and expose no domain data.
+It rejects constructed or copied errors, deserialized errors, errors from
+independently generated outputs, and errors whose `result` was replaced.
+Executor errors propagate unchanged. Malformed raw response objects throws
+`TypeError`; protocol failures retain status and headers and expose no domain
+data.
 
-Direct calls fit a mutation function, such as
-`mutationFn: input => client.prepareWidget.call({ context, input })`. Denials
-reject and cannot trigger a successful mutation or cache an error as successful
-query data. Applications explicitly own invalidation, optimistic updates,
-persistence, session-cache removal, product transformations and side effects.
-POM infers none of these from operation names or HTTP methods. Keep domain
-wrappers that still serve an application purpose.
+Use direct calls in a mutation function, such as
+`mutationFn: input => client.prepareWidget.call({ context, input })`. HTTP
+denials and protocol failures reject, so they do not trigger mutation success
+handlers or store errors as successful query data. Choose invalidation,
+optimistic updates, persistence, session-cache removal, domain transformations,
+and side effects in application code. POM does not infer these from operation
+names or HTTP methods.
 
 ## Uploads and pagination
 
-Executable uploads use the same [multipart inputs and target requirements](REFERENCE.md#multipart-requests)
-as request builders. The executor receives the complete validated body and
-`request.multipart` inventory; the application serializes them for its platform.
-The JSON example transport handles bodyless and JSON requests, not uploads.
+Executable uploads use the same [multipart inputs and target
+requirements](REFERENCE.md#multipart-requests) as request builders. The executor
+receives the complete validated body and `request.multipart` inventory; the
+application serializes them for its platform. The JSON example transport handles
+bodyless and JSON requests, not uploads.
 
 Direct calls validate the operation response schema without imposing pagination
 traversal rules. Query factories additionally validate their bound pagination
