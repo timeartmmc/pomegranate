@@ -184,7 +184,7 @@ function recursiveWork(
   if (traversal.remaining-- <= 0)
     return abortValidation(
       issues,
-      `recursive validation work exceeds ${maximumRecursiveWork} visits`,
+      `recursive validation work exceeds ${maximumRecursiveWork} visits; raise recursiveWorkLimit in your POM config or compile options and regenerate`,
     );
   return undefined;
 }

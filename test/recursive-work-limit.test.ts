@@ -145,23 +145,21 @@ void test('a raised work limit admits larger recursive-reachable batches at ever
   }
 });
 
-void test('a configured smaller limit names its cap and starts a fresh allowance for every call', async (t) => {
+void test('a configured smaller limit explains recovery and starts a fresh allowance for every call', async (t) => {
   const { request, response, flat, client } = await generated(t, 32);
   const input = Array.from({ length: 10 }, (_, i) => row(i));
+  const diagnostic =
+    /work exceeds 32 visits; raise recursiveWorkLimit in your POM config or compile options and regenerate/;
   assert.deepEqual(flat.parse(input), input);
   for (const schema of [request, response]) {
     const failure = schema.safeParse(input);
     assert.equal(failure.success, false);
-    if (!failure.success)
-      assert.match(failure.error.message, /work exceeds 32 visits/);
+    if (!failure.success) assert.match(failure.error.message, diagnostic);
     for (let i = 0; i < 6; i++)
       assert.deepEqual(schema.parse([row(i)]), [row(i)]);
   }
   const operation = present(client.operations.batch);
-  assert.throws(
-    () => operation.build({ body: input }),
-    /work exceeds 32 visits/,
-  );
+  assert.throws(() => operation.build({ body: input }), diagnostic);
   assert.deepEqual(operation.build({ body: [row()] }).body, [row()]);
   const observed = (body: unknown) =>
     operation.parseResponse({
@@ -172,11 +170,7 @@ void test('a configured smaller limit names its cap and starts a fresh allowance
   const failure = observed(input);
   assert.equal(failure.kind, 'protocol');
   if (failure.kind === 'protocol')
-    assert.ok(
-      failure.issues.some(({ message }) =>
-        /work exceeds 32 visits/.test(message),
-      ),
-    );
+    assert.ok(failure.issues.some(({ message }) => diagnostic.test(message)));
   assert.equal(observed([row()]).kind, 'success');
 });
 
