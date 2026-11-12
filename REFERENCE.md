@@ -638,9 +638,15 @@ Alias chains share their union-analysis results rather than repeating the
 same traversal for every union.
 
 Finite schema structure supports at most 128 structural levels, including
-structure behind references. Pure aliases add no levels. Each inline schema is
-limited to 32 levels; use component references for deeper structures. Named types and typed
-aggregate validators keep inference from expanding through every level.
+structure behind references. Pure aliases preserve their target's depth without
+adding a level. Within a productive recursive group, a named reference from a
+member's structure to the same group starts another recursive iteration. Each
+member's own inline structure still counts, including nullable wrappers, and
+references outside the group retain their finite depth. The number of members
+does not add structural levels; runtime guards bound actual input recursion.
+Each inline schema is limited to 32 levels; use component references for deeper
+structures. Named types and typed aggregate validators keep inference from
+expanding through every level.
 These limits count the normalized schema, including nullable wrappers. A nullable
 array or object uses one level for nullability and one for the container before
 counting its children.

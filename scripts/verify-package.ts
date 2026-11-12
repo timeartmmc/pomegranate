@@ -735,6 +735,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'recursion-generated/*.ts',
     'recursive-work-small/*.ts',
     'recursive-work-large/*.ts',
+    'recursive-group-generated/*.ts',
     'required-membership-generated/*.ts',
     'composition-graph-generated/*.ts',
     'openapi30-generated/*.ts',
@@ -1576,6 +1577,22 @@ ${await readFile(rewritingWorker, 'utf8')}`,
       await mkdir(directory);
       for (const [file, source] of Object.entries(files)) await writeFile(directory+'/'+file,source);
     }
+    const groupRef=name=>({$ref:'#/components/schemas/'+name});
+    const groupDocument={
+      openapi:'3.1.2',info:{title:'Synthetic large recursive group',version:'1'},paths:{},
+      components:{schemas:Object.fromEntries(Array.from({length:192},(_,index)=>[
+        'Node'+index,{type:'object',properties:{
+          value:{type:'integer',const:index},next:groupRef('Node'+((index+1)%192)),
+        },required:['value']},
+      ]))},
+    };
+    const groupFiles=await pom.compile(groupDocument,{clients:[],standalone:{
+      head:{schema:groupRef('Node0').$ref,usage:'request'},
+      tail:{schema:groupRef('Node191').$ref,usage:'response'},
+    }});
+    await mkdir('recursive-group-generated');
+    for (const [file,source] of Object.entries(groupFiles))
+      await writeFile('recursive-group-generated/'+file,source);
     const openapi30Document=openapi30Fixture();
     const openapi30Before=structuredClone(openapi30Document);
     assert.deepEqual(await pom.compile(openapi30Document,openapi30Selection),await pom.compile(openapi30Fixture(true),openapi30Selection));
@@ -2113,6 +2130,14 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     assert.deepEqual(largeWork.parse(recursiveInput),recursiveInput);
     assert.equal(smallWork.safeParse(recursiveInput).success,false);
     assert.deepEqual(smallWork.parse([]),[]);
+    import {schema as groupHead} from './recursive-group-generated/standalone.head.ts';
+    import {schema as groupTail} from './recursive-group-generated/standalone.tail.ts';
+    assert.deepEqual(groupHead.parse({value:0,next:{value:1}}),{value:0,next:{value:1}});
+    const groupInput={value:191,next:{value:0,next:{value:1}}};
+    const groupOutput=groupTail.parse(groupInput);
+    assert.deepEqual(groupOutput,groupInput);
+    assert.notEqual(groupOutput.next,groupInput.next);
+    assert.equal(groupTail.safeParse({value:191,next:{value:1}}).success,false);
     import * as requiredMembershipClient from './required-membership-generated/client.consumer.ts';
     import * as requiredMembershipRequest from './required-membership-generated/standalone.request.ts';
     import * as requiredMembershipResponse from './required-membership-generated/standalone.response.ts';

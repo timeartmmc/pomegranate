@@ -1111,28 +1111,44 @@ function measureSchema(
   const known = depths.get(schema);
   if (known !== undefined) return known;
   const graph = schemaGraph([schema], schemas, (value) => depths.has(value));
+  const pending: { node: number; next: number; childDepth: number }[] = [];
   for (let index = 0; index < graph.groups.length; index++) {
-    const group = graph.groups[index]!;
-    let structure = 0;
-    let dependency = 0;
-    for (const node of group) {
-      const value = graph.nodes[node]!;
-      structure += depths.get(value) ?? (value.kind === 'ref' ? 0 : 1);
-      for (const target of graph.edges[node]!) {
-        const child = graph.nodes[target]!;
-        if (graph.groupFor.get(child) !== index)
-          dependency = Math.max(dependency, depths.get(child)!);
+    for (const root of graph.groups[index]!) {
+      if (depths.has(graph.nodes[root]!)) continue;
+      pending.push({ node: root, next: 0, childDepth: 0 });
+      while (pending.length > 0) {
+        const frame = pending[pending.length - 1]!;
+        const value = graph.nodes[frame.node]!;
+        const target = graph.edges[frame.node]![frame.next++];
+        if (target !== undefined) {
+          const child = graph.nodes[target]!;
+          // A structural member reaching a named reference in its own recursive
+          // group starts another iteration. Keep its inline wrappers, but stop
+          // that edge. Ref-to-target edges remain so aliases stay transparent.
+          if (
+            value.kind !== 'ref' &&
+            child.kind === 'ref' &&
+            graph.groupFor.get(child) === index
+          )
+            continue;
+          const depth = depths.get(child);
+          if (depth === undefined)
+            pending.push({ node: target, next: 0, childDepth: 0 });
+          else frame.childDepth = Math.max(frame.childDepth, depth);
+          continue;
+        }
+        const depth = (value.kind === 'ref' ? 0 : 1) + frame.childDepth;
+        if (depth > maximumSchemaNesting)
+          fail(
+            location,
+            `schema nesting exceeds the supported limit of ${maximumSchemaNesting} levels; reduce structural nesting, including recursive regions and referenced schemas`,
+          );
+        depths.set(value, depth);
+        pending.pop();
+        const parent = pending[pending.length - 1];
+        if (parent) parent.childDepth = Math.max(parent.childDepth, depth);
       }
     }
-    // A recursive region contributes its distinct structural nodes once. On a
-    // DAG this is the existing longest-path depth; aliases contribute no level.
-    const depth = structure + dependency;
-    if (depth > maximumSchemaNesting)
-      fail(
-        location,
-        `schema nesting exceeds the supported limit of ${maximumSchemaNesting} levels; reduce structural nesting, including recursive regions and referenced schemas`,
-      );
-    for (const node of group) depths.set(graph.nodes[node]!, depth);
   }
   return depths.get(schema)!;
 }
@@ -1429,115 +1445,139 @@ function validateUsage(
   work: WorkCounter,
 ): void {
   if (checked.has(schema)) return;
-  checked.add(schema);
-  const visit = (value: Schema, path: string) =>
-    validateUsage(value, schemas, path, usage, checked, constraintCache, work);
-  const access = schemaAccess(schema, schemas);
-  if (access.readOnly && access.writeOnly)
-    fail(
-      location,
-      'readOnly and writeOnly cannot both be true through references',
-    );
-  if (usage !== 'component') {
-    const excluded = usage === 'response' ? access.writeOnly : access.readOnly;
-    if (excluded)
+  type Frame =
+    | { kind: 'schema' | 'branch'; schema: Schema; location: string }
+    | {
+        kind: 'union';
+        schema: Extract<Schema, { kind: 'union' }>;
+        location: string;
+      };
+  const pending: Frame[] = [{ kind: 'schema', schema, location }];
+  const visit = (value: Schema, path: string): void => {
+    pending.push({ kind: 'schema', schema: value, location: path });
+  };
+  // Productive reference groups can be wide without deep member bodies. Keep
+  // depth-first diagnostics without consuming the JS stack across their members.
+  while (pending.length > 0) {
+    const frame = pending.pop()!;
+    if (frame.kind === 'union') {
+      validateUnion(frame.schema, schemas, frame.location, usage);
+      continue;
+    }
+    const { schema, location } = frame;
+    if (frame.kind === 'branch') {
+      const access = schemaAccess(schema, schemas);
+      if (access.readOnly || access.writeOnly)
+        fail(
+          location,
+          'readOnly and writeOnly on union branches are not supported in this version; remove the annotation from the branch or its referenced component; use separate request and response schemas when their shapes differ',
+        );
+    }
+    if (checked.has(schema)) continue;
+    checked.add(schema);
+    const access = schemaAccess(schema, schemas);
+    if (access.readOnly && access.writeOnly)
       fail(
         location,
-        `${usage === 'response' ? 'writeOnly' : 'readOnly'} schemas may only be omitted as object properties in ${usage === 'response' ? 'responses' : 'requests'}`,
+        'readOnly and writeOnly cannot both be true through references',
       );
-  }
-  if (
-    schema.kind === 'binary' &&
-    usage !== 'component' &&
-    usage !== 'multipart'
-  )
-    fail(
-      location,
-      'binary values are only supported in multipart request fields',
-    );
-  switch (schema.kind) {
-    case 'ref': {
-      const resolved = resolveSchema(schema, schemas);
-      const allowed: readonly string[] =
-        resolved.kind === 'string'
-          ? stringConstraints
-          : resolved.kind === 'number' || resolved.kind === 'integer'
-            ? numberConstraints
-            : resolved.kind === 'array'
-              ? arrayConstraints
-              : resolved.kind === 'object' || resolved.kind === 'map'
-                ? objectConstraints
-                : [];
-      // Alias depth is independent of data depth. Walk long chains iteratively,
-      // checking intermediate constraints in this usage context.
-      let target: Schema = schema;
-      let targetLocation = location;
-      while (target.kind === 'ref') {
-        if (target !== schema && checked.has(target)) break;
-        checked.add(target);
-        for (const name of constraintNames(target.constraints))
-          if (!allowed.includes(name))
-            fail(
-              `${targetLocation}.${name}`,
-              `constraint is unsupported on referenced ${resolved.kind}`,
-            );
-        targetLocation += ` -> components.schemas.${target.name}`;
-        target = schemas.get(target.name)!;
-      }
-      validateReferenceConstraints(
-        schema,
-        resolved,
-        schemas,
-        location,
-        constraintCache,
-        work,
-      );
-      visit(target, targetLocation);
-      return;
+    if (usage !== 'component') {
+      const excluded =
+        usage === 'response' ? access.writeOnly : access.readOnly;
+      if (excluded)
+        fail(
+          location,
+          `${usage === 'response' ? 'writeOnly' : 'readOnly'} schemas may only be omitted as object properties in ${usage === 'response' ? 'responses' : 'requests'}`,
+        );
     }
-    case 'array':
-      visit(schema.items, `${location}.items`);
-      return;
-    case 'map':
-      if (schema.values !== true)
-        visit(schema.values, `${location}.additionalProperties`);
-      return;
-    case 'object':
-      for (const [name, value] of schema.properties)
-        visit(value, `${location}.properties.${name}`);
-      return;
-    case 'intersection':
-      scalarIntersectionBase(schema, schemas);
-      schema.branches.forEach((value, index) =>
-        visit(
-          value,
-          schema.branchLocations?.[index] ?? `${schema.location}[${index}]`,
-        ),
+    if (
+      schema.kind === 'binary' &&
+      usage !== 'component' &&
+      usage !== 'multipart'
+    )
+      fail(
+        location,
+        'binary values are only supported in multipart request fields',
       );
-      return;
-    case 'union':
-      schema.branches.forEach((value, index) => {
-        const branchLocation = schemaBranchLocation(schema, location, index);
-        const branchAccess = schemaAccess(value, schemas);
-        if (branchAccess.readOnly || branchAccess.writeOnly)
-          fail(
-            branchLocation,
-            'readOnly and writeOnly on union branches are not supported in this version; remove the annotation from the branch or its referenced component; use separate request and response schemas when their shapes differ',
+    switch (schema.kind) {
+      case 'ref': {
+        const resolved = resolveSchema(schema, schemas);
+        const allowed: readonly string[] =
+          resolved.kind === 'string'
+            ? stringConstraints
+            : resolved.kind === 'number' || resolved.kind === 'integer'
+              ? numberConstraints
+              : resolved.kind === 'array'
+                ? arrayConstraints
+                : resolved.kind === 'object' || resolved.kind === 'map'
+                  ? objectConstraints
+                  : [];
+        // Alias depth is independent of data depth. Walk long chains iteratively,
+        // checking intermediate constraints in this usage context.
+        let target: Schema = schema;
+        let targetLocation = location;
+        while (target.kind === 'ref') {
+          if (target !== schema && checked.has(target)) break;
+          checked.add(target);
+          for (const name of constraintNames(target.constraints))
+            if (!allowed.includes(name))
+              fail(
+                `${targetLocation}.${name}`,
+                `constraint is unsupported on referenced ${resolved.kind}`,
+              );
+          targetLocation += ` -> components.schemas.${target.name}`;
+          target = schemas.get(target.name)!;
+        }
+        validateReferenceConstraints(
+          schema,
+          resolved,
+          schemas,
+          location,
+          constraintCache,
+          work,
+        );
+        visit(target, targetLocation);
+        continue;
+      }
+      case 'array':
+        visit(schema.items, `${location}.items`);
+        continue;
+      case 'map':
+        if (schema.values !== true)
+          visit(schema.values, `${location}.additionalProperties`);
+        continue;
+      case 'object':
+        for (const [name, value] of [...schema.properties].reverse())
+          visit(value, `${location}.properties.${name}`);
+        continue;
+      case 'intersection':
+        scalarIntersectionBase(schema, schemas);
+        for (let index = schema.branches.length - 1; index >= 0; index--)
+          visit(
+            schema.branches[index]!,
+            schema.branchLocations?.[index] ?? `${schema.location}[${index}]`,
           );
-        visit(value, branchLocation);
-      });
-      validateUnion(schema, schemas, location, usage);
-      return;
-    case 'json':
-    case 'binary':
-    case 'string':
-    case 'number':
-    case 'integer':
-    case 'boolean':
-    case 'null':
-      return;
-    default:
-      assertNever(schema);
+        continue;
+      case 'union':
+        pending.push({ kind: 'union', schema, location });
+        for (let index = schema.branches.length - 1; index >= 0; index--)
+          pending.push({
+            kind: 'branch',
+            schema: schema.branches[index]!,
+            location: schemaBranchLocation(schema, location, index),
+          });
+        continue;
+      case 'json':
+      case 'binary':
+      case 'string':
+      case 'number':
+      case 'integer':
+      case 'boolean':
+      case 'null':
+        continue;
+      default:
+        assertNever(schema);
+    }
   }
 }
 
