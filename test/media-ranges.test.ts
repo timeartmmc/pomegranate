@@ -119,7 +119,7 @@ const cases: readonly (readonly [string | undefined, string, string?])[] = [
   // range does not rescue a type the narrower one covers.
   ['application/xml', '"application"'],
   ['application/octet-stream', '"any"'],
-  ['text/html', 'text'],
+  ['text/html', 'text', 'text'],
   ['image/png', '"any"'],
   // A range is a declaration, never an observed media type. A wildcard in the
   // evidence is rejected before any range could match it or a decoder run.
@@ -234,6 +234,7 @@ void test('a range validates only when it is the most specific declaration and t
     'application',
     'text',
     'text',
+    'text',
   ]);
   const undecodable = operation.parseResponse({
     status: 200,
@@ -246,7 +247,7 @@ void test('a range validates only when it is the most specific declaration and t
       {
         part: 'content-type',
         message:
-          'a declared media range accepts only JSON and text/plain response media types',
+          'a declared media range accepts only supported JSON and text response media types',
       },
     ]);
   const malformed = operation.parseResponse({
@@ -421,7 +422,7 @@ void test('ranges stay response-only, whole-subtype declarations with decodable 
           literal('any');
       },
       `${content}.${key}`,
-      /expected a media type, or a type\/\* or \*\/\* range, without parameters$/,
+      /expected a media type with only an optional charset parameter, or a type\/\* or \*\/\* range without parameters$/,
     );
   await rejects(
     (document) => {
@@ -429,7 +430,7 @@ void test('ranges stay response-only, whole-subtype declarations with decodable 
         literal('text');
     },
     `${content}.text/*`,
-    /duplicate case-insensitive media type$/,
+    /duplicate case-insensitive media type after removing charset$/,
   );
   await rejects(
     (document) => {
@@ -460,7 +461,7 @@ void test('ranges stay response-only, whole-subtype declarations with decodable 
         name: 'ContractError',
         location: `paths./send.post.requestBody.content.${key}`,
         message:
-          /expected a concrete media type without parameters or wildcards$/,
+          /expected a concrete media type with only an optional charset parameter and no wildcards$/,
       },
     );
   }

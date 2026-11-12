@@ -8,6 +8,7 @@ const referenceContexts = new Set([
   'requestBody',
   'header',
   'example',
+  'link',
   'securityScheme',
 ]);
 

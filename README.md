@@ -86,8 +86,9 @@ Available integrations:
 
 ## Supported contracts
 
-POM supports JSON, plain text and multipart requests; exact, range and default
-response statuses; response media ranges; API keys, HTTP basic/bearer and
+POM supports JSON, text (plain, HTML, CSV and YAML), flat form-urlencoded
+and multipart requests;
+exact, range and default response statuses; response media ranges; API keys, HTTP basic/bearer and
 OAuth2; and public, optional or combined security requirements. Schemas include
 arbitrary JSON, `anyOf` and `oneOf` unions, [recursive local
 references](REFERENCE.md#recursive-schemas), and [supported `allOf`
@@ -96,12 +97,13 @@ ignore list.
 
 Unsupported features produce an error before files change. These include
 overlapping `oneOf` alternatives without a discriminator, external schema
-references, optional multipart bodies, OpenID Connect and mutual TLS. The
+references, OpenID Connect and mutual TLS. The
 [contract reference](REFERENCE.md#supported-vocabulary) defines the complete
 supported vocabulary and limits.
 
-Custom string formats use patterns defined in `pom.json`. Unknown format names
-stop compilation. See [registered formats](REFERENCE.md#registered-formats).
+Custom formats use string patterns or numeric constraints defined in `pom.json`.
+Unknown format names stop compilation. See
+[registered formats](REFERENCE.md#registered-formats).
 
 ## Run the example
 

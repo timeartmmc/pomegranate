@@ -62,7 +62,7 @@ policy metadata.
 
 ### Registered formats
 
-Define reusable string validators in `pom.json`, or the same `formats` option
+Define reusable string or numeric validators in `pom.json`, or the same `formats` option
 when using `compile`:
 
 ```json
@@ -71,7 +71,9 @@ when using `compile`:
     "booking-code": {
       "type": "string",
       "pattern": "^RES-[0-9]{6}$"
-    }
+    },
+    "uint32": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "decimal": { "type": "number", "multipleOf": 0.01 }
   }
 }
 ```
@@ -85,7 +87,7 @@ schema enter generated code. Use an application-specific prefix to avoid name
 collisions with future built-in formats. A collision fails compilation before
 files change.
 
-Definitions accept exactly `type: "string"` and a string `pattern`, using the
+String definitions accept exactly `type: "string"` and a string `pattern`, using the
 same Unicode regular-expression syntax and limits as schema patterns. Registered
 patterns must match the whole value: `[A-Z]{3}` accepts `USD` and rejects
 `xxUSDxx` or a trailing newline. This differs from a schema `pattern`, which
@@ -96,9 +98,18 @@ values. An enum or a schema's own `pattern` adds independent constraints; both
 patterns must match. References inherit their target's format, with existing
 restrictions on semantic reference siblings.
 
-Generated code performs these checks without the compiler or application source
-modules. Use a built-in format or application validation for rules a pattern
-cannot express.
+Numeric definitions use `type: "number"` or `type: "integer"` and optional
+`minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, and `multipleOf`.
+Bounds are finite numbers; exclusive bounds use numeric 3.1 syntax in the
+configuration regardless of the contract dialect. `multipleOf` must be positive.
+The schema must declare the same type as the registered format. Format and
+schema constraints both apply, including distinct `multipleOf` assertions.
+Contradictory bounds and literals receive diagnostics. A type-only registration,
+such as `{ "type": "number" }`, adds no rule beyond that type.
+
+Numeric formats use the existing JavaScript number representation and do not
+provide arbitrary decimal precision or parse numeric strings. Generated code
+performs all registered checks without the compiler or application source modules.
 
 ## Operation policy
 
@@ -341,15 +352,15 @@ validated, including operations excluded from output.
 
 ## Supported vocabulary
 
-| Surface     | Current support                                                                                                                                                                                                                                                                                                                        |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input       | Local OpenAPI 3.0.x or 3.1.x JSON or YAML 1.2 with any patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                          |
-| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; whole-segment path placeholders                                                                                                                                                                                                              |
-| Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; string and optional nullable string request headers; simple path/header and form query serialization |
-| Bodies      | Required or optional JSON/text bodies; required multipart bodies; response statuses 200–599, ranges `2XX`–`5XX`, and `default`, with at least one possible success; JSON, text, or bodyless responses; string response headers; local component references and aliases                                                                 |
-| Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; productive local component references; restricted unions and maps described below                                                         |
-| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length and `uniqueItems`, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                |
-| Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, `ipv6`, and `byte`; string `password` hint; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                             |
+| Surface     | Current support                                                                                                                                                                                                                                                                                                                                            |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input       | Local OpenAPI 3.0.x or 3.1.x JSON or YAML 1.2 with any patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                                              |
+| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; path placeholders in complete segments or within a segment                                                                                                                                                                                                       |
+| Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; primitive/array request headers and optional nullable primitive headers; simple path/header and form query serialization |
+| Bodies      | Required or optional JSON/text, flat form-urlencoded and multipart bodies; response statuses 200–599, ranges `2XX`–`5XX`, and `default`, with at least one possible success; JSON, text, or bodyless responses; primitive/array response headers; local component references and aliases                                                                   |
+| Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; productive local component references; restricted unions and maps described below                                                                             |
+| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length and `uniqueItems`, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                    |
+| Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, `ipv6`, and `byte`; string `password` hint; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                                                 |
 
 ### OpenAPI versions
 
@@ -388,11 +399,9 @@ they are dropped without being interpreted, for every kind of reference. Any
 other sibling receives a diagnostic, because POM must not silently lose an
 intended constraint or apply 3.1 reference semantics. In 3.1, supported schema
 constraint siblings and non-schema reference `summary` / `description`
-annotations remain accepted. DELETE and OPTIONS request body declarations are
-rejected in 3.0: OpenAPI 3.0 tells consumers to ignore bodies whose semantics
-HTTP does not define, and POM reports an error rather than silently discarding a
-declaration. Bodyless DELETE/OPTIONS operations remain supported, and 3.1
-permits their bodies. Both dialects lower into the same generated API and
+annotations remain accepted. POM honors explicit DELETE and OPTIONS request
+body declarations in both dialects. GET and HEAD request bodies remain
+unsupported. Both dialects lower into the same generated API and
 validators; equivalent contracts produce identical output. See the [3.0 schema
 specification](https://spec.openapis.org/oas/v3.0.4.html#schema-object) and [3.1
 migration guide](https://learn.openapis.org/upgrading/v3.0-to-v3.1.html).
@@ -400,19 +409,27 @@ OpenAPI 2.0 and 3.2 are unsupported.
 
 ### Content types
 
-Request and response content supports `application/json`, concrete media types
-with a `+json` suffix, and `text/plain`; requests also support multipart as
-below, and responses also support media ranges. One representation is selected
-for each request. Request preference is `application/json`, then other `+json`
-types sorted by their lowercase names, then `text/plain`, then multipart.
+Request and response content supports `application/json`, `text/json`, concrete
+media types with a `+json` suffix, and strings under `text/plain`, `text/html`,
+`text/csv`, `text/yaml`, `text/x-yaml`, `application/yaml`, and
+`application/x-yaml`; requests also support flat form-urlencoded and multipart
+bodies as below, and responses also support media ranges. One representation is selected
+for each request. Request preference is `application/json`, then other JSON
+types sorted by their lowercase names, then text types in the same order, then
+form-urlencoded, then multipart. Charset parameters do not affect this order.
 Request selection is independent of declaration order. All declarations still
 receive validation, including nonpreferred request entries; unsupported media
-types and schemas still fail compilation. The multipart requiredness restriction
-applies only when multipart is selected; an optional JSON or text request may
-also declare a valid multipart alternative.
+types and schemas still fail compilation. Requiredness applies to the selected
+request representation, including form and multipart bodies.
 
-Content-map keys are media types without parameters. Request keys must be
-concrete; wildcard request media is rejected. Response keys may also be the
+Concrete content-map keys may have one `charset` parameter, with a token or
+quoted token value. POM preserves its normalized value in the selected request
+Content-Type and dispatches responses by the lowercase media type without
+parameters. Multiple declarations of the same media type, even with different
+charsets, are rejected. Other parameters, including `stream=watch`, are
+unsupported. Multipart declarations accept no parameters; the transport supplies
+the boundary. Request keys must be concrete; wildcard request media is rejected.
+Response keys may also be the
 ranges `type/*` and `*/*`. Other wildcard spellings, such as `*/json` or
 `application/*+json`, are rejected. Case-insensitive duplicates fail. JSON
 suffixes select JSON decoding, but do not make different media types
@@ -426,10 +443,12 @@ negotiation. Unsupported media declarations still fail compilation.
 
 Only the most specific response key applies to an observed type: the concrete
 type, then its `type/*` range, then `*/*`. Under a range, the observed
-Content-Type selects the decoder: JSON for `application/json` and `+json` types,
-text for `text/plain`. The range's schema validates the decoded value, so an
+Content-Type selects the decoder: JSON for `application/json`, `text/json`, and
+`+json` types, and text for the supported string media types above. The range's
+schema validates the decoded value, so an
 object schema under `*/*` accepts a JSON object and rejects plain text. Any
-other observed type, such as `image/png` or `text/html`, is a protocol failure,
+other observed type, such as `image/png` or `application/xml`, is a protocol
+failure,
 even when a wider range is also declared. A range is only ever a declaration: an
 observed Content-Type that itself contains a wildcard, such as
 `application/*+json`, is invalid and fails before matching a range or decoding.
@@ -452,9 +471,10 @@ Bodyless results have `contentType: undefined` and `data: undefined`. Original
 observed header values remain available in `headers`. All representation schemas
 enter the selected client's transitive projection.
 
-`text/plain` requires a nonnullable string schema, including supported
-constraints and local references. Text is passed through without JSON quoting or
-parsing; empty strings and line breaks remain data. Transports own byte
+Each supported text media type requires a nonnullable string schema, including
+supported constraints and local references. HTML, CSV and YAML syntax is not
+parsed or checked. Text is passed through without JSON quoting or parsing; empty
+strings and line breaks remain data. Transports own byte
 encoding/decoding. POM receives already-decoded JavaScript text; matching a
 Content-Type parameter does not decode bytes or validate the declared charset.
 Decode response bytes according to the endpoint's charset before calling
@@ -463,8 +483,7 @@ Decode response bytes according to the endpoint's charset before calling
 as UTF-8; other encodings need `arrayBuffer()` and an appropriate decoder. For
 text requests, send a Content-Type charset consistent with the encoded bytes.
 Text requests reject isolated UTF-16 surrogates because transport encoding would
-replace them after validation. Form-encoded bodies and binary downloads remain
-unsupported.
+replace them after validation. Binary downloads remain unsupported.
 
 ### JSON and YAML
 
@@ -552,6 +571,15 @@ including unused entries, with missing targets and cycles rejected. Component
 example names match `[A-Za-z0-9._-]+`. In 3.1, example references may add string
 `summary` and `description` annotations.
 
+Response `links` and reusable `components.links` are descriptive metadata.
+Link Objects require exactly one nonempty string `operationId` or `operationRef`;
+`parameters` and `requestBody` hold JSON values or expression strings, and
+`description` and `server` receive their usual shape checks. Local link component
+references and aliases are validated, including unused entries, missing targets,
+and cycles. Link names follow component naming rules. POM does not resolve
+operation targets, evaluate runtime expressions, fetch link URLs, or generate
+linked calls. A link does not add its target to a selected client.
+
 Example values are documentation data, not schema rules, and are not checked
 against their associated schemas. POM checks metadata shapes rather than SPDX
 expressions, URI syntax or contact email syntax, and never fetches
@@ -566,7 +594,7 @@ Supported schema composition:
 - [`allOf`](#allof-composition) supports single-branch wrappers and fixed-object
   or scalar compositions, including constrained overlapping fields, under the
   limits below.
-- `anyOf` accepts two or more supported schemas. A value is valid when any
+- `anyOf` accepts one or more supported schemas. A value is valid when any
   branch accepts it, and POM returns the first matching branch's parsed value
   in declaration order. Fixed-object branches keep their direction rules:
   requests reject fields unknown to a branch and responses strip them, so the
@@ -580,18 +608,44 @@ Supported schema composition:
   types: null, boolean, string, number (including integer), array, and object.
   Exactly one branch can then match. Use a discriminator for object
   alternatives, or `anyOf` when the first matching branch is acceptable.
+- `type: "object"` beside `oneOf` or `anyOf` is accepted when every branch
+  already requires an object, including through local references, nested unions,
+  and supported `allOf` compositions. It does not relax field validation or
+  `oneOf` matching rules. Branches allowing other JSON types, including untyped
+  `properties` schemas, receive a diagnostic. Other sibling types and nullable
+  type declarations remain unsupported.
+- Shared `properties` and `required` may appear beside `oneOf` / `anyOf` with
+  supported object alternatives. `additionalProperties`, `minProperties`, and
+  `maxProperties` follow the same [object composition rules](#allof-composition).
+  These declarations mean the same as an `allOf` of the union and its shared
+  object rules: every alternative must satisfy both. Overlapping constraints
+  accumulate, required names can refer to branch fields, and branch-local closure
+  still applies. Non-object alternatives and typed-map intersections receive
+  diagnostics; `oneOf` still requires a discriminator for multiple object
+  alternatives.
 - In 3.1, nullable schemas accept `"type": ["string", "null"]` with any supported
   non-null type and `"null"` in either order. Exactly two distinct type names
   are required. Scalar `enum` and `const` still restrict accepted values,
   including whether `null` is accepted. Existing parameter and multipart
   restrictions still apply.
 - A discriminated `oneOf` uses component references without sibling
-  constraints and requires an explicit discriminator mapping. Each branch requires the
-  discriminator field with a distinct string literal; the mapping must cover
-  every branch exactly once.
-- Objects with fixed properties use `additionalProperties: false` or omission.
-  Pure maps set `additionalProperties` to a schema or `true` for arbitrary JSON
-  values. Mixing fixed properties with dynamic entries is unsupported.
+  constraints. Mapping may be omitted or partial: the referenced component name
+  supplies the tag for each branch without an explicit mapping. Each branch
+  requires the discriminator field with a distinct string literal; the resulting
+  mapping must cover every branch exactly once. Implicit/explicit tag collisions
+  receive a diagnostic.
+- A schema with `properties` and no `type` constrains object values and also
+  accepts other JSON types, as OpenAPI requires. Generated unions retain those
+  alternatives, including for `oneOf` overlap checks. Add `type: "object"` when
+  only objects are intended, including discriminator branches. `allOf` fragments
+  retain their [composition semantics](#allof-composition).
+- Objects with fixed properties accept omitted `additionalProperties`, `false`,
+  `true`, or `{}`. POM exposes only declared fields: requests reject unknown
+  fields and responses strip them, including when the source permits extras.
+  Generated fixed-object types have no index signature. Typed extra-value
+  schemas beside fixed properties remain unsupported. Pure maps set
+  `additionalProperties` to a schema, or `true` / `{}` for arbitrary JSON
+  values, and preserve their entries.
 - In 3.1, local `$ref` schemas may add string, numeric, or array constraints, or
   `minProperties` and `maxProperties`, appropriate to the referenced type.
   Other semantic siblings are rejected.
@@ -626,7 +680,7 @@ rules also apply through references, maps, arrays and union branches.
 ### Schema limits
 
 Component schemas, HTTP schemas, and policy field declarations share a
-per-document normalization budget of 1,000,000 work units. Each source schema
+per-document normalization budget of 1,000,000 work units. Each normalization
 visit consumes one unit, as does each literal value (`enum` or `const`),
 property name, required name, composition branch-list entry, nullable type-array
 entry and discriminator mapping entry. A branch counts both its list entry and
@@ -952,13 +1006,14 @@ actionable unsupported diagnostic, even if the added field is optional. Omit
 branch does not close the union of all branches' fields. Responses still strip
 unrelated fields from supported closed compositions.
 
-Explicit dynamic `additionalProperties: true` or a schema, including `{}`,
-cannot be combined with fixed fields. The same restriction applies through local
-aliases and nested compositions. A bare `{ "type": "object" }` remains neutral
-beside fixed fields. Pure `additionalProperties: true` maps may combine with
-property-count bounds and retain all their valid members. Schema-valued maps,
-including `additionalProperties: {}`, work alone or in a single-branch wrapper;
-intersecting them with additional assertions is unsupported.
+`additionalProperties: true` or `{}` is neutral beside fixed fields, including
+through local aliases and nested compositions. The combined fixed object keeps
+the same strict request and stripped response behavior. These declarations do
+not override another branch's `additionalProperties: false`. Pure maps of
+arbitrary JSON values may combine with property-count bounds and retain their
+valid members. Typed extra-value schemas cannot combine with fixed fields.
+Typed maps work alone or in a single-branch wrapper; intersecting them with
+additional assertions is unsupported.
 
 `allOf` distributes over `anyOf` and `oneOf` branches: composing `A` with
 `oneOf: [B, C]` produces `oneOf: [allOf(A, B), allOf(A, C)]`. Each alternative
@@ -1199,14 +1254,14 @@ returns `'none' | 'text'`. Narrow by `bodyKind` before reading `body` or
 `contentType`. Present JSON/text requests expose the selected `contentType`.
 Applications JSON-encode the `json` branch, send the `text` branch as its raw
 string, and set Content-Type from `request.contentType`. Omitted bodies expose
-neither field. Required JSON/text bodies and multipart bodies retain their
-required inputs. Optional multipart and all GET/HEAD request bodies remain
-unsupported. Response validation is independent of whether a request body was
-sent.
+neither field. Optional form and multipart bodies likewise prepare `none` when
+omitted and validate the complete body when present. Required bodies retain
+their required inputs. All GET/HEAD request bodies remain unsupported. Response
+validation is independent of whether a request body was sent.
 
-Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and occupy an
-entire segment. Path values cannot be empty, `.` or `..`. Paths that differ only
-in placeholder names are rejected, even when their HTTP methods or surfaces
+Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and may occupy
+an entire segment or part of one, as in `/{id}.json`. Path values cannot be
+empty, `.` or `..`. Paths that differ only in placeholder names are rejected, even when their HTTP methods or surfaces
 differ. Concrete paths may coexist with templated paths.
 
 Path-item and operation parameter lists accept [reusable component
@@ -1259,14 +1314,57 @@ Optional nullable primitive query parameters omit `null` and `undefined`, while
 preserving `0`, `false`, empty strings allowed by the schema, and literal
 `"null"` text. Non-null values still satisfy the declared constraints and
 formats. Required nullable query parameters, nullable query arrays, and nullable
-array items are unsupported. Optional nullable string headers also omit `null`
-and `undefined`; required nullable headers are unsupported.
+array items are unsupported. Optional nullable primitive headers also omit
+`null` and `undefined`; required nullable headers and nullable header arrays are
+unsupported.
+
+### Header serialization
+
+Request and response headers support strings, numbers, integers, booleans, and
+arrays of nonnullable primitives with `simple` serialization. Typed builder
+inputs retain their schema types; numbers and booleans serialize with their
+ordinary string spelling, and arrays use comma separators. Empty arrays produce
+an empty header value. Header array strings must be nonempty, contain no commas,
+and have no surrounding spaces or tabs, because those spellings cannot preserve
+array elements through simple serialization. Other HTTP byte restrictions still
+apply.
+
+Response parsing and `validateHeaders` decode numeric, boolean, and array values
+for schema validation, including aliases, formats and constraints. Numeric values
+use finite decimal spelling, and booleans use `true` or `false`. Array elements
+ignore separator spaces and tabs before validation. Observed `headers` and
+`validatedHeaders` retain strings; decoding does not replace HTTP evidence or
+coerce standalone validators and JSON payloads.
+
+### Form-urlencoded requests
+
+`application/x-www-form-urlencoded` requests require a fixed object with
+nonnullable primitive fields or arrays of nonnullable primitives. Nested objects,
+dynamic maps, and binary fields remain unsupported. Both required and optional
+bodies work. Present arrays must have at least one item; omit an optional field
+instead of sending an empty array. Empty string fields, `0`, and `false` remain
+present values.
+
+Builders validate the typed input, then return `bodyKind: "form"`, an encoded
+string `body`, and `contentType`. Transports send that string directly and set
+Content-Type from `request.contentType`; they must not JSON-encode or form-encode
+it again. Encoding is UTF-8; other declared charsets are rejected. Omitted
+optional bodies prepare `bodyKind: "none"` without body or media fields.
+
+Field encoding defaults to `style: "form"` and `explode: true`, using repeated
+keys for arrays. A media entry may declare per-field `encoding` with `style`,
+`explode`, and `allowReserved: false`. With `explode: false`, array items are
+percent-encoded separately and joined with literal commas: `ids=1,2` or
+`tags=alpha%2Cbeta,next`. Server decoders must split raw comma separators before
+percent-decoding each item, as for query arrays. Part headers, per-field media
+types, other styles and `allowReserved: true` receive explicit diagnostics.
+Field names and string values must contain well-formed Unicode.
 
 ### Multipart requests
 
 Multipart clients require an explicit target, for example
 `"targets": { "web": "browser", "mobile": "native" }` for those selected
-clients. A required `multipart/form-data` body is a fixed object of strings,
+clients. A `multipart/form-data` body is a fixed object of strings,
 files, and file arrays. Files use `type: "string"` with `format: "binary"` in
 both dialects. In 3.1, `contentMediaType: "application/octet-stream"` is also
 supported. Browser inputs require `File`; native inputs use
@@ -1289,6 +1387,9 @@ mixed-target output.
 
 Prepared uploads have `bodyKind: "multipart"`, the complete validated `body`,
 and a `multipart` field inventory (`name`, `kind`, `multiple`, `required`).
+An omitted optional body prepares `bodyKind: "none"` without body or inventory;
+a present optional body has the same validation and file requirements as a
+required body.
 Applications resolve native references and serialize present fields, repeating
 parts for file arrays. Builders omit optional fields whose value is `undefined`.
 Serializers skip absent or `undefined` values and optional empty arrays;
@@ -1313,7 +1414,10 @@ are unsupported.
 
 Requests reject unknown fields in fixed objects. Responses strip additive fields
 from fixed objects while rejecting missing required fields, changed types, and
-unknown enum values. Declared dynamic maps validate and preserve their entries.
+unknown enum values. This also applies to fixed objects that explicitly permit
+arbitrary extras with `additionalProperties: true` or `{}`; permitted extras do
+not enter the generated application types. Declared dynamic maps validate and
+preserve their entries.
 An object schema without `properties` entries, `required` names, or
 `additionalProperties`, such as `{ "type": "object" }`, accepts and preserves
 any JSON members, as in JSON Schema. Declare `additionalProperties: false` for

@@ -547,6 +547,7 @@ void test('readOnly and writeOnly annotations accumulate through allOf aliases b
     SecretAlias: { allOf: [ref('Secret')], writeOnly: false },
     Base: {
       type: 'object',
+      additionalProperties: true,
       properties: {
         id: ref('IdAlias'),
         secret: ref('SecretAlias'),
@@ -689,7 +690,7 @@ void test('object count bounds from every conjunct apply before response fields 
           properties: { left: { type: 'integer' }, right: { type: 'integer' } },
           minProperties: 1,
         },
-        { type: 'object', maxProperties: 1 },
+        { type: 'object', additionalProperties: {}, maxProperties: 1 },
       ],
     },
   });
@@ -744,19 +745,22 @@ const invalid: readonly [string, Schema, RegExp][] = [
           properties: { id: { type: 'integer' } },
           additionalProperties: false,
         },
-        { properties: { label: { type: 'string' } } },
+        {
+          properties: { label: { type: 'string' } },
+          additionalProperties: true,
+        },
       ],
     },
     /additionalProperties|closed/,
   ],
   [
-    'open mixed fixed properties',
+    'typed mixed fixed properties',
     {
       allOf: [
         {
           type: 'object',
           properties: { id: { type: 'integer' } },
-          additionalProperties: true,
+          additionalProperties: { type: 'string' },
         },
         { properties: { label: { type: 'string' } } },
       ],
@@ -1120,6 +1124,7 @@ void test('closed empty objects and directionally emptied fixed objects retain t
       type: 'object',
       properties: { id: { type: 'string', readOnly: true } },
       required: ['id'],
+      additionalProperties: true,
     },
   ]) {
     const root = await generatedTestWorkspace(
@@ -1233,64 +1238,152 @@ void test('shared numeric ancestry preserves every independent multipleOf assert
   }
 });
 
-void test('explicit dynamic additionalProperties remains unsupported beside fixed fields through aliases and composition', async () => {
-  for (const dynamic of [true, {}]) {
-    const fixed = {
-      type: 'object',
-      properties: { id: { type: 'string' } },
-      required: ['id'],
-    };
-    const forms: readonly [string, Schema][] = [
-      ['direct', { ...fixed, additionalProperties: dynamic }],
-      [
-        'typed branch',
-        {
-          allOf: [
-            ref('Fixed'),
-            { type: 'object', additionalProperties: dynamic },
-          ],
-        },
-      ],
-      [
-        'untyped branch',
-        { allOf: [ref('Fixed'), { additionalProperties: dynamic }] },
-      ],
-      ['local alias', { allOf: [ref('Fixed'), ref('DynamicAlias')] }],
-      [
-        'nested empty composition',
-        {
-          allOf: [
-            ref('Fixed'),
-            { allOf: [{ type: 'object', additionalProperties: dynamic }, {}] },
-          ],
-        },
-      ],
-    ];
-    for (const [name, mixed] of forms) {
-      const input = document({
-        Combined: { type: 'string' },
-        Fixed: fixed,
-        Dynamic: { type: 'object', additionalProperties: dynamic },
-        DynamicAlias: ref('Dynamic'),
-        UnusedMixed: mixed,
-      });
-      const before = structuredClone(input);
-      await assert.rejects(
-        compile(input, selection),
-        (error) => {
-          assert.ok(error instanceof ContractError, name);
-          assert.match(error.location, /^components\.schemas\./, name);
-          assert.match(
-            error.message,
-            /additionalProperties|dynamic maps|dynamic.*fixed|typed maps/,
-            name,
-          );
-          return true;
-        },
-        `${name} with additionalProperties ${dynamic === true ? 'true' : '{}'}`,
-      );
-      assert.deepEqual(input, before);
+void test('arbitrary additionalProperties keeps declared fields through aliases and composition', async (t) => {
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const dynamic of [true, {}]) {
+      const fixed = {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      };
+      const forms: readonly [string, Schema][] = [
+        ['direct', { ...fixed, additionalProperties: dynamic }],
+        [
+          'closed branch',
+          {
+            allOf: [
+              { ...fixed, additionalProperties: false },
+              { type: 'object', additionalProperties: dynamic },
+            ],
+          },
+        ],
+        [
+          'typed branch',
+          {
+            allOf: [
+              ref('Fixed'),
+              { type: 'object', additionalProperties: dynamic },
+            ],
+          },
+        ],
+        [
+          'untyped branch',
+          { allOf: [ref('Fixed'), { additionalProperties: dynamic }] },
+        ],
+        ['local alias', { allOf: [ref('Fixed'), ref('DynamicAlias')] }],
+        [
+          'nested empty composition',
+          {
+            allOf: [
+              ref('Fixed'),
+              {
+                allOf: [{ type: 'object', additionalProperties: dynamic }, {}],
+              },
+            ],
+          },
+        ],
+      ];
+      for (const [name, mixed] of forms) {
+        const input = {
+          ...document({
+            Combined: mixed,
+            Fixed: fixed,
+            Dynamic: { type: 'object', additionalProperties: dynamic },
+            DynamicAlias: ref('Dynamic'),
+          }),
+          openapi,
+        };
+        const before = structuredClone(input);
+        const files = await compile(input, selection);
+        assert.deepEqual(
+          await compile(
+            parseYaml(stringify(input), 'open-objects.yaml'),
+            selection,
+          ),
+          files,
+        );
+        assert.deepEqual(input, before);
+        const root = await generatedTestWorkspace(t, files);
+        const request = await importGenerated<StandaloneModule>(
+          root,
+          'standalone.request.ts',
+        );
+        const response = await importGenerated<StandaloneModule>(
+          root,
+          'standalone.response.ts',
+        );
+        const value = { id: 'record' };
+        assert.deepEqual(request.schema.parse(value), value, name);
+        assert.equal(
+          request.schema.safeParse({ ...value, extra: true }).success,
+          false,
+          name,
+        );
+        assert.deepEqual(
+          response.schema.parse({
+            ...value,
+            get extra() {
+              throw new Error('Undeclared values must not be read');
+            },
+          }),
+          value,
+          name,
+        );
+        for (const invalid of [{}, { id: 1 }]) {
+          assert.equal(request.schema.safeParse(invalid).success, false, name);
+          assert.equal(response.schema.safeParse(invalid).success, false, name);
+        }
+      }
     }
+});
+
+void test('directionally emptied open fixed responses strip all undeclared values', async (t) => {
+  for (const additionalProperties of [true, {}]) {
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(
+        document({
+          Combined: {
+            type: 'object',
+            additionalProperties,
+            properties: { secret: { type: 'string', writeOnly: true } },
+            required: ['secret'],
+          },
+        }),
+        selection,
+      ),
+    );
+    const response = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.response.ts',
+    );
+    assert.deepEqual(
+      response.schema.parse({ secret: 'private', extra: true }),
+      {},
+    );
+  }
+});
+
+void test('typed and directional extra schemas remain unsupported beside fixed fields before selection', async () => {
+  for (const additionalProperties of [
+    { type: 'string' },
+    { readOnly: true },
+    { writeOnly: true },
+  ]) {
+    await assert.rejects(
+      compile(
+        document({
+          Combined: { type: 'string' },
+          UnusedMixed: {
+            type: 'object',
+            properties: { id: { type: 'string' } },
+            additionalProperties,
+          },
+        }),
+        selection,
+      ),
+      /UnusedMixed.additionalProperties.*mixed fixed properties/,
+    );
   }
 });
 
@@ -1337,6 +1430,15 @@ void test('bare object conjuncts remain neutral while pure explicit JSON maps re
     ],
     [{ type: 'object', additionalProperties: {} }, true],
     [{ allOf: [{ type: 'object', additionalProperties: {} }] }, true],
+    [
+      {
+        allOf: [
+          { type: 'object', additionalProperties: {} },
+          { minProperties: 1 },
+        ],
+      },
+      false,
+    ],
   ];
   for (const [map, acceptsEmpty] of maps) {
     const root = await generatedTestWorkspace(
@@ -1366,7 +1468,7 @@ void test('schema-valued map composition with additional property bounds remains
     Combined: { type: 'string' },
     UnusedTypedMap: {
       allOf: [
-        { type: 'object', additionalProperties: {} },
+        { type: 'object', additionalProperties: { type: 'string' } },
         { minProperties: 1 },
       ],
     },

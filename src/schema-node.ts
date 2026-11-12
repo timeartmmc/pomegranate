@@ -108,8 +108,6 @@ export function schemaNode(
       return {
         kind: value.kind,
         ...access,
-        additionalPropertiesExplicit:
-          own(value, 'additionalPropertiesExplicit') === true,
         values: value.values,
         minProperties: own(value, 'minProperties'),
         maxProperties: own(value, 'maxProperties'),
@@ -121,6 +119,7 @@ export function schemaNode(
         branches: value.branches,
         cardinality: own(value, 'cardinality') ?? 'any',
         sourceTypeArray: own(value, 'sourceTypeArray'),
+        sourceObjectType: own(value, 'sourceObjectType'),
         sourceLiterals: own(value, 'sourceLiterals'),
         discriminator: own(value, 'discriminator'),
       };
@@ -130,8 +129,6 @@ export function schemaNode(
         ...access,
         closed: own(value, 'closed') === true,
         typeExplicit: own(value, 'typeExplicit') !== false,
-        additionalPropertiesExplicit:
-          own(value, 'additionalPropertiesExplicit') === true,
         properties: value.properties,
         required: value.required,
         forbidden: own(value, 'forbidden'),

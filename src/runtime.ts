@@ -2248,7 +2248,8 @@ export type DeclaredResponse<R extends Responses> = [R] extends [
 export type ProtocolResult<R extends Responses> =
   | DeclaredResponse<R>
   | ProtocolFailure;
-type BodyKind = 'none' | 'json' | 'text' | 'multipart';
+type BodyKind = 'none' | 'json' | 'text' | 'form' | 'multipart';
+export type FormField = Readonly<{ name: string; explode: boolean }>;
 export type MultipartField = Readonly<{
   name: string;
   kind: 'text' | 'file';
@@ -2263,7 +2264,11 @@ export type RequestParts = {
         Record<string, Primitive | readonly Primitive[] | null | undefined>
       >
     | undefined;
-  headers?: Readonly<Record<string, string | null | undefined>> | undefined;
+  headers?:
+    | Readonly<
+        Record<string, Primitive | readonly Primitive[] | null | undefined>
+      >
+    | undefined;
   body?: unknown;
 };
 
@@ -2286,13 +2291,15 @@ export type PreparedRequest<
 }> &
   (B extends 'json' | 'text'
     ? Readonly<{ bodyKind: B; body: Body; contentType: string }>
-    : B extends 'multipart'
-      ? Readonly<{
-          bodyKind: 'multipart';
-          body: Body;
-          multipart: readonly MultipartField[];
-        }>
-      : Readonly<{ bodyKind: 'none' }>);
+    : B extends 'form'
+      ? Readonly<{ bodyKind: 'form'; body: string; contentType: string }>
+      : B extends 'multipart'
+        ? Readonly<{
+            bodyKind: 'multipart';
+            body: Body;
+            multipart: readonly MultipartField[];
+          }>
+        : Readonly<{ bodyKind: 'none' }>);
 
 type RequestBody<O> =
   NonNullable<O> extends { body?: infer Value }
@@ -2301,11 +2308,11 @@ type RequestBody<O> =
 
 // The parser owns input presence. Optional bodies may prepare either wire state;
 // the public Operation kind still describes the actual prepared request kinds.
-type PreparedBodyKind<O, B extends BodyKind> = B extends 'json' | 'text'
-  ? O extends { body: unknown }
+type PreparedBodyKind<O, B extends BodyKind> = B extends 'none'
+  ? B
+  : O extends { body: unknown }
     ? B
-    : B | 'none'
-  : B;
+    : B | 'none';
 
 export interface Operation<
   O extends RequestParts | undefined,
@@ -2352,11 +2359,12 @@ type Definition<
   B extends BodyKind,
 > = Omit<
   OperationSettings<O, R, B>,
-  'contentType' | 'multipart' | 'parameters' | 'servers'
+  'contentType' | 'multipart' | 'form' | 'parameters' | 'servers'
 > &
   Readonly<{
     contentType?: string;
     multipart?: readonly MultipartField[];
+    form?: readonly FormField[];
     parameters: readonly Parameter[];
     servers?: readonly Server[];
   }>;
@@ -2381,6 +2389,7 @@ type OperationSettings<
   bodyKind: B;
   contentType: string;
   multipart: readonly MultipartField[];
+  form: readonly FormField[];
   parameters: readonly SerializedParameter[];
   options: Parse<O>;
   headers: Readonly<
@@ -2405,8 +2414,13 @@ function operationSettings<
     bodyKind: source.bodyKind,
     contentType:
       source.contentType ??
-      (source.bodyKind === 'text' ? 'text/plain' : 'application/json'),
+      (source.bodyKind === 'text'
+        ? 'text/plain'
+        : source.bodyKind === 'form'
+          ? 'application/x-www-form-urlencoded'
+          : 'application/json'),
     multipart: source.multipart ?? [],
+    form: source.form ?? [],
     parameters: source.parameters.map((input) => {
       const parameter = ownFields(input);
       return {
@@ -2466,6 +2480,15 @@ function encodeComponent(value: string): string {
   );
 }
 
+// OpenAPI URL Percent-Encoding: escape data before joining delimiter commas.
+// Shared by query parameters and form fields so a data comma stays %2C.
+function commaSeparatedParameter(
+  name: string,
+  values: readonly string[],
+): string {
+  return `${encodeComponent(name)}=${values.map(encodeComponent).join(',')}`;
+}
+
 const tokenCharacters = "!#$%&'*+.^_`|~0-9A-Za-z-";
 const invalidHeaderName = new RegExp(`[^${tokenCharacters}]`);
 const token = `[${tokenCharacters}]+`;
@@ -2502,6 +2525,64 @@ function trimHeaderWhitespace(value: string): string {
   while (end > start && (value[end - 1] === ' ' || value[end - 1] === '\t'))
     end--;
   return value.slice(start, end);
+}
+
+// Typed header schemas validate decoded values, but HTTP evidence and prepared
+// transport headers stay strings. Simple arrays use comma separators and OWS;
+// empty fields mean an empty array, never one empty-string element.
+export function headerValueParser(
+  schema: Parse<unknown>,
+  kind: 'string' | 'number' | 'integer' | 'boolean',
+  multiple: boolean,
+): Parse<string> {
+  const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+  return (input, issues) => {
+    if (stopped(issues)) return invalid;
+    if (typeof input !== 'string' || !validHeaderValue(input))
+      return report(issues, 'expected a valid HTTP header string', true);
+    const tokens = multiple
+      ? input === ''
+        ? []
+        : input.split(',').map(trimHeaderWhitespace)
+      : [input];
+    const values: unknown[] = [];
+    for (const [index, token] of tokens.entries()) {
+      const path = multiple ? [index] : [];
+      if (multiple && token === '')
+        return report(
+          issues,
+          'empty header array elements are unsupported',
+          true,
+          path,
+        );
+      if (kind === 'string') values.push(token);
+      else if (kind === 'boolean') {
+        if (token !== 'true' && token !== 'false')
+          return report(issues, 'expected true or false in header', true, path);
+        values.push(token === 'true');
+      } else {
+        if (decimal.exec(token)?.[0] !== token)
+          return report(
+            issues,
+            'expected a decimal number in header',
+            true,
+            path,
+          );
+        values.push(Number(token));
+      }
+    }
+    const before = issues.length;
+    const parsed = schema(multiple ? values : values[0], issues);
+    if (
+      parsed === invalid ||
+      parsed === undefined ||
+      issues.length !== before
+    ) {
+      rejected(issues, before);
+      return invalid;
+    }
+    return input;
+  };
 }
 
 function observedHeaders(input: unknown) {
@@ -2603,12 +2684,22 @@ function declaredResponse(
       : undefined;
 }
 
-// The bodies this runtime decodes: JSON, including structured +json suffixes,
-// and plain text. The compiler admits concrete media declarations by this rule.
+// Textual representations pass through as strings; their syntax is application
+// data. The compiler admits concrete media declarations by this same rule.
 export function mediaDecoder(mediaType: string): 'json' | 'text' | undefined {
-  if (mediaType === 'text/plain') return 'text';
+  if (
+    mediaType === 'text/plain' ||
+    mediaType === 'text/html' ||
+    mediaType === 'text/csv' ||
+    mediaType === 'text/yaml' ||
+    mediaType === 'text/x-yaml' ||
+    mediaType === 'application/yaml' ||
+    mediaType === 'application/x-yaml'
+  )
+    return 'text';
   const subtype = mediaType.slice(mediaType.indexOf('/') + 1);
   return mediaType === 'application/json' ||
+    mediaType === 'text/json' ||
     (subtype.length > 5 && subtype.endsWith('+json'))
     ? 'json'
     : undefined;
@@ -2699,7 +2790,7 @@ function responseParser<R extends Responses>(
         addIssue(issues, {
           part: 'content-type',
           message:
-            'a declared media range accepts only JSON and text/plain response media types',
+            'a declared media range accepts only supported JSON and text response media types',
         });
       else {
         // A media type selects exactly one decoder and validator. Guessing or
@@ -2799,6 +2890,49 @@ function validateMultipart(
   }
 }
 
+function serializeForm(
+  body: unknown,
+  fields: readonly FormField[],
+  operationId: string,
+): string {
+  if (!plainRecord(body))
+    throw new RequestValidationError(operationId, [
+      { path: ['body'], message: 'expected a form object' },
+    ]);
+  const segments: string[] = [];
+  for (const field of fields) {
+    const value = Object.hasOwn(body, field.name)
+      ? body[field.name]
+      : undefined;
+    if (value === undefined) continue;
+    const values: readonly unknown[] = Array.isArray(value) ? value : [value];
+    if (values.length === 0)
+      throw new RequestValidationError(operationId, [
+        {
+          path: ['body', field.name],
+          message:
+            'form arrays must contain at least one value; omit an optional field instead',
+        },
+      ]);
+    const strings = values.map((item, index) => {
+      const serialized = String(item);
+      const path = Array.isArray(value)
+        ? ['body', field.name, index]
+        : ['body', field.name];
+      requireWellFormed(serialized, operationId, path);
+      return serialized;
+    });
+    if (!field.explode)
+      segments.push(commaSeparatedParameter(field.name, strings));
+    else {
+      const encoded = new URLSearchParams();
+      for (const value of strings) encoded.append(field.name, value);
+      segments.push(encoded.toString());
+    }
+  }
+  return segments.join('&');
+}
+
 function serializeParameters(
   operationId: string,
   template: string,
@@ -2847,13 +2981,13 @@ function serializeParameters(
         const items = value.map((item) => {
           const serialized = String(item);
           requireWellFormed(serialized, operationId, ['query', parameter.name]);
-          return encodeComponent(serialized);
+          return serialized;
         });
         segments ??= [];
         const previous = query.toString();
         if (previous) segments.push(previous);
         query = new URLSearchParams();
-        segments.push(`${encodeComponent(parameter.name)}=${items.join(',')}`);
+        segments.push(commaSeparatedParameter(parameter.name, items));
         continue;
       }
       for (const item of Array.isArray(value) ? value : [value]) {
@@ -2869,14 +3003,32 @@ function serializeParameters(
           ? headerValues[parameter.name]
           : undefined;
       if (value === undefined || value === null) continue;
-      if (!validHeaderValue(value))
+      if (
+        Array.isArray(value) &&
+        value.some(
+          (item: Primitive) =>
+            typeof item === 'string' &&
+            (item === '' ||
+              item.includes(',') ||
+              trimHeaderWhitespace(item) !== item),
+        )
+      )
+        throw new RequestValidationError(operationId, [
+          {
+            path: ['headers', parameter.name],
+            message:
+              'header array strings must be nonempty, contain no commas, and have no surrounding whitespace',
+          },
+        ]);
+      const serialized = Array.isArray(value) ? value.join(',') : String(value);
+      if (!validHeaderValue(serialized))
         throw new RequestValidationError(operationId, [
           {
             path: ['headers', parameter.name],
             message: 'invalid HTTP header value',
           },
         ]);
-      headers[parameter.name] = value;
+      headers[parameter.name] = serialized;
     }
   }
   const tail = query.toString();
@@ -2970,6 +3122,9 @@ export function defineOperation<
   const multipart = Object.freeze(
     definition.multipart.map((field) => Object.freeze({ ...field })),
   );
+  const form = Object.freeze(
+    definition.form.map((field) => Object.freeze({ ...field })),
+  );
   const parseResponse = responseParser(
     definition.operationId,
     definition.responses,
@@ -2997,7 +3152,7 @@ export function defineOperation<
     // through escaping and does not need this additional wire check.
     if (definition.bodyKind === 'text' && typeof body === 'string')
       requireWellFormed(body, definition.operationId, ['body']);
-    if (definition.bodyKind === 'multipart')
+    if (definition.bodyKind === 'multipart' && body !== undefined)
       validateMultipart(body, multipart, definition.operationId);
     const serialized = serializeParameters(
       definition.operationId,
@@ -3022,9 +3177,15 @@ export function defineOperation<
             contentType: requestContentType,
             body,
           }
-        : definition.bodyKind === 'multipart'
-          ? { bodyKind: 'multipart' as const, body, multipart }
-          : { bodyKind: 'none' as const }),
+        : definition.bodyKind === 'form' && body !== undefined
+          ? {
+              bodyKind: 'form' as const,
+              body: serializeForm(body, form, definition.operationId),
+              contentType: requestContentType,
+            }
+          : definition.bodyKind === 'multipart' && body !== undefined
+            ? { bodyKind: 'multipart' as const, body, multipart }
+            : { bodyKind: 'none' as const }),
     };
     // The generated options schema and bodyKind are emitted together from one
     // descriptor. Their relationship cannot be inferred through this generic.

@@ -339,7 +339,7 @@ void test('OpenAPI 3.0 keeps rejecting reference siblings that could carry meani
   );
 });
 
-void test('OpenAPI 3.0 validates version-specific metadata, reference siblings and request methods', async () => {
+void test('OpenAPI 3.0 validates version-specific metadata and reference siblings', async () => {
   const cases: [ReturnType<typeof fixture>, string][] = [];
   const summary = fixture();
   Object.assign(summary.info, { summary: '3.1 annotation' });
@@ -355,11 +355,6 @@ void test('OpenAPI 3.0 validates version-specific metadata, reference siblings a
     Object.assign(component, { summary: 'A 3.1 reference annotation' });
     cases.push([input, `components.${section}.${name}.summary`]);
   }
-  const deletion = fixture();
-  const operation = deletion.paths['/round-trip'].post;
-  Object.assign(deletion.paths['/round-trip'], { delete: operation });
-  Reflect.deleteProperty(deletion.paths['/round-trip'], 'post');
-  cases.push([deletion, 'paths./round-trip.delete.requestBody']);
   for (const [document, location] of cases)
     await assert.rejects(compile(document, selection), (error) => {
       assert.ok(error instanceof ContractError);

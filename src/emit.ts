@@ -128,7 +128,7 @@ function renderComponents(
 }
 
 function bodyRequired(body: Operation['body']): boolean {
-  return body.kind === 'multipart' || (body.kind !== 'none' && body.required);
+  return body.kind !== 'none' && body.required;
 }
 
 // Request options are one strict object of strict parameter groups and the
@@ -236,14 +236,18 @@ function requestHeaders(operation: Operation, renderer: SchemaRenderer) {
       .map((header, index): Entries[number] => {
         const scope = `${operationScope(operation.id)}_header_${index}`;
         const location = `${operation.id}.headers.${header.name}`;
-        // Both validation stages use one parser, declared before the options.
-        const schema = renderer.part(header.schema, 'request', location, scope);
-        schemas.set(header.name, schema);
+        const schema = renderer.headerParser(
+          header.schema,
+          'request',
+          location,
+          scope,
+        );
+        schemas.set(header.name, schema.input);
         return [
           header.name.toLowerCase(),
           object([
             ['required', literal(header.required)],
-            ['schema', schema],
+            ['schema', schema.wire],
           ]),
         ];
       }),
@@ -370,12 +374,12 @@ function prepareResponses(
       const headerTypes: string[] = [];
       const headers = object(
         response.headers.map((header, index) => {
-          const parse = renderer.part(
+          const parse = renderer.headerParser(
             header.schema,
             'response',
             `${operation.id}.responses.${response.status}.headers.${header.name}`,
             `${prefix}_header_${index}`,
-          );
+          ).wire;
           renderer.typeImports.add('ResponseHeader');
           headerTypes.push(
             `readonly ${propertyKey(header.name)}: ResponseHeader<typeof ${parse.source}${header.required ? ', true' : ''}>;`,
@@ -538,11 +542,13 @@ function prepareOperation(
     ]);
   if (operation.body.kind === 'multipart')
     settings.push(['multipart', data(operation.body.fields)]);
-  else if (operation.body.kind !== 'none')
+  else if (operation.body.kind !== 'none') {
     settings.push(['contentType', literal(operation.body.contentType)]);
+    if (operation.body.kind === 'form')
+      settings.push(['form', data(operation.body.fields)]);
+  }
   const bodyKind =
-    (operation.body.kind === 'json' || operation.body.kind === 'text') &&
-    !bodyRequired(operation.body)
+    operation.body.kind !== 'none' && !bodyRequired(operation.body)
       ? `'${operation.body.kind}' | 'none'`
       : `'${operation.body.kind}'`;
   const settingExpression = object(settings);

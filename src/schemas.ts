@@ -22,6 +22,7 @@ import type {
   SchemaDraft,
   SchemaFormat,
   RegisteredStringFormat,
+  Constraints,
 } from './model.js';
 import { assertScalarRules, intersectConstraints } from './scalar-rules.js';
 import {
@@ -50,28 +51,40 @@ import {
 } from './formats.js';
 import type { StringFormat } from './runtime.js';
 
-export type FormatRegistry = ReadonlyMap<string, RegisteredStringFormat>;
+type RegisteredFormat =
+  | (RegisteredStringFormat & { readonly type: 'string' })
+  | Readonly<{ name: string; type: 'number' | 'integer'; rules: Constraints }>;
+export type FormatRegistry = ReadonlyMap<string, RegisteredFormat>;
 
 export function normalizeFormats(input: unknown = {}): FormatRegistry {
   const definitions = record(input, 'formats');
   return new Map(
     Object.keys(definitions)
       .sort()
-      .map((name) => {
+      .map((name): [string, RegisteredFormat] => {
         const location = `formats.${name}`;
         safeKey(text(name, 'formats'), location);
         if (builtInFormat(name))
           fail(location, 'built-in formats cannot be overridden');
         const definition = record(definitions[name], location);
-        keys(definition, ['type', 'pattern'], location);
-        if (definition.type !== 'string')
-          fail(`${location}.type`, 'registered formats require type string');
-        if (typeof definition.pattern !== 'string')
-          fail(`${location}.pattern`, 'expected a pattern string');
-        // Reuse the schema pattern syntax and nesting budget, including for unused
-        // definitions. The caller's definitions never enter the generated graph.
-        const pattern = constraints(definition, location).pattern!;
-        return [name, { name, pattern }];
+        const kind = definition.type;
+        if (kind === 'string') {
+          keys(definition, ['type', 'pattern'], location);
+          if (typeof definition.pattern !== 'string')
+            fail(`${location}.pattern`, 'expected a pattern string');
+          // Reuse schema syntax and limits, including for unused definitions.
+          const pattern = constraints(definition, location).pattern!;
+          return [name, { type: kind, name, pattern }];
+        }
+        if (kind !== 'number' && kind !== 'integer')
+          fail(
+            `${location}.type`,
+            'registered formats require type string, number or integer',
+          );
+        keys(definition, ['type', ...numberConstraints], location);
+        const rules = constraints(definition, location);
+        assertScalarRules(kind, rules, undefined, location);
+        return [name, { name, type: kind, rules }];
       }),
   );
 }
@@ -126,6 +139,12 @@ function referenceName(input: unknown, location: string): string {
 
 const annotationKeys = [...schemaAnnotationKeys, 'readOnly', 'writeOnly'];
 const typedSchemaKeys = [...annotationKeys, 'type'];
+const objectSchemaKeys = [
+  'properties',
+  'required',
+  'additionalProperties',
+  ...objectConstraints,
+];
 
 function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
   function normalize(
@@ -193,6 +212,46 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
     return schema;
   }
 
+  function normalizeIntersectionMember(
+    input: unknown,
+    location: string,
+    nesting: number,
+  ): Schema {
+    const branch = record(input, location);
+    // Composition fragments commonly declare object assertions without type.
+    // Infer only this supported object vocabulary, never arbitrary JSON Schema.
+    const inferred =
+      !Object.hasOwn(branch, 'type') &&
+      !['$ref', 'allOf', 'anyOf', 'oneOf'].some((key) =>
+        Object.hasOwn(branch, key),
+      ) &&
+      objectSchemaKeys.some((key) => Object.hasOwn(branch, key));
+    const normalized = normalize(
+      inferred ? { ...branch, type: 'object' } : branch,
+      location,
+      nesting,
+      true,
+    );
+    if (!inferred) return normalized;
+    if (normalized.kind === 'object')
+      return { ...normalized, typeExplicit: false };
+    if (normalized.kind === 'map' && normalized.values === true)
+      return schemaNode({
+        kind: 'object',
+        properties: new Map(),
+        required: [],
+        typeExplicit: false,
+        minProperties: normalized.minProperties,
+        maxProperties: normalized.maxProperties,
+        readOnly: normalized.readOnly,
+        writeOnly: normalized.writeOnly,
+      });
+    fail(
+      location,
+      'allOf object fragments with dynamic additionalProperties require an explicit type and are unsupported in intersections',
+    );
+  }
+
   function normalizeIntersection(
     value: Record<string, unknown>,
     location: string,
@@ -202,50 +261,12 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
     if (!Array.isArray(raw) || raw.length === 0)
       fail(`${location}.allOf`, 'expected a nonempty array of allOf branches');
     work?.(raw.length, location);
-    const objectKeys = [
-      'properties',
-      'required',
-      'additionalProperties',
-      ...objectConstraints,
-    ];
-    const member = (input: unknown, path: string): Schema => {
-      const branch = record(input, path);
-      // Composition fragments commonly declare object assertions without type.
-      // Infer only this supported object vocabulary, never arbitrary JSON Schema.
-      const inferred =
-        !Object.hasOwn(branch, 'type') &&
-        !['$ref', 'allOf', 'anyOf', 'oneOf'].some((key) =>
-          Object.hasOwn(branch, key),
-        ) &&
-        objectKeys.some((key) => Object.hasOwn(branch, key));
-      const normalized = normalize(
-        inferred ? { ...branch, type: 'object' } : branch,
-        path,
-        nesting + 1,
-        true,
-      );
-      if (!inferred) return normalized;
-      if (normalized.kind === 'object')
-        return { ...normalized, typeExplicit: false };
-      if (normalized.kind === 'map' && normalized.values === true)
-        return schemaNode({
-          kind: 'object',
-          properties: new Map(),
-          required: [],
-          typeExplicit: false,
-          additionalPropertiesExplicit: normalized.additionalPropertiesExplicit,
-          minProperties: normalized.minProperties,
-          maxProperties: normalized.maxProperties,
-          readOnly: normalized.readOnly,
-          writeOnly: normalized.writeOnly,
-        });
-      fail(
-        path,
-        'allOf object fragments with dynamic additionalProperties require an explicit type and are unsupported in intersections',
-      );
-    };
     const branches = Array.from(arrayValues(raw), (branch, index) =>
-      member(branch, `${location}.allOf[${index}]`),
+      normalizeIntersectionMember(
+        branch,
+        `${location}.allOf[${index}]`,
+        nesting + 1,
+      ),
     );
     const branchLocations = branches.map(
       (_, index) => `${location}.allOf[${index}]`,
@@ -266,9 +287,10 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
         // one constrained reference at the author's $ref represents the whole
         // schema. Comparable bounds merge; distinct patterns and multipleOf
         // assertions stay independent because a reference holds only one of each.
-        const constrained = member(
+        const constrained = normalizeIntersectionMember(
           { ...siblings, $ref: `#/components/schemas/${only.name}` },
           location,
+          nesting + 1,
         );
         const independent = ['pattern', 'multipleOf'] as const;
         if (
@@ -291,7 +313,10 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
             writeOnly: constrained.writeOnly || only.writeOnly,
           };
         branches.push(constrained);
-      } else branches.push(member(siblings, location));
+      } else
+        branches.push(
+          normalizeIntersectionMember(siblings, location, nesting + 1),
+        );
       branchLocations.push(location);
     }
     if (branches.length === 1) return branches[0]!;
@@ -313,24 +338,61 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
       value,
       [
         keyword,
+        'type',
+        ...objectSchemaKeys,
         ...annotationKeys,
         ...(keyword === 'oneOf' ? ['discriminator'] : []),
       ],
       location,
       'schema',
     );
+    if (Object.hasOwn(value, 'type') && value.type !== 'object')
+      fail(
+        `${location}.type`,
+        `unsupported keyword form; only redundant type: object is supported beside ${keyword}`,
+      );
+    const sharedKeys = objectSchemaKeys.filter((key) =>
+      Object.hasOwn(value, key),
+    );
+    if (sharedKeys.length > 0) {
+      // Sibling object assertions are the same conjunction as an explicit
+      // allOf wrapper. Keep source paths and the original branch positions;
+      // declaration annotations stay on the enclosing node.
+      const shared = Object.fromEntries(
+        sharedKeys.map((key) => [key, value[key]]),
+      );
+      const alternative = Object.fromEntries(
+        Object.entries(value).filter(
+          ([key]) =>
+            !objectSchemaKeys.includes(key) && !annotationKeys.includes(key),
+        ),
+      );
+      return {
+        kind: 'intersection',
+        branches: [
+          schemaNode(normalizeUnion(alternative, location, nesting)),
+          normalizeIntersectionMember(shared, location, nesting),
+        ],
+        branchLocations: [location, location],
+        location,
+      };
+    }
+    const sourceObjectType = value.type === 'object' ? true : undefined;
     const raw = value[keyword];
-    if (!Array.isArray(raw) || raw.length < 2)
-      fail(`${location}.${keyword}`, 'expected at least two union branches');
+    if (!Array.isArray(raw) || raw.length === 0)
+      fail(
+        `${location}.${keyword}`,
+        'expected a nonempty array of union branches',
+      );
     work?.(raw.length, location);
     const branches = Array.from(arrayValues(raw), (branch: unknown, index) =>
       normalize(branch, `${location}.${keyword}[${index}]`, nesting + 1),
     );
     if (keyword === 'anyOf')
-      return { kind: 'union', cardinality: 'any', branches };
+      return { kind: 'union', cardinality: 'any', branches, sourceObjectType };
     // Without a tag, usage validation proves that the branches never overlap.
     if (!Object.hasOwn(value, 'discriminator'))
-      return { kind: 'union', cardinality: 'one', branches };
+      return { kind: 'union', cardinality: 'one', branches, sourceObjectType };
     const discriminator = record(
       value.discriminator,
       `${location}.discriminator`,
@@ -348,7 +410,7 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
       `${location}.discriminator.propertyName`,
     );
     const mappingSource = record(
-      discriminator.mapping,
+      Object.hasOwn(discriminator, 'mapping') ? discriminator.mapping : {},
       `${location}.discriminator.mapping`,
     );
     work?.(Object.keys(mappingSource).length, location);
@@ -374,10 +436,21 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
         return [tag, index];
       }),
     );
+    const mapped = new Set(mapping.values());
+    for (const [name, index] of positions) {
+      if (mapped.has(index)) continue;
+      if (mapping.has(name))
+        fail(
+          `${location}.discriminator.mapping.${name}`,
+          'implicit discriminator tag conflicts with an explicit mapping; map every branch to a distinct tag',
+        );
+      mapping.set(name, index);
+    }
     return {
       kind: 'union',
       cardinality: 'one',
       branches,
+      sourceObjectType,
       discriminator: { propertyName, mapping },
     };
   }
@@ -387,18 +460,7 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
     location: string,
     nesting: number,
   ): SchemaDraft {
-    keys(
-      value,
-      [
-        ...typedSchemaKeys,
-        'properties',
-        'required',
-        'additionalProperties',
-        ...objectConstraints,
-      ],
-      location,
-      'schema',
-    );
+    keys(value, [...typedSchemaKeys, ...objectSchemaKeys], location, 'schema');
     const limits = bounds(
       value,
       'minProperties',
@@ -445,24 +507,32 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
       Object.hasOwn(value, 'additionalProperties') &&
       value.additionalProperties !== false
     ) {
-      if (Object.keys(properties).length > 0 || required.length > 0)
+      const additional =
+        value.additionalProperties === true
+          ? true
+          : normalize(
+              value.additionalProperties,
+              `${location}.additionalProperties`,
+              nesting + 1,
+            );
+      const unrestricted =
+        additional === true ||
+        (additional.kind === 'json' &&
+          !additional.readOnly &&
+          !additional.writeOnly);
+      if (names.length === 0 && required.length === 0)
+        return {
+          kind: 'map',
+          values: unrestricted ? true : additional,
+          ...limits,
+        };
+      // Fixed objects expose declared fields only: requests reject unknown
+      // fields and responses strip them, even when the source permits extras.
+      if (!unrestricted)
         fail(
           `${location}.additionalProperties`,
-          'mixed fixed properties and dynamic maps are unsupported',
+          'mixed fixed properties and typed dynamic maps are unsupported',
         );
-      return {
-        kind: 'map',
-        additionalPropertiesExplicit: true,
-        ...limits,
-        values:
-          value.additionalProperties === true
-            ? true
-            : normalize(
-                value.additionalProperties,
-                `${location}.additionalProperties`,
-                nesting + 1,
-              ),
-      };
     }
     // JSON Schema admits any members when an object declares neither properties
     // nor additionalProperties. As a closed fixed object it would strip all
@@ -477,10 +547,6 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
     return {
       kind: 'object',
       closed: value.additionalProperties === false,
-      additionalPropertiesExplicit: Object.hasOwn(
-        value,
-        'additionalProperties',
-      ),
       properties: normalized,
       required: [...required].sort(),
       ...limits,
@@ -508,6 +574,7 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
     const allowed = literals(value, kind, location, nullable, work);
     let limits = constraints(value, location);
     let format: SchemaFormat | undefined;
+    let extraMultipleOf: number | undefined;
     // The password format is a presentation hint, not a validation assertion.
     // Preserve ordinary string rules without emitting an always-true predicate.
     if (
@@ -515,12 +582,23 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
       !(kind === 'string' && value.format === 'password')
     ) {
       if (typeof value.format === 'string' && registered.has(value.format)) {
-        if (kind !== 'string')
+        const definition = registered.get(value.format)!;
+        if (kind !== definition.type)
           fail(
             `${location}.format`,
-            'registered formats require a string schema',
+            `registered format ${JSON.stringify(value.format)} requires a ${definition.type} schema`,
           );
-        format = registered.get(value.format)!;
+        if (definition.type === 'string') format = definition;
+        else {
+          // Comparable bounds merge. Distinct multipleOf assertions are both
+          // required; retain the schema's assertion as a scalar intersection.
+          if (
+            definition.rules.multipleOf !== undefined &&
+            limits.multipleOf !== definition.rules.multipleOf
+          )
+            extraMultipleOf = limits.multipleOf;
+          limits = intersectConstraints(limits, definition.rules);
+        }
       } else {
         if (kind === 'number' || kind === 'integer') {
           const rules =
@@ -550,12 +628,28 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
     // must still be supported, but its numeric interval need not admit a value.
     if (nullable && nonNull?.length === 0) return { kind: 'null' };
     assertScalarRules(kind, limits, allowed, location, format);
-    const scalar: SchemaDraft = {
+    let scalar: SchemaDraft = {
       kind,
       ...limits,
       format,
       literals: nonNull,
     };
+    if (extraMultipleOf !== undefined) {
+      assertScalarRules(
+        kind,
+        { multipleOf: extraMultipleOf },
+        allowed,
+        location,
+      );
+      scalar = {
+        kind: 'intersection',
+        branches: [
+          schemaNode(scalar),
+          schemaNode({ kind, multipleOf: extraMultipleOf }),
+        ],
+        location,
+      };
+    }
     if (!nullable) return scalar;
     // type, enum and const are independent assertions. A nullable type must not
     // add null to an enum/const that excludes it, or retain non-null values when
@@ -706,6 +800,23 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
       (Object.hasOwn(value, 'enum') || Object.hasOwn(value, 'const'))
     )
       return normalizeLiterals(value, location, nesting);
+    // properties constrains objects without excluding other JSON types. Keep
+    // those alternatives explicit so oneOf overlap analysis and runtime parsing
+    // agree. allOf fragments use their separate non-narrowing object handling.
+    if (!Object.hasOwn(value, 'type') && Object.hasOwn(value, 'properties'))
+      return {
+        kind: 'union',
+        branches: [
+          schemaNode(
+            normalizeObject({ ...value, type: 'object' }, location, nesting),
+          ),
+          schemaNode({ kind: 'null' }),
+          schemaNode({ kind: 'boolean' }),
+          schemaNode({ kind: 'number' }),
+          schemaNode({ kind: 'string' }),
+          schemaNode({ kind: 'array', items: schemaNode({ kind: 'json' }) }),
+        ],
+      };
     const kind = value.type;
     if (Array.isArray(kind))
       return normalizeNullableType(value, location, nesting);

@@ -161,6 +161,7 @@ void test('schemaless JSON accepts any JSON value and schemaless text any string
     ['application/problem+json', '[]', []],
     ['text/plain', '{"a":1}', '{"a":1}'],
     ['text/plain', '', ''],
+    ['text/html', '<p>example</p>', '<p>example</p>'],
   ] as const) {
     const result = operation('optional').parseResponse({
       status: 200,
@@ -170,7 +171,7 @@ void test('schemaless JSON accepts any JSON value and schemaless text any string
     assert.equal(result.kind, 'success', contentType);
     assert.deepEqual(result.data, data);
   }
-  for (const contentType of ['application/octet-stream', 'text/html'])
+  for (const contentType of ['application/octet-stream', 'application/xml'])
     assert.equal(
       operation('optional').parseResponse({
         status: 200,

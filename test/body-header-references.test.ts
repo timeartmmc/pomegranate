@@ -297,29 +297,6 @@ void test('unused body definitions eagerly retain requiredness, content, schema 
     [
       {
         content: {
-          'multipart/form-data': {
-            schema: { type: 'object', additionalProperties: false },
-          },
-        },
-      },
-      '.required',
-      /optional multipart/,
-    ],
-    [
-      {
-        required: false,
-        content: {
-          'multipart/form-data': {
-            schema: { type: 'object', additionalProperties: false },
-          },
-        },
-      },
-      '.required',
-      /optional multipart/,
-    ],
-    [
-      {
-        content: {
           'application/json': { schema: { type: 'string', format: 'binary' } },
         },
       },
@@ -414,14 +391,14 @@ void test('unused body definitions eagerly retain requiredness, content, schema 
 void test('unused header definitions eagerly retain response schema constraints and metadata validation', async () => {
   const cases: [Record<string, unknown>, string, RegExp][] = [
     [
-      { schema: { type: 'integer' } },
+      { schema: { type: 'object' } },
       '.schema',
-      /response headers require string/,
+      /response headers require nonnullable primitives/,
     ],
     [
       { schema: { type: ['string', 'null'] } },
       '.schema',
-      /response headers require string/,
+      /response headers require nonnullable primitives/,
     ],
     [
       { schema: { type: 'string', default: undefined } },

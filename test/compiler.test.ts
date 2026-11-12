@@ -84,25 +84,28 @@ void test('accepts custom header names beside reserved names and prefixes', asyn
   await compile(document);
 });
 
-void test('header parameters reject non-string schemas, including optional nullable values', async () => {
-  for (const type of ['number', 'integer', 'boolean'])
-    for (const nullable of [false, true]) {
-      const document = fixture();
-      preparation(document).parameters.push({
-        name: 'X-Value',
-        in: 'header',
-        schema: { type: nullable ? [type, 'null'] : type },
-      });
-      await assert.rejects(compile(document), (error) => {
-        assert.ok(error instanceof ContractError);
-        assert.match(error.location, /parameters\[\d+\]\.schema$/);
-        assert.match(
-          error.message,
-          /header parameters require string schemas|optional nullable string headers/,
-        );
-        return true;
-      });
-    }
+void test('header parameters reject objects and nested arrays', async () => {
+  for (const schema of [
+    { type: 'object' },
+    { type: 'array', items: { type: 'object' } },
+    { type: 'array', items: { type: 'array', items: { type: 'string' } } },
+  ]) {
+    const document = fixture();
+    preparation(document).parameters.push({
+      name: 'X-Value',
+      in: 'header',
+      schema,
+    });
+    await assert.rejects(compile(document), (error) => {
+      assert.ok(error instanceof ContractError);
+      assert.match(error.location, /parameters\[\d+\]\.schema$/);
+      assert.match(
+        error.message,
+        /parameters require|header parameters require/,
+      );
+      return true;
+    });
+  }
 });
 
 void test('redirect and error responses cannot satisfy the required success response', async () => {
@@ -452,13 +455,13 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /default.*expected an object/,
   ],
   [
-    'dynamic map',
+    'typed dynamic map',
     (d) => {
       Object.assign(d.components.schemas.Widget, {
-        additionalProperties: true,
+        additionalProperties: { type: 'string' },
       });
     },
-    /mixed fixed properties and dynamic maps/,
+    /mixed fixed properties and typed dynamic maps/,
   ],
   [
     'malformed request body required flag',
@@ -511,13 +514,13 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /expected an object/,
   ],
   [
-    'partial placeholder',
+    'malformed partial placeholder',
     (d) => {
       Object.assign(d.paths, {
-        '/api/prefix-{id}': structuredClone(d.paths['/api/health']),
+        '/api/prefix-{id': structuredClone(d.paths['/api/health']),
       });
     },
-    /complete segment/,
+    /malformed path placeholder/,
   ],
   [
     'static dot segment',

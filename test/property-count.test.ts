@@ -329,7 +329,6 @@ void test('object reference bounds intersect through aliases and reject contradi
   for (const schema of [
     { type: 'string' },
     { type: 'array', items: { type: 'string' } },
-    { anyOf: [{ type: 'string' }, { type: 'null' }] },
   ]) {
     const invalid = fixture();
     invalid.components.schemas.Unused = { ...schema, minProperties: 1 };
@@ -339,6 +338,16 @@ void test('object reference bounds intersect through aliases and reject contradi
       /unsupported keyword/,
     );
   }
+  const wrongUnion = fixture();
+  wrongUnion.components.schemas.Unused = {
+    anyOf: [{ type: 'string' }, { type: 'null' }],
+    minProperties: 1,
+  };
+  await rejectsAt(
+    wrongUnion,
+    'components.schemas.Unused.anyOf[0]',
+    /allOf object composition cannot combine objects with scalars/,
+  );
   const wrongReference = fixture();
   wrongReference.components.schemas.Text = { type: 'string' };
   wrongReference.components.schemas.Unused = {

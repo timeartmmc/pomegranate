@@ -23,6 +23,7 @@ import type {
   SchemaTable,
   Operation,
   MultipartField,
+  FormField,
   Parameter,
   PolicyVocabulary,
   ResponseHeader,
@@ -53,6 +54,8 @@ import { normalizeOpenApi30, openApi30Diagnostic } from './openapi30.js';
 import { isRequired } from './required-index.js';
 import { responseKey, successResponses } from './response-status.js';
 import { createIntersectionNormalizer } from './intersections.js';
+import { linkComponents, responseLinks } from './links.js';
+import { flatParameterShape } from './parameter-shape.js';
 import {
   deprecatedAnnotation,
   exampleAnnotations,
@@ -87,10 +90,10 @@ type SchemaContext = Readonly<{
 }>;
 
 type OperationContext = Readonly<{
-  openApi30: boolean;
   vocabulary: PolicyVocabulary;
   schemas: SchemaContext;
   examples: ReadonlySet<string>;
+  links: ReadonlySet<string>;
   parameterComponents: ReadonlyMap<string, Parameter>;
   responseComponents: ReadonlyMap<string, ResponseDefinition>;
   requestBodyComponents: ReadonlyMap<string, RequestBodyDefinition>;
@@ -189,15 +192,22 @@ function optionalBoolean(
 }
 
 type ContentDefinition = {
-  kind: 'json' | 'text' | 'multipart' | 'observed';
+  kind: 'json' | 'text' | 'form' | 'multipart' | 'observed';
   contentType: string;
+  charset: string | undefined;
   schema: Schema;
   fields: readonly MultipartField[] | undefined;
+  form: readonly FormField[] | undefined;
 };
 
 // Only a response media range may use the wildcard, as a whole subtype or as
 // both parts. The runtime applies the same concrete token to observed evidence.
-const concreteMedia = new RegExp(`^${mediaToken}/${mediaToken}$`);
+// Charset is transport metadata for an already-decoded payload. Other media
+// parameters can change its semantics (for example stream=watch), so reject them.
+const concreteMedia = new RegExp(
+  `^(${mediaToken}/${mediaToken})(?:[\\t ]*;[\\t ]*charset=(?:(${mediaToken})|"(${mediaToken})"))?[\\t ]*$`,
+  'i',
+);
 const mediaRange = new RegExp(`^(?:\\*|${mediaToken})/\\*$`);
 
 function contentDefinitions(
@@ -214,33 +224,58 @@ function contentDefinitions(
     .sort()
     .map((name): ContentDefinition => {
       const path = `${location}.${name}`;
-      const contentType = name.toLowerCase();
       // A request sends one concrete representation. A response range leaves
       // the decoder to the type that arrives (OAS 3.1.1 §4.8.17).
-      const range = direction === 'response' && mediaRange.test(name);
-      if (!range && !concreteMedia.test(name))
+      const range =
+        direction === 'response' && mediaRange.exec(name)?.[0] === name;
+      const concrete = range ? undefined : concreteMedia.exec(name);
+      if (!range && concrete?.[0] !== name)
         fail(
           path,
           direction === 'response'
-            ? 'expected a media type, or a type/* or */* range, without parameters'
-            : 'expected a concrete media type without parameters or wildcards',
+            ? 'expected a media type with only an optional charset parameter, or a type/* or */* range without parameters'
+            : 'expected a concrete media type with only an optional charset parameter and no wildcards',
         );
+      const contentType = (concrete?.[1] ?? name).toLowerCase();
+      const charset = (concrete?.[2] ?? concrete?.[3])?.toLowerCase();
       if (seen.has(contentType))
-        fail(path, 'duplicate case-insensitive media type');
+        fail(
+          path,
+          'duplicate case-insensitive media type after removing charset',
+        );
       seen.add(contentType);
       const kind = range
         ? 'observed'
         : (mediaDecoder(contentType) ??
           (direction === 'request' && contentType === 'multipart/form-data'
             ? 'multipart'
-            : undefined));
+            : direction === 'request' &&
+                contentType === 'application/x-www-form-urlencoded'
+              ? 'form'
+              : undefined));
       if (kind === undefined)
         fail(
           path,
-          'unsupported keyword; supported media types are application/json, concrete +json types, text/plain, multipart requests and response media ranges',
+          'unsupported keyword; supported media types are JSON, HTML/CSV/YAML/plain text, form-urlencoded/multipart requests and response media ranges',
+        );
+      if (kind === 'multipart' && charset !== undefined)
+        fail(
+          path,
+          'multipart media parameters are unsupported; the transport supplies the boundary',
         );
       const media = record(content[name], path);
-      keys(media, ['schema', ...exampleKeys], path);
+      keys(
+        media,
+        ['schema', ...exampleKeys, ...(kind === 'form' ? ['encoding'] : [])],
+        path,
+      );
+      if (
+        kind === 'form' &&
+        charset !== undefined &&
+        charset !== 'utf-8' &&
+        charset !== 'utf8'
+      )
+        fail(path, 'form-urlencoded requests require UTF-8 encoding');
       exampleAnnotations(media, path, examples);
       const schemaLocation = `${path}.schema`;
       // A Media Type Object without a schema leaves its payload unconstrained
@@ -248,7 +283,9 @@ function contentDefinitions(
       // always text. Multipart parts need their declared fields.
       const unconstrained = kind === 'text' ? { type: 'string' } : {};
       let schema = normalizeFor(
-        Object.hasOwn(media, 'schema') || kind === 'multipart'
+        Object.hasOwn(media, 'schema') ||
+          kind === 'multipart' ||
+          kind === 'form'
           ? media.schema
           : unconstrained,
         schemaLocation,
@@ -270,13 +307,24 @@ function contentDefinitions(
         else if (resolved.kind !== 'string')
           fail(
             schemaLocation,
-            'text/plain requires a nonnullable string schema',
+            `${contentType} requires a nonnullable string schema`,
           );
       }
       return {
         kind,
         contentType,
+        charset,
         schema,
+        form:
+          kind === 'form'
+            ? formFields(
+                schema,
+                Object.hasOwn(media, 'encoding') ? media.encoding : {},
+                context.projection.schemas.request,
+                schemaLocation,
+                `${path}.encoding`,
+              )
+            : undefined,
         fields:
           kind === 'multipart'
             ? multipartFields(
@@ -303,7 +351,9 @@ function preferredContent(
         ? 1
         : value.kind === 'text'
           ? 2
-          : 3;
+          : value.kind === 'form'
+            ? 3
+            : 4;
   return [...candidates].sort(
     (left, right) =>
       rank(left) - rank(right) ||
@@ -392,12 +442,9 @@ function normalizeParameter(
     resolved.branches.some(
       (branch) => resolveSchema(branch, schemas).kind === 'null',
     );
-  const nullableHeader =
-    position === 'header' &&
-    nullable &&
-    resolved.branches.some(
-      (branch) => resolveSchema(branch, schemas).kind === 'string',
-    );
+  const headerShape =
+    position === 'header' ? flatParameterShape(schema, schemas) : undefined;
+  const nullableHeader = headerShape?.nullable === true;
   const nullableQuery =
     position === 'query' && nullable && resolved.branches.some(primitive);
   const queryArray =
@@ -414,10 +461,10 @@ function normalizeParameter(
       `${location}.required`,
       'nullable query parameters must be optional; null represents omission',
     );
-  if (!primitive(resolved) && !nullableHeader && !nullableQuery && !queryArray)
+  if (!primitive(resolved) && !headerShape && !nullableQuery && !queryArray)
     fail(
       `${location}.schema`,
-      'parameters require primitive schemas, primitive query arrays, optional nullable primitive queries, or optional nullable string headers',
+      'parameters require primitive schemas, flat primitive header arrays, primitive query arrays, or optional nullable primitive queries/headers',
     );
   if (position === 'header') {
     if (!validHeaderName(name))
@@ -429,8 +476,11 @@ function normalizeParameter(
       /^(?:proxy|sec)-/i.test(name)
     )
       fail(`${location}.name`, 'transport-owned or reserved request header');
-    if (resolved.kind !== 'string' && !nullableHeader)
-      fail(`${location}.schema`, 'header parameters require string schemas');
+    if (!headerShape || (headerShape.nullable && headerShape.array))
+      fail(
+        `${location}.schema`,
+        'header parameters require primitives, primitive arrays or optional nullable primitives',
+      );
   }
   return {
     name,
@@ -473,10 +523,12 @@ function normalizeHeader(
     context,
     'response',
   );
-  if (
-    resolveSchema(schema, context.projection.schemas.response).kind !== 'string'
-  )
-    fail(`${location}.schema`, 'response headers require string schemas');
+  const shape = flatParameterShape(schema, context.projection.schemas.response);
+  if (!shape || shape.nullable)
+    fail(
+      `${location}.schema`,
+      'response headers require nonnullable primitives or primitive arrays',
+    );
   return { required: optionalBoolean(header, 'required', location), schema };
 }
 
@@ -536,20 +588,77 @@ function pathTemplate(path: string, location: string): void {
   for (const segment of path.slice(1).split('/')) {
     if (segment === '.' || segment === '..')
       fail(location, 'dot segments are unsupported');
-    if (/^\{[^{}]*\}$/.test(segment)) {
-      if (!/^\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(segment))
+    const literal = segment.replace(/\{([^{}]*)\}/g, (_, name: string) => {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.exec(name)?.[0] !== name)
         fail(
           location,
           'path placeholder names must match [A-Za-z_][A-Za-z0-9_]*',
         );
-      continue;
-    }
-    if (!/^[A-Za-z0-9._~!$&'()*+,;=:@-]*$/.test(segment))
+      return '';
+    });
+    if (/[^A-Za-z0-9._~!$&'()*+,;=:@-]/.test(literal))
       fail(
         location,
-        'path placeholders must occupy a complete segment; encoded, query, fragment and non-ASCII path literals are unsupported',
+        'malformed path placeholders, encoded, query, fragment and non-ASCII path literals are unsupported',
       );
   }
+}
+
+function formFields(
+  schema: Schema,
+  input: unknown,
+  schemas: SchemaTable,
+  location: string,
+  encodingLocation: string,
+): readonly FormField[] {
+  const object = resolveSchema(schema, schemas);
+  if (object.kind !== 'object')
+    fail(
+      location,
+      'form-urlencoded requires a fixed object of primitive fields or primitive arrays',
+    );
+  const encoding = record(input, encodingLocation);
+  for (const name of Object.keys(encoding))
+    if (!object.properties.has(name))
+      fail(
+        `${encodingLocation}.${name}`,
+        'encoding must name a declared form property',
+      );
+  return [...object.properties].map(([name, field]) => {
+    const fieldLocation = `${location}.properties.${name}`;
+    if (!wellFormedUnicode(name))
+      fail(fieldLocation, 'form field names must contain well-formed Unicode');
+    const shape = flatParameterShape(field, schemas);
+    if (!shape || shape.nullable)
+      fail(
+        fieldLocation,
+        'form fields require nonnullable primitives or primitive arrays; nested objects are unsupported',
+      );
+    const declared = Object.hasOwn(encoding, name)
+      ? record(encoding[name], `${encodingLocation}.${name}`)
+      : {};
+    keys(
+      declared,
+      ['style', 'explode', 'allowReserved'],
+      `${encodingLocation}.${name}`,
+    );
+    if (Object.hasOwn(declared, 'style') && declared.style !== 'form')
+      fail(
+        `${encodingLocation}.${name}.style`,
+        'only form style is supported for form-urlencoded fields',
+      );
+    if (
+      optionalBoolean(declared, 'allowReserved', `${encodingLocation}.${name}`)
+    )
+      fail(
+        `${encodingLocation}.${name}.allowReserved`,
+        'form-urlencoded requires allowReserved: false',
+      );
+    const explode =
+      !Object.hasOwn(declared, 'explode') ||
+      optionalBoolean(declared, 'explode', `${encodingLocation}.${name}`);
+    return { name, explode: !shape.array || explode };
+  });
 }
 
 function multipartFields(
@@ -759,22 +868,30 @@ function normalizeRequestBody(
   // also covers them, so narrow it before building the request body.
   if (selected.kind === 'observed')
     fail(`${location}.content`, 'request media ranges are unsupported');
-  // Multipart requiredness constrains the generated request, not alternatives
-  // that have already been validated but were not selected.
-  if (selected.kind === 'multipart' && !required)
-    fail(
-      `${location}.required`,
-      'optional multipart request bodies are unsupported',
-    );
+  if (selected.kind === 'form')
+    return {
+      kind: 'form',
+      contentType:
+        selected.charset === undefined
+          ? selected.contentType
+          : `${selected.contentType}; charset=${selected.charset}`,
+      schema: selected.schema,
+      required,
+      fields: selected.form!,
+    };
   return selected.kind === 'multipart'
     ? {
         kind: 'multipart',
         schema: selected.schema,
+        required,
         fields: selected.fields!,
       }
     : {
         kind: selected.kind,
-        contentType: selected.contentType,
+        contentType:
+          selected.charset === undefined
+            ? selected.contentType
+            : `${selected.contentType}; charset=${selected.charset}`,
         schema: selected.schema,
         required,
       };
@@ -808,10 +925,13 @@ function normalizeResponse(
   response: Record<string, unknown>,
   context: SchemaContext,
   examples: ReadonlySet<string>,
+  links: ReadonlySet<string>,
   headers: ReadonlyMap<string, HeaderDefinition>,
   location: string,
 ): ResponseDefinition {
-  keys(response, ['description', 'content', 'headers'], location);
+  keys(response, ['description', 'content', 'headers', 'links'], location);
+  if (Object.hasOwn(response, 'links'))
+    responseLinks(response.links, `${location}.links`, links);
   if (typeof response.description !== 'string')
     fail(`${location}.description`, 'expected a response description');
   let body: ContractResponse['body'] = { kind: 'none' };
@@ -829,8 +949,14 @@ function normalizeResponse(
         representations.map((representation) => {
           // Response validation above excludes multipart. The shared helper's
           // return type also covers requests, so narrow it before building content.
-          if (representation.kind === 'multipart')
-            fail(`${location}.content`, 'multipart responses are unsupported');
+          if (
+            representation.kind === 'multipart' ||
+            representation.kind === 'form'
+          )
+            fail(
+              `${location}.content`,
+              'multipart/form-urlencoded responses are unsupported',
+            );
           return [
             representation.contentType,
             { kind: representation.kind, schema: representation.schema },
@@ -856,6 +982,7 @@ function operationResponses(
   method: (typeof methods)[number],
   context: SchemaContext,
   examples: ReadonlySet<string>,
+  links: ReadonlySet<string>,
   components: ReadonlyMap<string, ResponseDefinition>,
   headers: ReadonlyMap<string, HeaderDefinition>,
   location: string,
@@ -879,6 +1006,7 @@ function operationResponses(
               value,
               context,
               examples,
+              links,
               headers,
               responseLocation,
             )
@@ -1008,18 +1136,8 @@ function normalizeOperation(
     path,
     location,
   );
-  // Method restrictions belong to each binding. A YAML alias may reuse the same
-  // Operation Object across methods; memoized dialect lowering sees it
-  // only once and cannot enforce a rule that depends on its current method.
-  if (
-    context.openApi30 &&
-    (method === 'delete' || method === 'options') &&
-    Object.hasOwn(value, 'requestBody')
-  )
-    fail(
-      `${location}.requestBody`,
-      `${method.toUpperCase()} request bodies are unsupported in OpenAPI 3.0`,
-    );
+  // DELETE and OPTIONS declarations use the same body handling in both dialects.
+  // GET/HEAD restrictions remain per binding, including shared YAML operations.
   const body = requestBody(
     value,
     method,
@@ -1033,6 +1151,7 @@ function normalizeOperation(
     method,
     schemas,
     examples,
+    context.links,
     context.responseComponents,
     context.headerComponents,
     location,
@@ -1304,6 +1423,7 @@ function describeDocument(
       'schemas',
       'securitySchemes',
       'examples',
+      'links',
       'parameters',
       'responses',
       'requestBodies',
@@ -1313,6 +1433,9 @@ function describeDocument(
   );
   const examples = exampleComponents(
     Object.hasOwn(components, 'examples') ? components.examples : {},
+  );
+  const links = linkComponents(
+    Object.hasOwn(components, 'links') ? components.links : {},
   );
   const securitySchemes = normalizeSecuritySchemes(
     Object.hasOwn(components, 'securitySchemes')
@@ -1347,13 +1470,20 @@ function describeDocument(
     Object.hasOwn(components, 'responses') ? components.responses : {},
     'responses',
     (value, location) =>
-      normalizeResponse(value, context, examples, headerComponents, location),
+      normalizeResponse(
+        value,
+        context,
+        examples,
+        links,
+        headerComponents,
+        location,
+      ),
   );
   const operationContext: OperationContext = {
-    openApi30,
     vocabulary,
     schemas: context,
     examples,
+    links,
     parameterComponents,
     responseComponents,
     requestBodyComponents,

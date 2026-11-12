@@ -522,7 +522,7 @@ void test('nonpreferred representations and unsupported media still validate bef
     ['application/*+json', { type: 'string' }],
     ['application/+json', { type: 'string' }],
     ['text/+json', { type: 'string' }],
-    ['application/json; charset=utf-8', { type: 'string' }],
+    ['application/json; stream=watch', { type: 'string' }],
   ] as const) {
     const input = mediaFixture();
     Object.assign(input.paths['/preferred'].post.requestBody.content, {

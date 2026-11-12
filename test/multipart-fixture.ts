@@ -24,11 +24,11 @@ export function multipartFixture() {
     timeout: 'upload',
     surfaces: ['browser', 'native'],
   };
-  const operation = (id: string, schema: Schema) => ({
+  const operation = (id: string, schema: Schema, required = true) => ({
     operationId: id,
     'x-pom': policy,
     requestBody: {
-      required: true,
+      required,
       content: { 'multipart/form-data': { schema } },
     },
     responses: {
@@ -93,6 +93,9 @@ export function multipartFixture() {
           properties: { file: { type: 'string', format: 'binary' } },
           required: ['file'],
         }),
+      },
+      '/optional-file': {
+        post: operation('uploadOptional', ref('Upload'), false),
       },
     },
   };
@@ -217,6 +220,21 @@ export async function verifyMultipart(
         .body,
       { file: upload },
     );
+    for (const input of [undefined, {}, { body: undefined }]) {
+      const omitted = runtimeInput(operations.uploadOptional.build, input);
+      assert.equal(omitted.bodyKind, 'none');
+      assert.equal(Object.hasOwn(omitted, 'body'), false);
+      assert.equal(Object.hasOwn(omitted, 'multipart'), false);
+    }
+    const optional = runtimeInput(operations.uploadOptional.build, { body });
+    assert.equal(optional.bodyKind, 'multipart');
+    if (optional.bodyKind === 'multipart')
+      assert.deepEqual(optional.body, body);
+    for (const value of [null, {}, { ...body, caption: '' }])
+      assert.throws(
+        () => runtimeInput(operations.uploadOptional.build, { body: value }),
+        RequestValidationError,
+      );
     const response = request.parseResponse({
       status: 201,
       headers: { 'content-type': 'application/json' },

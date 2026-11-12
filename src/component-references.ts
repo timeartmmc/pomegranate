@@ -15,6 +15,7 @@ const labels = {
   headers: 'header',
   securitySchemes: 'security scheme',
   examples: 'example',
+  links: 'link',
 } as const;
 type Section = keyof typeof labels;
 type ReusableSection =
@@ -22,6 +23,7 @@ type ReusableSection =
   | 'responses'
   | 'requestBodies'
   | 'headers'
+  | 'links'
   | 'securitySchemes';
 
 function componentName(

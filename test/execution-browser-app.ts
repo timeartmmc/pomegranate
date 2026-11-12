@@ -144,6 +144,21 @@ export async function runExecutionBrowser() {
     },
   });
   check(upload.data.count === 6, 'complete multipart upload');
+  const omittedUpload = await uploads.uploadOptional.call({ context });
+  check(omittedUpload.data.count === 1, 'omitted multipart body');
+  const optionalUpload = await uploads.uploadOptional.call({
+    context,
+    input: {
+      body: {
+        caption: 'a\nb',
+        note: 'a\r\nb',
+        cover: file,
+        attachments: [file, file],
+        extras: [file],
+      },
+    },
+  });
+  check(optionalUpload.data.count === 6, 'present optional multipart body');
 
   // Query happy paths are covered by the raw/scoped and envelope/body matrix
   // below. This mount owns mutation failure, recovery and application effects.

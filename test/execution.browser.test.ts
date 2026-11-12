@@ -88,7 +88,12 @@ void test('one application executor serves real Chromium calls, uploads and moun
         response.end();
         return;
       }
-      if (url.pathname === '/uploads') {
+      if (url.pathname === '/optional-file' && chunks.length === 0) {
+        assert.equal(request.headers['content-type'], undefined);
+        send(201, { count: 1 });
+        return;
+      }
+      if (url.pathname === '/uploads' || url.pathname === '/optional-file') {
         const form = await new Response(new Uint8Array(Buffer.concat(chunks)), {
           headers: { 'Content-Type': request.headers['content-type']! },
         }).formData();
@@ -191,8 +196,8 @@ void test('one application executor serves real Chromium calls, uploads and moun
     'PUT',
   ]);
   // Each of the four mounted matrix cases now restores an optimistic offset page.
-  assert.equal(result.requests, 55);
-  assert.equal(result.reads, 55);
+  assert.equal(result.requests, 57);
+  assert.equal(result.reads, 57);
   assert.equal(result.effects, 1);
   assert.equal(result.scopedValidations, 22);
   assert.deepEqual(result.mixedInvalidations, ['raw/cursor', 'scoped/offset']);

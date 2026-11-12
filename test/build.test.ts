@@ -74,6 +74,7 @@ void test('preparing test signatures replaces a symlink while preserving its tar
     'offset-fixture.ts',
     'native-fixture.ts',
     'execution-fixture.ts',
+    'serialization-fixture.ts',
   ])
     await copyFile(
       new URL(name, import.meta.url),

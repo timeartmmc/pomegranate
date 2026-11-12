@@ -96,9 +96,9 @@ void test('ignored header parameters are not declared headers but keep their dec
   await rejects((document) => {
     preparation(document).parameters.push({
       ...header('Accept'),
-      schema: { type: 'integer' },
+      schema: { type: 'object' },
     });
-  }, /parameters\[\d\]\.schema: header parameters require string schemas$/);
+  }, /parameters\[\d\]\.schema: parameters require primitive schemas/);
   await rejects((document) => {
     preparation(document).parameters.push({
       ...header('Content-Type'),

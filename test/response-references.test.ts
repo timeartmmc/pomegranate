@@ -373,13 +373,13 @@ void test('unused response definitions undergo full response schema and header v
       /may only be omitted as object properties/,
     ],
     [
-      'numeric response header',
+      'object response header',
       {
         description: 'Invalid',
-        headers: { Count: { schema: { type: 'integer' } } },
+        headers: { Count: { schema: { type: 'object' } } },
       },
       '.headers.Count.schema',
-      /response headers require string schemas/,
+      /response headers require nonnullable primitives/,
     ],
     [
       'reserved response header',

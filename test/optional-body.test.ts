@@ -259,7 +259,7 @@ void test('the JSON example transport omits content type and bytes for absent op
   ]);
 });
 
-void test('optional JSON keeps unsupported body forms and query selections explicit', async () => {
+void test('optional bodies keep invalid settings, multipart targets and query selections explicit', async () => {
   for (const required of [undefined, null, 'false', 0]) {
     const document = fixture();
     Object.assign(document.paths['/nullable'].post.requestBody, { required });
@@ -282,8 +282,12 @@ void test('optional JSON keeps unsupported body forms and query selections expli
     });
     await assert.rejects(
       compile(document, { clients: ['consumer'] }),
-      /requestBody.required.*multipart/,
+      /targets.consumer.*multipart clients require an explicit/,
     );
+    await compile(document, {
+      clients: ['consumer'],
+      targets: { consumer: 'browser' },
+    });
   }
   for (const method of ['get', 'head']) {
     const document = fixture();

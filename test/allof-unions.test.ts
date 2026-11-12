@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { stringify } from 'yaml';
 import { compile, ContractError } from '../dist/index.js';
+import { parseYaml } from '../dist/yaml.js';
 import {
   generatedTestWorkspace,
   importGenerated,
@@ -84,6 +86,258 @@ async function typecheckConsumer(root: string, source: string) {
     join(root, 'tsconfig.json'),
   ]);
 }
+
+const sharedSelection = {
+  clients: [],
+  standalone: {
+    request: { schema: ref('Value').$ref, usage: 'request' },
+    response: { schema: ref('Value').$ref, usage: 'response' },
+  },
+} as const;
+
+void test('shared fields beside unions preserve branch constraints, recursion and allOf output in both dialects', async (t) => {
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const keyword of ['anyOf', 'oneOf'])
+      for (const explicitType of [false, true]) {
+        const choice: Schema = {
+          ...(keyword === 'oneOf'
+            ? contract(openapi, {}).components.schemas.Tagged
+            : { anyOf: [ref('A'), ref('B')] }),
+          ...(explicitType ? { type: 'object' } : {}),
+        };
+        const shared: Schema = {
+          properties: {
+            id: { type: 'string', minLength: 2 },
+            a: { type: 'integer', minimum: 1 },
+            next: ref('Value'),
+          },
+          required: ['id'],
+          additionalProperties: true,
+        };
+        const source = contract(openapi, { Value: { ...choice, ...shared } });
+        const before = structuredClone(source);
+        const files = await compile(source, sharedSelection);
+        assert.deepEqual(
+          await compile(
+            contract(openapi, { Value: { allOf: [choice, shared] } }),
+            sharedSelection,
+          ),
+          files,
+        );
+        assert.deepEqual(
+          await compile(
+            parseYaml(stringify(source), 'shared-fields.yaml'),
+            sharedSelection,
+          ),
+          files,
+        );
+        assert.deepEqual(source, before);
+        const root = await generatedTestWorkspace(t, files);
+        const request = (
+          await importGenerated<StandaloneModule>(root, 'standalone.request.ts')
+        ).schema;
+        const response = (
+          await importGenerated<StandaloneModule>(
+            root,
+            'standalone.response.ts',
+          )
+        ).schema;
+        const value = {
+          kind: 'a',
+          a: 1,
+          id: 'outer',
+          next: { kind: 'b', b: 'branch', id: 'inner' },
+        };
+        assert.deepEqual(request.parse(value), value);
+        assert.deepEqual(
+          response.parse({
+            ...value,
+            extra: true,
+            next: { ...value.next, extra: true },
+          }),
+          value,
+        );
+        assert.equal(
+          request.safeParse({ ...value, extra: true }).success,
+          false,
+        );
+        for (const invalid of [
+          null,
+          [],
+          'record',
+          { kind: 'a', a: 1 },
+          { kind: 'a', a: 1, id: 'x' },
+          { kind: 'a', a: 0, id: 'record' },
+          { kind: 'a', a: 1.5, id: 'record' },
+          { kind: 'b', b: 1, id: 'record' },
+          { kind: 'a', a: 1, id: 'outer', next: { kind: 'b', b: 'branch' } },
+        ]) {
+          assert.equal(request.safeParse(invalid).success, false);
+          assert.equal(response.safeParse(invalid).success, false);
+        }
+      }
+});
+
+void test('shared required names, directional fields and property counts apply to every tagged alternative', async (t) => {
+  for (const openapi of ['3.0.4', '3.1.2']) {
+    const source = contract(openapi, {
+      Tagged: {
+        ...contract(openapi, {}).components.schemas.Tagged,
+        required: ['kind'],
+      },
+      A: fixed(
+        { kind: { type: 'string', enum: ['a'] }, a: { type: 'integer' } },
+        ['a'],
+      ),
+      B: fixed(
+        { kind: { type: 'string', enum: ['b'] }, b: { type: 'string' } },
+        ['b'],
+      ),
+      Value: {
+        ...contract(openapi, {}).components.schemas.Tagged,
+        properties: {
+          server: { type: 'string', readOnly: true },
+          secret: { type: 'string', writeOnly: true },
+        },
+        required: ['kind', 'server', 'secret'],
+        minProperties: 3,
+        maxProperties: 4,
+      },
+    });
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(source, sharedSelection),
+    );
+    const request = (
+      await importGenerated<StandaloneModule>(root, 'standalone.request.ts')
+    ).schema;
+    const response = (
+      await importGenerated<StandaloneModule>(root, 'standalone.response.ts')
+    ).schema;
+    for (const branch of [
+      { kind: 'a', a: 1 },
+      { kind: 'b', b: 'branch' },
+    ]) {
+      const sent = { ...branch, secret: 'private' };
+      const observed = { ...branch, server: 'public' };
+      assert.deepEqual(request.parse(sent), sent);
+      assert.deepEqual(
+        response.parse({ ...observed, secret: false }),
+        observed,
+      );
+      assert.equal(request.safeParse(branch).success, false);
+      assert.equal(response.safeParse(branch).success, false);
+      assert.equal(
+        request.safeParse({ ...sent, server: 'forbidden' }).success,
+        false,
+      );
+      assert.deepEqual(response.parse({ ...observed, extra: true }), observed);
+      assert.equal(
+        response.safeParse({ ...observed, secret: 'hidden', extra: true })
+          .success,
+        false,
+      );
+    }
+  }
+});
+
+void test('directional annotations on a shared-field union remain on the enclosing property', async (t) => {
+  for (const access of ['readOnly', 'writeOnly']) {
+    const source = contract('3.1.2', {
+      Value: fixed(
+        {
+          record: {
+            ...contract('3.1.2', {}).components.schemas.Tagged,
+            properties: { id: { type: 'string' } },
+            required: ['id'],
+            [access]: true,
+          },
+        },
+        ['record'],
+      ),
+    });
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(source, sharedSelection),
+    );
+    const request = (
+      await importGenerated<StandaloneModule>(root, 'standalone.request.ts')
+    ).schema;
+    const response = (
+      await importGenerated<StandaloneModule>(root, 'standalone.response.ts')
+    ).schema;
+    const value = { record: { kind: 'a', a: 1, id: 'record' } };
+    if (access === 'readOnly') {
+      assert.deepEqual(request.parse({}), {});
+      assert.equal(request.safeParse(value).success, false);
+      assert.deepEqual(response.parse(value), value);
+      assert.equal(response.safeParse({}).success, false);
+    } else {
+      assert.deepEqual(request.parse(value), value);
+      assert.equal(request.safeParse({}).success, false);
+      assert.deepEqual(response.parse(value), {});
+    }
+  }
+});
+
+void test('shared union fields diagnose malformed rules, contradictory branches and closure before selection', async () => {
+  for (const openapi of ['3.0.4', '3.1.2']) {
+    const choice = contract(openapi, {}).components.schemas.Tagged;
+    const cases: readonly [Schema, RegExp][] = [
+      [
+        { ...choice, properties: { id: { type: 'string', minLength: -1 } } },
+        /properties.id.minLength/,
+      ],
+      [{ ...choice, required: ['kind', 'kind'] }, /required.*duplicate/],
+      [
+        { ...choice, properties: { a: { type: 'string' } } },
+        /incompatible scalar types/,
+      ],
+      [
+        {
+          ...choice,
+          properties: { id: { type: 'string' } },
+          additionalProperties: false,
+        },
+        /branch-local additionalProperties: false/,
+      ],
+      [
+        {
+          ...choice,
+          properties: { id: { type: 'string' } },
+          additionalProperties: { type: 'string' },
+        },
+        /mixed fixed properties and typed dynamic maps/,
+      ],
+      [
+        {
+          anyOf: [ref('A'), { type: 'string' }],
+          properties: { id: { type: 'string' } },
+        },
+        /allOf.*cannot combine|allOf.*incompatible/,
+      ],
+      [
+        {
+          anyOf: [{ properties: { label: { type: 'string' } } }],
+          properties: { id: { type: 'string' } },
+        },
+        /allOf/,
+      ],
+    ];
+    for (const [Value, expected] of cases) {
+      const source = contract(openapi, { Value });
+      const before = structuredClone(source);
+      await assert.rejects(
+        compile(source, {
+          clients: [],
+          standalone: { a: { schema: ref('A').$ref, usage: 'request' } },
+        }),
+        expected,
+      );
+      assert.deepEqual(source, before);
+    }
+  }
+});
 
 void test('allOf distributes shared fields over tagged and anyOf unions in OpenAPI 3.0 and 3.1', async (t) => {
   for (const openapi of ['3.0.3', '3.1.2']) {

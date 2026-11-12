@@ -282,9 +282,8 @@ void test('scoped execution freezes detached arbitrary JSON while returning muta
   );
 });
 
-void test('empty schema support does not infer types or discard reference constraints', async () => {
+void test('empty schema support rejects unsupported untyped assertions and retains reference constraints', async () => {
   for (const schema of [
-    { properties: { value: {} } },
     { minimum: 1 },
     { items: {} },
     { additionalProperties: {} },
@@ -320,7 +319,7 @@ void test('empty schema support does not infer types or discard reference constr
   });
   await assert.rejects(
     compile(header, anyJsonSelection),
-    /response headers require string schemas/,
+    /response headers require nonnullable primitives/,
   );
   const multipart = anyJsonFixture();
   Object.assign(multipart.paths['/value'].post.requestBody, {

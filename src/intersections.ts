@@ -450,7 +450,6 @@ export function createIntersectionNormalizer(
     if (object.properties.size === 0 && !object.closed)
       return schemaNode({
         kind: 'map',
-        additionalPropertiesExplicit: object.additionalPropertiesExplicit,
         values: true,
         minProperties: object.minProperties,
         maxProperties: object.maxProperties,
@@ -773,8 +772,6 @@ export function createIntersectionNormalizer(
           'allOf object fragments require an explicit type: object conjunct',
         );
       let limits = constraintRecord();
-      let additionalPropertiesExplicit = false;
-      let explicitlyOpen = false;
       const fields = new Map<string, Schema[]>();
       const fieldLocations = new Map<string, string[]>();
       const required = new Set<string>();
@@ -782,13 +779,6 @@ export function createIntersectionNormalizer(
       const closed: Extract<Schema, { kind: 'object' }>[] = [];
       for (const [index, target] of targets.entries()) {
         limits = intersectConstraints(limits, target.limits);
-        const shape = target.schema;
-        if (shape.kind === 'object' || shape.kind === 'map') {
-          additionalPropertiesExplicit ||= shape.additionalPropertiesExplicit;
-          explicitlyOpen ||=
-            shape.additionalPropertiesExplicit &&
-            (shape.kind === 'map' || !shape.closed);
-        }
         if (target.schema.kind !== 'object') continue;
         const object = objectChildren(target.schema, location);
         charge(object.properties.size + object.required.length, location);
@@ -821,16 +811,6 @@ export function createIntersectionNormalizer(
         closed.length * fields.size + fields.size + required.size,
         location,
       );
-      // A bare object assertion is neutral. Explicit additionalProperties:true
-      // declares map intent, which must retain the same admission limit as a
-      // direct declaration mixing fixed properties with dynamic entries. A
-      // required name is a fixed member as well, declared or not: resolving
-      // it into a field below would drop the map's other entries.
-      if ((fields.size > 0 || required.size > 0) && explicitlyOpen)
-        fail(
-          location,
-          'mixed fixed properties and dynamic maps are unsupported',
-        );
       for (const object of closed)
         for (const name of fields.keys())
           if (!object.properties.has(name))
@@ -871,7 +851,6 @@ export function createIntersectionNormalizer(
         required: [...required].sort(),
         closed: closed.length > 0,
         typeExplicit: true,
-        additionalPropertiesExplicit,
         minProperties: limits.minProperties,
         maxProperties: limits.maxProperties,
         ...access,
@@ -889,10 +868,6 @@ export function createIntersectionNormalizer(
       assertScalarRules('map', limits, undefined, location);
       return schemaNode({
         kind: 'map',
-        additionalPropertiesExplicit: targets.some(
-          ({ schema }) =>
-            schema.kind === 'map' && schema.additionalPropertiesExplicit,
-        ),
         values: true,
         minProperties: limits.minProperties,
         maxProperties: limits.maxProperties,
@@ -961,8 +936,30 @@ export function createIntersectionNormalizer(
           };
           break;
         case 'union':
+          if (input.sourceObjectType) {
+            // Prove redundancy before distributing allOf: later conjuncts may
+            // narrow a branch and hide a non-object alternative in the source.
+            charge(input.branches.length, location);
+            const pending = [...input.branches];
+            const seen = new Set<Schema>();
+            while (pending.length > 0) {
+              const branch = resolve(pending.pop()!, location).schema;
+              if (seen.has(branch)) continue;
+              charge(1, location);
+              seen.add(branch);
+              if (branch.kind === 'union') {
+                charge(branch.branches.length, location);
+                for (const child of branch.branches) pending.push(child);
+              } else if (branch.kind !== 'object' && branch.kind !== 'map')
+                fail(
+                  `${location}.type`,
+                  `non-redundant type: object beside ${unionKeyword(input)} is unsupported; every branch must already require an object; make object types explicit in the branches or use a supported allOf composition`,
+                );
+            }
+          }
           result = {
             ...input,
+            sourceObjectType: undefined,
             branches: input.branches.map((branch, index) =>
               normalize(branch, `${location}.${unionKeyword(input)}[${index}]`),
             ),

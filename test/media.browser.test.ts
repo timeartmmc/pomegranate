@@ -12,12 +12,20 @@ import { compile } from '../dist/index.js';
 import { generatedTestWorkspace } from './generated-workspace.ts';
 import { mediaFixture, mediaSelection } from './media-fixture.ts';
 import type { MediaClient } from './media-fixture.ts';
+import {
+  interoperabilityFixture,
+  interoperabilitySelection,
+} from './interoperability-fixture.ts';
 
 void test('Chromium preserves selected request bytes and dispatches every declared response representation', async (t) => {
-  const root = await generatedTestWorkspace(
-    t,
-    await compile(mediaFixture(), mediaSelection),
-  );
+  const root = await generatedTestWorkspace(t, {
+    ...(await compile(mediaFixture(), mediaSelection)),
+    ...(await compile(interoperabilityFixture(), {
+      ...interoperabilitySelection,
+      clients: ['interop'],
+      surfaces: { interop: interoperabilitySelection.surfaces.consumer },
+    })),
+  });
   await writeFile(
     join(root, 'tsconfig.json'),
     JSON.stringify({
@@ -45,14 +53,20 @@ void test('Chromium preserves selected request bytes and dispatches every declar
     contentType: string | undefined;
     bytes: Buffer;
   }[] = [];
+  const requests: Record<string, readonly [string, string]> = {
+    '/unicode-text': ['POST', 'text/plain'],
+    '/suffix': ['POST', 'application/problem+json'],
+    '/preferred': ['POST', 'application/json'],
+    '/records/a%2Fb.json': ['DELETE', 'text/json; charset=utf-8'],
+    '/text0': ['OPTIONS', 'text/html'],
+    '/text1': ['OPTIONS', 'text/csv'],
+    '/text2': ['OPTIONS', 'application/yaml'],
+  };
   const server = createServer((request, response) => {
     void (async () => {
       assert.ok(request.url);
-      if (
-        request.url === '/unicode-text' ||
-        request.url === '/suffix' ||
-        request.url === '/preferred'
-      ) {
+      const expected = requests[request.url];
+      if (expected) {
         const chunks: Buffer[] = [];
         for await (const chunk of request) {
           assert.ok(Buffer.isBuffer(chunk));
@@ -61,15 +75,8 @@ void test('Chromium preserves selected request bytes and dispatches every declar
         const bytes = Buffer.concat(chunks);
         const contentType = request.headers['content-type'];
         received.push({ url: request.url, contentType, bytes });
-        assert.equal(request.method, 'POST');
-        assert.equal(
-          contentType,
-          request.url === '/suffix'
-            ? 'application/problem+json'
-            : request.url === '/preferred'
-              ? 'application/json'
-              : 'text/plain',
-        );
+        assert.equal(request.method, expected[0]);
+        assert.equal(contentType, expected[1]);
         if (request.url === '/preferred') {
           const media = request.headers['x-reply-media'];
           assert.ok(typeof media === 'string');
@@ -201,7 +208,32 @@ void test('Chromium preserves selected request bytes and dispatches every declar
         rejected.push(error instanceof client.RequestValidationError);
       }
     }
-    return { texts, json, wrong, rejected, representations, network };
+    const interopSpecifier = '/generated/client.interop.js';
+    const interop = (await import(interopSpecifier)) as MediaClient;
+    const interoperability = [];
+    for (const [name, input] of [
+      [
+        'remove',
+        { path: { id: 'a/b' }, body: { kind: 'Cat', id: 1, amount: 0.5 } },
+      ],
+      ...['text0', 'text1', 'text2'].map(
+        (name) => [name, { body: '<p>😀</p>\ntext' }] as const,
+      ),
+    ] as const) {
+      const operation = interop.operations[name];
+      if (!operation)
+        throw new Error(`Missing interoperability operation ${name}`);
+      interoperability.push(await send(operation.build(input)));
+    }
+    return {
+      texts,
+      json,
+      wrong,
+      rejected,
+      representations,
+      interoperability,
+      network,
+    };
   }, '/generated/client.consumer.js');
   const bodies = ['', '\nline\n', '😀', '{"code":"ok"}'];
   for (const [index, observed] of result.texts.entries()) {
@@ -225,11 +257,26 @@ void test('Chromium preserves selected request bytes and dispatches every declar
   }
   assert.equal(result.wrong.parsed.kind, 'protocol');
   assert.deepEqual(result.rejected, [true, true]);
-  assert.equal(result.network, 10);
-  assert.equal(received.length, 10);
-  for (const [index, observed] of received.entries())
+  for (const [index, response] of result.interoperability.entries()) {
+    assert.equal(response.parsed.kind, 'success');
     assert.deepEqual(
-      observed.bytes,
-      Buffer.from(index < bodies.length ? bodies[index]! : '{"code":"ok"}'),
+      response.parsed.data,
+      index === 0 ? { kind: 'Cat', id: 1, amount: 0.5 } : '<p>😀</p>\ntext',
     );
+  }
+  assert.equal(result.network, 14);
+  assert.equal(received.length, 14);
+  const expectedBodies = [
+    ...bodies,
+    ...Array.from({ length: 6 }, () => '{"code":"ok"}'),
+    { kind: 'Cat', id: 1, amount: 0.5 },
+    ...Array.from({ length: 3 }, () => '<p>😀</p>\ntext'),
+  ];
+  for (const [index, observed] of received.entries()) {
+    const expected = expectedBodies[index]!;
+    if (typeof expected === 'string')
+      assert.deepEqual(observed.bytes, Buffer.from(expected));
+    else
+      assert.deepEqual(JSON.parse(observed.bytes.toString('utf8')), expected);
+  }
 });

@@ -51,7 +51,6 @@ export type SchemaDraft = {
     }
   | {
       readonly kind: 'map';
-      readonly additionalPropertiesExplicit?: boolean | undefined;
       readonly values: Schema | true;
       readonly minProperties?: number | undefined;
       readonly maxProperties?: number | undefined;
@@ -65,6 +64,9 @@ export type SchemaDraft = {
       // Diagnostic provenance: these branches came from a nullable type
       // declaration, rather than an anyOf keyword in the source document.
       readonly sourceTypeArray?: true | undefined;
+      // Admission checks this assertion before composition can distribute the
+      // alternatives. It may disappear only after every branch is object-only.
+      readonly sourceObjectType?: true | undefined;
       // Different-type enum groups may narrow an intersection; explicit
       // anyOf/oneOf alternatives must retain their ordinary contradiction checks.
       readonly sourceLiterals?: true | undefined;
@@ -82,7 +84,6 @@ export type SchemaDraft = {
       // an omitted type in an object fragment must not narrow primitive values.
       readonly closed?: boolean | undefined;
       readonly typeExplicit?: boolean | undefined;
-      readonly additionalPropertiesExplicit?: boolean | undefined;
       readonly properties: ReadonlyMap<string, Schema>;
       readonly required: readonly string[];
       readonly forbidden?: readonly string[] | undefined;
@@ -142,7 +143,6 @@ export type Schema = {
     }
   | ({
       readonly kind: 'map';
-      readonly additionalPropertiesExplicit: boolean;
       readonly values: Schema | true;
     } & Pick<Constraints, 'minProperties' | 'maxProperties'>)
   | {
@@ -150,6 +150,7 @@ export type Schema = {
       readonly branches: readonly Schema[];
       readonly cardinality: 'any' | 'one';
       readonly sourceTypeArray: true | undefined;
+      readonly sourceObjectType: true | undefined;
       readonly sourceLiterals: true | undefined;
       readonly discriminator:
         | {
@@ -163,7 +164,6 @@ export type Schema = {
       readonly kind: 'object';
       readonly closed: boolean;
       readonly typeExplicit: boolean;
-      readonly additionalPropertiesExplicit: boolean;
       readonly properties: ReadonlyMap<string, Schema>;
       readonly required: readonly string[];
       readonly forbidden: readonly string[] | undefined;
@@ -281,8 +281,16 @@ export type Operation = {
         readonly required: boolean;
       }
     | {
+        readonly kind: 'form';
+        readonly contentType: string;
+        readonly schema: Schema;
+        readonly required: boolean;
+        readonly fields: readonly FormField[];
+      }
+    | {
         readonly kind: 'multipart';
         readonly schema: Schema;
+        readonly required: boolean;
         readonly fields: readonly MultipartField[];
       };
   readonly responses: readonly ContractResponse[];
@@ -294,6 +302,7 @@ export type MultipartField = {
   readonly multiple: boolean;
   readonly required: boolean;
 };
+export type FormField = Readonly<{ name: string; explode: boolean }>;
 
 export type Descriptor = {
   readonly policy: PolicyVocabulary;

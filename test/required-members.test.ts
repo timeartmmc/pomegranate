@@ -194,19 +194,65 @@ void test('required-only members must be present, hold any JSON value and surviv
   ]);
 });
 
+void test('arbitrary extras declarations keep required-only members fixed through composition', async (t) => {
+  for (const modern of [true, false])
+    for (const additionalProperties of [true, {}]) {
+      const openMap = { type: 'object', additionalProperties };
+      for (const schema of [
+        { ...openMap, required: ['id'] },
+        { allOf: [openMap, { required: ['id'] }] },
+        {
+          allOf: [
+            { additionalProperties },
+            { type: 'object', required: ['id'] },
+          ],
+        },
+        { allOf: [openMap], required: ['id'] },
+        {
+          allOf: [
+            { $ref: '#/components/schemas/OpenMap' },
+            { required: ['id'] },
+          ],
+        },
+      ]) {
+        const document = fixture(modern);
+        Object.assign(document.components.schemas, {
+          Only: schema,
+          OpenMap: openMap,
+        });
+        const root = await generatedTestWorkspace(
+          t,
+          await compile(document, selection),
+        );
+        const { requestSchemas, responseSchemas } =
+          await importGenerated<Schemas>(root, 'client.client.schemas.ts');
+        const request = present(requestSchemas.Only);
+        const response = present(responseSchemas.Only);
+        const value = { id: { any: [1, null] } };
+        assert.deepEqual(request.parse(value), value);
+        assert.equal(
+          request.safeParse({ ...value, unlisted: true }).success,
+          false,
+        );
+        assert.deepEqual(response.parse({ ...value, unlisted: true }), value);
+        for (const invalid of [{}, { id: undefined }, { id: () => true }]) {
+          assert.equal(request.safeParse(invalid).success, false);
+          assert.equal(response.safeParse(invalid).success, false);
+        }
+      }
+    }
+});
+
 void test('closed objects and unusable names keep their required diagnostics', async () => {
   // Raw records: some cases are deliberately malformed schemas.
   const rejects = async (
     schema: Record<string, unknown>,
     location: string,
     message: RegExp,
-    components: Record<string, Schema> = {},
   ) => {
     for (const modern of [true, false]) {
       const document = fixture(modern);
-      Object.assign(document.components.schemas, components, {
-        Invalid: schema,
-      });
+      document.components.schemas.Invalid = schema;
       await assert.rejects(compile(document, selection), (error) => {
         assert.ok(error instanceof ContractError, location);
         assert.equal(error.location, `components.schemas.Invalid${location}`);
@@ -249,41 +295,8 @@ void test('closed objects and unusable names keep their required diagnostics', a
       required: ['extra'],
     },
     '.additionalProperties',
-    /mixed fixed properties and dynamic maps are unsupported$/,
+    /mixed fixed properties and typed dynamic maps are unsupported$/,
   );
-  // An explicit map keeps its entries. Composing it with a required name is
-  // the same mixture as the direct declaration, not a fixed object that would
-  // reject or strip every other entry.
-  const mixed = /mixed fixed properties and dynamic maps are unsupported$/;
-  await rejects(
-    { type: 'object', additionalProperties: true, required: ['extra'] },
-    '.additionalProperties',
-    mixed,
-  );
-  const openMap = { type: 'object', additionalProperties: true };
-  for (const schema of [
-    { allOf: [openMap, { required: ['extra'] }] },
-    {
-      allOf: [
-        { additionalProperties: true },
-        { type: 'object', required: ['extra'] },
-      ],
-    },
-    { allOf: [openMap], required: ['extra'] },
-    {
-      allOf: [
-        { $ref: '#/components/schemas/OpenMap' },
-        { required: ['extra'] },
-      ],
-    },
-    {
-      allOf: [
-        { $ref: '#/components/schemas/OpenMap' },
-        { $ref: '#/components/schemas/Only' },
-      ],
-    },
-  ])
-    await rejects(schema, '.allOf', mixed, { OpenMap: openMap });
   for (const [name, message] of [
     ['__proto__', /unsupported object key "__proto__"$/],
     ['constructor', /unsupported object key "constructor"$/],

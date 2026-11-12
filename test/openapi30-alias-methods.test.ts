@@ -62,16 +62,6 @@ function inputs(document: ReturnType<typeof fixture>): [string, unknown][] {
   ];
 }
 
-function bodyError(method: string, error: unknown): boolean {
-  assert.ok(error instanceof ContractError);
-  assert.equal(error.location, `paths./shared.${method}.requestBody`);
-  assert.equal(
-    error.message,
-    `${error.location}: ${method.toUpperCase()} request bodies are unsupported in OpenAPI 3.0`,
-  );
-  return true;
-}
-
 for (const method of ['delete', 'options'] as const) {
   const orders = [
     ['post', method],
@@ -81,64 +71,38 @@ for (const method of ['delete', 'options'] as const) {
     clients: ['api'],
     surfaces: { api: ['POST /shared', `${method.toUpperCase()} /shared`] },
   };
-  const rejectsBody = (error: unknown) => bodyError(method, error);
-
-  void test(`OpenAPI 3.0 checks ${method.toUpperCase()} bodies at each aliased operation binding in either property order`, async () => {
-    for (const version of ['3.0.0', '3.0.4'])
+  void test(`OpenAPI 3.0 and 3.1 permit shared POST and ${method.toUpperCase()} bodies without losing either binding`, async (t) => {
+    const expected = await compile(
+      json(JSON.stringify(fixture('3.1.2', orders[0]))),
+      selection,
+    );
+    for (const version of ['3.0.0', '3.0.4', '3.1.2'])
       for (const order of orders)
         for (const referenced of [false, true])
           for (const [encoding, input] of inputs(
             fixture(version, order, referenced),
           )) {
             const before = structuredClone(input);
-            const label = `${version} ${order.join(',')} ${referenced ? 'referenced' : 'inline'} ${encoding}`;
-            await assert.rejects(compile(input, selection), rejectsBody, label);
-            assert.throws(
-              () => buildDescriptor(input, { surfaces: selection.surfaces }),
-              rejectsBody,
-              label,
+            assert.deepEqual(
+              await compile(input, selection),
+              expected,
+              encoding,
             );
-            assert.deepEqual(input, before, label);
+            const descriptor = buildDescriptor(input, {
+              surfaces: selection.surfaces,
+            });
+            assert.deepEqual(
+              descriptor.operations.map((operation) => [
+                operation.method,
+                operation.body.kind,
+              ]),
+              [
+                [method.toUpperCase(), 'json'],
+                ['POST', 'json'],
+              ],
+            );
+            assert.deepEqual(input, before, encoding);
           }
-    const bodyless = fixture('3.0.4', orders[0]);
-    for (const operation of Object.values(bodyless.paths['/shared']))
-      delete record(operation).requestBody;
-    await compile(bodyless, selection);
-    assert.deepEqual(
-      buildDescriptor(bodyless, {
-        surfaces: selection.surfaces,
-      }).operations.map((operation) => operation.body.kind),
-      ['none', 'none'],
-    );
-  });
-
-  void test(`OpenAPI 3.1 permits shared POST and ${method.toUpperCase()} bodies without losing either binding`, async (t) => {
-    const expected = await compile(
-      json(JSON.stringify(fixture('3.1.2', orders[0]))),
-      selection,
-    );
-    for (const order of orders)
-      for (const referenced of [false, true])
-        for (const [encoding, input] of inputs(
-          fixture('3.1.2', order, referenced),
-        )) {
-          const before = structuredClone(input);
-          assert.deepEqual(await compile(input, selection), expected, encoding);
-          const descriptor = buildDescriptor(input, {
-            surfaces: selection.surfaces,
-          });
-          assert.deepEqual(
-            descriptor.operations.map((operation) => [
-              operation.method,
-              operation.body.kind,
-            ]),
-            [
-              [method.toUpperCase(), 'json'],
-              ['POST', 'json'],
-            ],
-          );
-          assert.deepEqual(input, before, encoding);
-        }
     const root = await generatedTestWorkspace(t, expected);
     const client = await importGenerated<RuntimeClient>(root, 'client.api.ts');
     for (const id of selection.surfaces.api) {
@@ -149,7 +113,7 @@ for (const method of ['delete', 'options'] as const) {
     }
   });
 
-  void test(`aliased 3.0 ${method.toUpperCase()} failures preserve generated outputs and inputs in generate and check`, async (t) => {
+  void test(`aliased HEAD body failures alongside ${method.toUpperCase()} preserve generated outputs and inputs in generate and check`, async (t) => {
     const root = await temporary(t);
     const configFile = join(root, 'pom.json');
     const config = {
@@ -168,6 +132,9 @@ for (const method of ['delete', 'options'] as const) {
     for (const order of orders)
       for (const encoding of ['yaml', 'json']) {
         const document = fixture('3.0.4', order);
+        Object.assign(document.paths['/shared'], {
+          head: present(Object.values(document.paths['/shared'])[0]),
+        });
         const source =
           encoding === 'yaml' ? stringify(document) : JSON.stringify(document);
         const input = join(root, `openapi.${encoding}`);
@@ -178,7 +145,12 @@ for (const method of ['delete', 'options'] as const) {
         await writeFile(input, source);
         await writeFile(configFile, configuration);
         for (const check of [false, true]) {
-          await assert.rejects(runProject(configFile, { check }), rejectsBody);
+          await assert.rejects(runProject(configFile, { check }), (error) => {
+            assert.ok(error instanceof ContractError);
+            assert.equal(error.location, 'paths./shared.head.requestBody');
+            assert.match(error.message, /HEAD bodies are unsupported/);
+            return true;
+          });
           assert.deepEqual(await fileSnapshot(join(root, 'generated')), before);
           assert.equal(await readFile(input, 'utf8'), source);
           assert.equal(await readFile(configFile, 'utf8'), configuration);

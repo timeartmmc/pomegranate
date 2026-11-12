@@ -43,11 +43,14 @@ export class OutputGrowthError extends Error {
 // types and lookup, response media ranges and server override snapshots.
 // Version 6 reviews required-member snapshots, final abort propagation,
 // consumer input requiredness and incremental JSON member capture.
+// Version 7 reviews typed header wire validation, optional multipart presence,
+// and form encoding with shared comma-delimiter rules. Only fixed runtime bytes
+// are re-recorded; file headroom and operation/schema growth limits stay unchanged.
 const commonBytes = {
   'client.consumer.ts': 424,
   'endpoint-runtime.ts': 4640,
   'policy-types.ts': 1353,
-  'runtime.ts': 105021,
+  'runtime.ts': 111656,
 };
 export const outputGrowthReferenceBytes = {
   small: {
@@ -77,12 +80,12 @@ export const outputGrowthReferenceBytes = {
 };
 export const outputGrowthPolicy = Object.freeze({
   id: 'shared-contract-output-budgets',
-  version: 6,
+  version: 7,
   referenceCompiler: 'da32f73',
   // Later references name their reviewed generated source by content.
   rerecordedReferences: Object.freeze({
     'runtime.ts':
-      'sha256:fc76022cfe501daeeae6d8460f839a0d45bae199e3af0c190ce1f060827b17e9',
+      'sha256:20e6ee6d4943775c559addbb80e377efdd99e8524e2e0571b38ffa3da138798b',
   }),
   bytes:
     'complete generated TypeScript UTF-8 source, including runtime helpers and comments',

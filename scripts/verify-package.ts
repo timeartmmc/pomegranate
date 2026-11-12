@@ -149,6 +149,16 @@ import {
   numericFormatProfilesConsumer,
 } from '../test/numeric-format-profiles-fixture.ts';
 import {
+  interoperabilityFixture,
+  interoperabilitySelection,
+  interoperabilityConsumer,
+} from '../test/interoperability-fixture.ts';
+import {
+  serializationFixture,
+  serializationSelection,
+  serializationConsumer,
+} from '../test/serialization-fixture.ts';
+import {
   operationIdsFixture,
   operationIdsSelection,
   operationIdsTypeConsumer,
@@ -322,6 +332,8 @@ try {
     'response-status-fixture.ts',
     'registered-formats-fixture.ts',
     'numeric-format-profiles-fixture.ts',
+    'interoperability-fixture.ts',
+    'serialization-fixture.ts',
     'type-composition-fixture.ts',
     'nullable-type-fixture.ts',
     'multipart-fixture.ts',
@@ -745,6 +757,8 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'response-status-generated/*.ts',
     'registered-formats-generated/*.ts',
     'numeric-format-profiles-generated/*.ts',
+    'interoperability-generated/*.ts',
+    'serialization-generated/*.ts',
     'extension-generated/*.ts',
   ];
   await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify(tsconfig));
@@ -1059,6 +1073,18 @@ ${await readFile(rewritingWorker, 'utf8')}`,
       numericFormatProfilesFixture(),
       numericFormatProfilesSelection,
       numericFormatProfilesConsumer,
+    ],
+    [
+      'interoperability',
+      interoperabilityFixture(),
+      interoperabilitySelection,
+      interoperabilityConsumer,
+    ],
+    [
+      'serialization',
+      serializationFixture(),
+      serializationSelection,
+      serializationConsumer,
     ],
   ] as const) {
     await writeFile(
@@ -2181,6 +2207,13 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import * as numericSingle from './numeric-format-profiles-generated/standalone.single.ts';
     import {verifyNumericFormatProfiles} from './verification/numeric-format-profiles-fixture.ts';
     verifyNumericFormatProfiles(numericProfilesClient, numericDecimal, numericSingle);
+    import * as interoperabilityClient from './interoperability-generated/client.consumer.ts';
+    import * as interoperabilityValue from './interoperability-generated/standalone.value.ts';
+    import {verifyInteroperability} from './verification/interoperability-fixture.ts';
+    verifyInteroperability(interoperabilityClient, interoperabilityValue);
+    import * as serializationClient from './serialization-generated/client.consumer.ts';
+    import {verifySerialization,verifyFormSerialization} from './verification/serialization-fixture.ts';
+    verifySerialization(serializationClient); verifyFormSerialization(serializationClient);
     import * as directionalClient from './directional-generated/client.consumer.ts';
     import * as operationIdsClient from './operation-ids-generated/client.consumer.ts';
     import * as operationIdsQueries from './operation-ids-generated/client.consumer.queries.ts';
@@ -2362,6 +2395,13 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import * as numericSingle from './.build/numeric-format-profiles-generated/standalone.single.js';
     import {verifyNumericFormatProfiles} from './verification/numeric-format-profiles-fixture.ts';
     verifyNumericFormatProfiles(numericProfilesClient, numericDecimal, numericSingle);
+    import * as interoperabilityClient from './.build/interoperability-generated/client.consumer.js';
+    import * as interoperabilityValue from './.build/interoperability-generated/standalone.value.js';
+    import {verifyInteroperability} from './verification/interoperability-fixture.ts';
+    verifyInteroperability(interoperabilityClient, interoperabilityValue);
+    import * as serializationClient from './.build/serialization-generated/client.consumer.js';
+    import {verifySerialization,verifyFormSerialization} from './verification/serialization-fixture.ts';
+    verifySerialization(serializationClient); verifyFormSerialization(serializationClient);
     import * as directionalClient from './.build/directional-generated/client.consumer.js';
     import * as operationIdsClient from './.build/operation-ids-generated/client.consumer.js';
     import * as operationIdsQueries from './.build/operation-ids-generated/client.consumer.queries.js';

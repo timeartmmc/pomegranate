@@ -26,6 +26,17 @@ export function multipartTypes(file: File) {
   const prepared = native.upload.build({ body: input });
   const uri: string = prepared.body.cover.uri;
   const kind: 'multipart' = prepared.bodyKind;
+  browser.uploadOptional.build();
+  native.uploadOptional.build({ body: undefined });
+  const optional = native.uploadOptional.build({ body: input });
+  const optionalKind: 'multipart' | 'none' = optional.bodyKind;
+  if (optional.bodyKind === 'multipart') {
+    const optionalUri: string = optional.body.cover.uri;
+    void optionalUri;
+  }
+  // @ts-expect-error An optional multipart body must be narrowed before access.
+  optional.body;
+  void optionalKind;
   // @ts-expect-error Native references cannot replace browser File values.
   browser.uploadInline.build({ body: { file: { uri: 'file:///image' } } });
   // @ts-expect-error Browser File cannot replace a native reference.
@@ -44,6 +55,7 @@ export async function executableMultipartTypes(file: File) {
   };
   const browser = createBrowser(config);
   const native = createNative(config);
+  await native.uploadOptional.call({ context: {} });
   const browserResult = await browser.uploadInline.call({
     context: {},
     input: { body: { file } },

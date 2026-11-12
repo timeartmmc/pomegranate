@@ -39,6 +39,7 @@ import {
   terminalName,
 } from './schema-graph.js';
 import { sourceBudget } from './source-budget.js';
+import { flatParameterShape } from './parameter-shape.js';
 
 // Bounds are data, so sharing them by schema identity does not share emitted
 // constants. Each parser still owns its own constant and directional behavior.
@@ -275,6 +276,32 @@ export function schemaRenderer(
       required: isRequired(value.required, field),
       parse: part(schema, direction, `${location}.properties.${field}`, scope),
     }));
+  }
+
+  // Wire decoding wraps the typed parser without changing other schema uses.
+  function headerParser(
+    value: Schema,
+    direction: Direction,
+    location: string,
+    scope: string,
+  ): { input: Expression; wire: Expression } {
+    const input = part(value, direction, location, scope);
+    const shape = flatParameterShape(value, schemas[direction]);
+    if (!shape) fail(location, 'header requires a flat primitive schema');
+    const wire =
+      shape.kind === 'string' && !shape.array
+        ? input
+        : identifier(
+            constant(
+              `${scope}_wire`,
+              call(use('headerValueParser'), [
+                input,
+                literal(shape.kind),
+                literal(shape.array),
+              ]).source,
+            ),
+          );
+    return { input, wire };
   }
 
   // Multipart preprocessing belongs to this body use, leaving shared component
@@ -772,6 +799,7 @@ export function schemaRenderer(
     typeOf,
     objectParser,
     multipartParser,
+    headerParser,
     helpers,
     typeImports,
     use,

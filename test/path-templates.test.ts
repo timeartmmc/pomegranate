@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compile } from '../dist/index.js';
+import { present } from './assertions.ts';
+import {
+  generatedTestWorkspace,
+  importGenerated,
+} from './generated-workspace.ts';
+import type { RuntimeClient } from './runtime-types.ts';
 
 const methods = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
 const selection = {
@@ -65,6 +71,8 @@ void test('equivalent multi-segment and trailing-slash templates are rejected', 
     ['/pets/{a}/{b}', '/pets/{b}/{a}'],
     ['/pets/{id}/', '/pets/{name}/'],
     ['/pets//{id}', '/pets//{name}'],
+    ['/pets/{id}.json', '/pets/{name}.json'],
+    ['/pets/{a}-{b}', '/pets/{c}-{d}'],
   ] as const)
     await assert.rejects(
       compile(
@@ -75,6 +83,56 @@ void test('equivalent multi-segment and trailing-slash templates are rejected', 
         selection,
       ),
       /duplicate templated path hierarchy/,
+    );
+});
+
+void test('embedded placeholders encode each value and preserve path literals', async (t) => {
+  const path = '/files/prefix-{id}.{extension}/{left}{right}';
+  for (const version of ['3.0.4', '3.1.2']) {
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(
+        document(version, { [path]: { get: operation('first', path) } }),
+        { clients: ['selected'], surfaces: { selected: ['first'] } },
+      ),
+    );
+    const client = await importGenerated<RuntimeClient>(
+      root,
+      'client.selected.ts',
+    );
+    const build = present(client.operations.first).build;
+    assert.equal(
+      build({
+        path: { id: 'a/b?c#d%', extension: 'json', left: 'x/', right: 'y z' },
+      }).url,
+      '/files/prefix-a%2Fb%3Fc%23d%25.json/x%2Fy%20z',
+    );
+    for (const id of ['', '.', '..', '\ud800'])
+      assert.throws(
+        () => build({ path: { id, extension: 'json', left: 'x', right: 'y' } }),
+        client.RequestValidationError,
+      );
+  }
+});
+
+void test('embedded placeholders retain name, brace and literal diagnostics', async () => {
+  for (const path of [
+    '/pets/{id',
+    '/pets/id}',
+    '/pets/{{id}}',
+    '/pets/{}.json',
+    '/pets/{bad-name}.json',
+    '/pets/{id}?q',
+    '/pets/{id}%2F',
+  ])
+    await assert.rejects(
+      compile(
+        document('3.1.2', {
+          [path]: { get: operation('first', path) },
+        }),
+        { clients: ['selected'], surfaces: { selected: ['first'] } },
+      ),
+      /path placeholder|path literal/,
     );
 });
 

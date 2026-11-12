@@ -67,7 +67,7 @@ Augmenting the interface does not add runtime operations.
 
 Client entries export `Executor`, `Execution`, `ExecutionContext` and
 `ClientConfig`. An `Executor` accepts a `PreparedRequest` with body kind `none`,
-`json`, `text` or `multipart` and a frozen
+`json`, `text`, `form` or `multipart` and a frozen
 `{ signal, context, validateResponse }` execution object. It can return a raw
 `{ status, headers, body }` response, with numeric status, a plain string header
 record, and body text, or an inspection handle from `validateResponse`. It may
@@ -81,9 +81,10 @@ client or query factory.
 The application resolves the API origin, credentials for the declared [security
 requirements](REFERENCE.md#client-surfaces-and-security), and policy labels,
 validates merged headers with `request.validateHeaders`, serializes the prepared
-body and forwards the signal to its transport. JSON and text requests expose
-`request.contentType` for the transport's Content-Type header. For text, append
-a charset consistent with the encoded bytes, such as
+body and forwards the signal to its transport. JSON, text and form requests expose
+`request.contentType` for the transport's Content-Type header. For `form`, send
+the already-encoded string `request.body` directly with that Content-Type. For
+text, append a charset consistent with the encoded bytes, such as
 `text/plain; charset=utf-8`, and send the body directly. Serialize JSON bodies
 with `JSON.stringify`. POM invokes the executor once per call. Implement
 recovery, retries, deadlines, locale and session checks there. One executor can

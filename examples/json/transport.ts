@@ -44,7 +44,7 @@ async function executeRaw(
 ): Promise<ObservedResponse> {
   if (request.bodyKind !== 'none' && request.bodyKind !== 'json')
     throw new Error(
-      'The JSON example transport does not support multipart uploads',
+      'The JSON example transport does not support multipart, text or form bodies',
     );
   if (
     request.policy.retry !== 'never' ||

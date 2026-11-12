@@ -127,40 +127,39 @@ export function serverList(
   location: string,
 ): readonly Server[] {
   if (!Array.isArray(input)) fail(location, 'expected an array');
-  return Array.from(arrayValues(input), (entry, index) => {
-    const path = `${location}[${index}]`;
-    const server = record(entry, path);
-    keys(server, ['url', 'description', 'variables'], path);
-    if (typeof server.url !== 'string')
-      fail(`${path}.url`, 'expected a string');
-    stringFields(server, ['description'], path);
-    const variables = new Map<string, ServerVariable>();
-    if (Object.hasOwn(server, 'variables')) {
-      const declared = record(server.variables, `${path}.variables`);
-      // Variables are a map: sorted names keep output independent of their order.
-      for (const name of Object.keys(declared).sort()) {
-        const variablePath = `${path}.variables.${name}`;
-        const variable = record(declared[name], variablePath);
-        keys(variable, ['default', 'enum', 'description'], variablePath);
-        if (typeof variable.default !== 'string')
-          fail(`${variablePath}.default`, 'expected a string');
-        stringFields(variable, ['description'], variablePath);
-        let values: readonly string[] | undefined;
-        if (Object.hasOwn(variable, 'enum')) {
-          if (!stringArray(variable.enum) || variable.enum.length === 0)
-            fail(
-              `${variablePath}.enum`,
-              'expected a nonempty array of strings',
-            );
-          if (!variable.enum.includes(variable.default))
-            fail(`${variablePath}.default`, 'default must be a member of enum');
-          values = [...variable.enum];
-        }
-        variables.set(name, { default: variable.default, enum: values });
+  return Array.from(arrayValues(input), (entry, index) =>
+    serverObject(entry, `${location}[${index}]`),
+  );
+}
+
+export function serverObject(input: unknown, path: string): Server {
+  const server = record(input, path);
+  keys(server, ['url', 'description', 'variables'], path);
+  if (typeof server.url !== 'string') fail(`${path}.url`, 'expected a string');
+  stringFields(server, ['description'], path);
+  const variables = new Map<string, ServerVariable>();
+  if (Object.hasOwn(server, 'variables')) {
+    const declared = record(server.variables, `${path}.variables`);
+    // Variables are a map: sorted names keep output independent of their order.
+    for (const name of Object.keys(declared).sort()) {
+      const variablePath = `${path}.variables.${name}`;
+      const variable = record(declared[name], variablePath);
+      keys(variable, ['default', 'enum', 'description'], variablePath);
+      if (typeof variable.default !== 'string')
+        fail(`${variablePath}.default`, 'expected a string');
+      stringFields(variable, ['description'], variablePath);
+      let values: readonly string[] | undefined;
+      if (Object.hasOwn(variable, 'enum')) {
+        if (!stringArray(variable.enum) || variable.enum.length === 0)
+          fail(`${variablePath}.enum`, 'expected a nonempty array of strings');
+        if (!variable.enum.includes(variable.default))
+          fail(`${variablePath}.default`, 'default must be a member of enum');
+        values = [...variable.enum];
       }
+      variables.set(name, { default: variable.default, enum: values });
     }
-    return { url: server.url, variables };
-  });
+  }
+  return { url: server.url, variables };
 }
 
 export function schemaAnnotations(

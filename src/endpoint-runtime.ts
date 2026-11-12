@@ -46,7 +46,7 @@ export type EndpointProfile = Pick<
 >;
 type Settings<B extends BodyKind> = Pick<
   Definition<undefined, Responses, B>,
-  'bodyKind' | 'contentType' | 'multipart'
+  'bodyKind' | 'contentType' | 'multipart' | 'form'
 > & {
   readonly parameters?: Definition<undefined, Responses, B>['parameters'];
 };
@@ -86,6 +86,7 @@ export function endpoint<
     ...(metadata.multipart === undefined
       ? {}
       : { multipart: metadata.multipart }),
+    ...(metadata.form === undefined ? {} : { form: metadata.form }),
   });
 }
 

@@ -12,11 +12,13 @@ type Node =
   | 'parameter'
   | 'requestBody'
   | 'media'
+  | 'encoding'
   | 'response'
   | 'header'
   | 'schema'
   | 'discriminator'
   | 'example'
+  | 'link'
   | 'securityScheme'
   | 'oauthFlows'
   | 'oauthFlow';
@@ -52,6 +54,7 @@ const children: Readonly<Record<Node, Fields>> = {
     requestBodies: 'map:requestBody',
     headers: 'map:header',
     examples: 'map:example',
+    links: 'map:link',
     securitySchemes: 'map:securityScheme',
   },
   pathItem: {
@@ -74,8 +77,13 @@ const children: Readonly<Record<Node, Fields>> = {
   },
   parameter: { schema: 'schema', examples: 'map:example' },
   requestBody: { content: 'content' },
-  media: { schema: 'schema', examples: 'map:example' },
-  response: { content: 'content', headers: 'map:header' },
+  media: {
+    schema: 'schema',
+    examples: 'map:example',
+    encoding: 'map:encoding',
+  },
+  encoding: {},
+  response: { content: 'content', headers: 'map:header', links: 'map:link' },
   header: { schema: 'schema', examples: 'map:example' },
   schema: {
     properties: 'map:schema',
@@ -89,6 +97,7 @@ const children: Readonly<Record<Node, Fields>> = {
   },
   discriminator: {},
   example: {},
+  link: { server: 'server' },
   securityScheme: { flows: 'oauthFlows' },
   oauthFlows: {
     implicit: 'oauthFlow',

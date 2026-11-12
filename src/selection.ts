@@ -17,7 +17,18 @@ export type CompileOptions = Readonly<{
   clients: readonly string[];
   recursiveWorkLimit?: number;
   formats?: Readonly<
-    Record<string, Readonly<{ type: 'string'; pattern: string }>>
+    Record<
+      string,
+      | Readonly<{ type: 'string'; pattern: string }>
+      | Readonly<{
+          type: 'number' | 'integer';
+          minimum?: number;
+          maximum?: number;
+          exclusiveMinimum?: number;
+          exclusiveMaximum?: number;
+          multipleOf?: number;
+        }>
+    >
   >;
   ignoreExtensions?: readonly string[];
   surfaces?: Readonly<Record<string, readonly string[]>>;
