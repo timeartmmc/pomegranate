@@ -9,6 +9,49 @@ import { annotateDocument } from './metadata-fixture.ts';
 import { record } from './assertions.ts';
 
 const selection = { clients: ['consumer'] };
+
+function callbackDocument(openapi: string, callbacks: unknown) {
+  return {
+    openapi,
+    info: { title: 'Synthetic empty callbacks', version: '1' },
+    components: { callbacks },
+    paths: {
+      '/read': {
+        get: {
+          operationId: 'read',
+          responses: { 204: { description: 'No body' } },
+        },
+      },
+    },
+  };
+}
+
+void test('empty callback component maps have no effect in either dialect', async () => {
+  const options = { clients: ['api'], surfaces: { api: ['read'] } };
+  for (const openapi of ['3.0.4', '3.1.2']) {
+    const source = callbackDocument(openapi, {});
+    const before = structuredClone(source);
+    const expected = await compile({ ...source, components: {} }, options);
+    assert.deepEqual(await compile(source, options), expected);
+    assert.deepEqual(
+      await compile(parseYaml(stringify(source), 'callbacks.yaml'), options),
+      expected,
+    );
+    assert.deepEqual(source, before);
+    const hidden = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(hidden, 'completed', { value: {} });
+    for (const callbacks of [null, [], undefined, { completed: {} }, hidden])
+      for (const pruneUnusedComponents of [false, true])
+        await assert.rejects(
+          compile(callbackDocument(openapi, callbacks), {
+            ...options,
+            pruneUnusedComponents,
+          }),
+          { name: 'ContractError', location: 'components.callbacks' },
+        );
+  }
+});
+
 type Target = (document: Fixture) => object;
 const docTargets: [string, Target, string][] = [
   ['document', (d) => d, 'OpenAPI.externalDocs'],

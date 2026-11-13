@@ -426,14 +426,14 @@ void test('pruning cannot hide unselected operations or unsupported document str
     /components.schemas.PrivateValue.minimum/,
   );
   const unsupported = fixture('3.1.2', false);
-  Object.assign(unsupported.components, { callbacks: {} });
+  Object.assign(unsupported.components, { callbacks: { completed: {} } });
   await assert.rejects(
     compile(unsupported, {
       clients: ['consumer'],
       surfaces: { consumer: ['keep'] },
       pruneUnusedComponents: true,
     }),
-    /components.callbacks: unsupported keyword/,
+    /components.callbacks: callback definitions are unsupported/,
   );
 });
 

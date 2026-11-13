@@ -1429,9 +1429,18 @@ function describeDocument(
       'responses',
       'requestBodies',
       'headers',
+      'callbacks',
     ],
     'components',
   );
+  if (
+    Object.hasOwn(components, 'callbacks') &&
+    Object.keys(record(components.callbacks, 'components.callbacks')).length > 0
+  )
+    fail(
+      'components.callbacks',
+      'callback definitions are unsupported; only an empty callbacks map is supported',
+    );
   const examples = exampleComponents(
     Object.hasOwn(components, 'examples') ? components.examples : {},
   );

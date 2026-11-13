@@ -56,6 +56,7 @@ export function interoperabilityFixture(openapi = '3.0.4') {
     info: { title: 'Synthetic interoperability example', version: '1' },
     components: {
       schemas,
+      callbacks: {},
       links: {
         Next: {
           operationId: 'text0',

@@ -1222,6 +1222,9 @@ increase peak memory for large documents.
 
 ### Reusable components
 
+An empty `components.callbacks` map is accepted and has no generated effect.
+Nonempty callback maps and operation callbacks remain unsupported.
+
 The following declarations accept inline objects or local component references:
 
 | Declaration                      | Reference target                        |
