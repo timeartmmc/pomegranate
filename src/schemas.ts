@@ -183,7 +183,7 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
         fail(
           `${location}.format`,
           kind === 'number' || kind === 'integer'
-            ? numericFormatMessages[kind]
+            ? `${numericFormatMessages[kind]}, or register a custom ${kind} format in formats`
             : kind === 'string'
               ? 'unsupported format; use a built-in format or register a custom string format in formats'
               : 'unsupported format for this schema; supported formats require a string, number, or integer schema in this version',

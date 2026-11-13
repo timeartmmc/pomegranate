@@ -195,15 +195,18 @@ void test('numeric format references preserve string constraints and finite-floa
     assert.equal(bounded.schema.safeParse(value).success, false);
 });
 
-void test('unknown numeric formats diagnose supported numeric formats before selection', async () => {
+void test('unknown numeric formats diagnose built-in and registered alternatives before selection', async () => {
   for (const modern of [true, false])
     for (const nullable of [false, true])
       for (const [type, detail] of [
         [
           'number',
-          'unsupported numeric format; number schemas support float or double',
+          'unsupported numeric format; number schemas support float or double, or register a custom number format in formats',
         ],
-        ['integer', 'unsupported integer format; expected int32 or int64'],
+        [
+          'integer',
+          'unsupported integer format; expected int32 or int64, or register a custom integer format in formats',
+        ],
       ] as const) {
         const document = fixture(modern);
         document.components.schemas.Unused = {
