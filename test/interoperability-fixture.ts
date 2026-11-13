@@ -19,6 +19,9 @@ export function interoperabilityFixture(openapi = '3.0.4') {
     properties: {
       kind: { type: 'string', enum: ['Cat'], xml: { name: 'species' } },
       amount: { type: 'number', format: 'decimal', multipleOf: 0.1 },
+      cleared: openapi.startsWith('3.0.')
+        ? { type: 'object', nullable: true, enum: [null] }
+        : { type: ['object', 'null'], enum: [null] },
       metadata: {
         properties: { label: { type: 'string' } },
         additionalProperties: {},
@@ -145,6 +148,7 @@ export function verifyInteroperability(
     kind: 'Cat',
     id: 4_294_967_295,
     amount: 0.5,
+    cleared: null,
     metadata: { label: 'declared' },
     labels: { primary: 'required key', other: 'retained entry' },
   };
@@ -169,6 +173,7 @@ export function verifyInteroperability(
     { ...body, extra: true },
     { ...body, metadata: { ...body.metadata, extra: true } },
     { ...body, labels: { other: 'retained entry' } },
+    { ...body, cleared: {} },
   ]) {
     assert.throws(
       () => operation.build({ path: { 'record-id': 'x' }, body: invalid }),
@@ -219,6 +224,9 @@ operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, extra:
 // @ts-expect-error Textual media require strings.
 operations.text1.build({ body: { csv: 'example' } });
 operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, labels: { primary: 'a', other: 'b' } } });
+operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, cleared: null } });
+// @ts-expect-error A null-only enum excludes objects from the nullable type.
+operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, cleared: {} } });
 // @ts-expect-error A map's required key is a named member of the generated type.
 operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, labels: { other: 'b' } } });
 const parsed = schema.parse(body);

@@ -5,6 +5,28 @@ import type { NullableCase } from './schema-helpers.ts';
 // the original type arrays directly, without going through this conversion.
 export const nullableTypeCases: NullableCase[] = [
   {
+    name: 'TypeArrayObjectNullOnly',
+    schema: { type: ['object', 'null'], enum: [null] },
+    equivalent: { type: 'null' },
+    samples: [
+      [null, true],
+      [{}, false],
+      [[], false],
+      [0, false],
+      ['null', false],
+    ],
+  },
+  {
+    name: 'TypeArrayObjectNullConstant',
+    schema: { type: ['null', 'object'], const: null },
+    equivalent: { type: 'null' },
+    samples: [
+      [null, true],
+      [{}, false],
+      [false, false],
+    ],
+  },
+  {
     name: 'TypeArrayString',
     schema: {
       type: ['string', 'null'],

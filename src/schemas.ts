@@ -756,6 +756,16 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
         `${location}.type`,
         'type arrays require one supported non-null type and null',
       );
+    // A nullable object with a null-only literal has no object alternative.
+    // Reuse scalar syntax checks; structural siblings remain unsupported.
+    if (
+      kind === 'object' &&
+      ((Object.hasOwn(value, 'const') && value.const === null) ||
+        (Array.isArray(value.enum) &&
+          value.enum.length === 1 &&
+          value.enum[0] === null))
+    )
+      return normalizeScalar(value, location, 'null');
     let schema: SchemaDraft;
     if (
       kind === 'number' ||

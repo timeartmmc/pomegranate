@@ -145,8 +145,18 @@ const invalidSchemas: [string, unknown, RegExp][] = [
   ],
   [
     'unsupported object enum',
-    { type: ['object', 'null'], enum: [null] },
+    { type: ['object', 'null'], enum: [{}] },
     /enum.*unsupported keyword/,
+  ],
+  [
+    'nonnullable object with null enum',
+    { type: 'object', enum: [null] },
+    /enum.*unsupported keyword/,
+  ],
+  [
+    'null-only object with structural assertions',
+    { type: ['object', 'null'], enum: [null], properties: {} },
+    /properties.*unsupported keyword/,
   ],
   [
     'unsupported array const',

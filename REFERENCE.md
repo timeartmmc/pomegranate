@@ -724,6 +724,10 @@ Supported schema composition:
   are required. Scalar `enum` and `const` still restrict accepted values,
   including whether `null` is accepted. Existing parameter and multipart
   restrictions still apply.
+  Nullable objects with `enum: [null]`, or 3.1 `const: null`, normalize to `null`
+  when no structural assertions accompany the literal. The 3.0 spelling is
+  `type: object` with `nullable: true` and `enum: [null]`. Object-valued enums
+  and constants remain unsupported.
 - A discriminated `oneOf` uses component references without sibling
   constraints. Mapping may be omitted or partial: the referenced component name
   supplies the tag for each branch without an explicit mapping. Each branch
