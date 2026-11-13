@@ -1,4 +1,5 @@
 import { assertNever, ContractWorkError, fail } from './diagnostics.js';
+import type { WarnSchema } from './diagnostics.js';
 import type {
   ConstraintInput,
   Constraints,
@@ -9,6 +10,7 @@ import type {
 } from './model.js';
 import {
   constraintNames,
+  constraintTypes,
   constraintRecord,
   hasConstraints,
   propertyOrder,
@@ -301,6 +303,7 @@ type Resolved = Readonly<{ schema: Schema; limits: Constraints } & Access>;
 
 export function createIntersectionNormalizer(
   schemas: SchemaTable,
+  warn?: WarnSchema,
 ): (schema: Schema, location: string) => Schema {
   const normalized = new WeakMap<Schema, Schema>();
   const objects = new WeakMap<Schema, Extract<Schema, { kind: 'object' }>>();
@@ -308,6 +311,71 @@ export function createIntersectionNormalizer(
   const processing = new Set<Schema>();
   const expandingObjects = new Set<Schema>();
   const charge = compositionBudget();
+  const referenceTypes = new Map<string, string>();
+
+  function referenceType(
+    input: Extract<Schema, { kind: 'ref' }>,
+    location: string,
+  ): string | undefined {
+    const path: string[] = [];
+    let current: Schema = input;
+    let type: string | undefined;
+    // The table is still being composed. Cache only a proven JSON type, which
+    // survives composition of its children; do not cache compound/unknown roots.
+    while (current.kind === 'ref') {
+      type = referenceTypes.get(current.name);
+      if (type !== undefined) break;
+      charge(1, location);
+      path.push(current.name);
+      current = referenceTarget(current, schemas);
+    }
+    type ??=
+      current.kind === 'object' || current.kind === 'map'
+        ? 'object'
+        : current.kind === 'integer'
+          ? 'number'
+          : ['string', 'number', 'boolean', 'null', 'array'].includes(
+                current.kind,
+              )
+            ? current.kind
+            : undefined;
+    if (type !== undefined)
+      for (const name of path) referenceTypes.set(name, type);
+    return type;
+  }
+
+  function referenceConstraints(
+    input: Extract<Schema, { kind: 'ref' }>,
+    location: string,
+  ): Schema {
+    if (!hasConstraints(input.constraints)) return input;
+    const type = referenceType(input, location);
+    if (type === undefined) return input;
+    const ignored = constraintNames(input.constraints).filter((key) => {
+      const appliesTo = constraintTypes.get(key);
+      return appliesTo !== undefined && appliesTo !== type;
+    });
+    if (ignored.length === 0) return input;
+    // Syntax was checked at the source boundary. A referenced single-type
+    // schema proves these assertions inactive (JSON Schema Core §7.6.1).
+    // Point at the source $ref: single-ref allOf folding may combine siblings
+    // from its enclosing schema, so a synthesized keyword path could be wrong.
+    for (const key of ignored)
+      warn?.(
+        input.location,
+        `${key} has no effect on a reference to type ${type}; it applies only to ${constraintTypes.get(key)} values`,
+      );
+    return {
+      ...input,
+      constraints: constraintRecord(
+        Object.fromEntries(
+          Object.entries(input.constraints).filter(
+            ([key]) => !ignored.includes(key),
+          ),
+        ),
+      ),
+    };
+  }
 
   const recursiveExpansion = (location: string): never =>
     fail(
@@ -1000,6 +1068,8 @@ export function createIntersectionNormalizer(
           };
           break;
         case 'ref':
+          result = referenceConstraints(input, location);
+          break;
         case 'json':
         case 'binary':
         case 'string':

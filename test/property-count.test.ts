@@ -315,7 +315,7 @@ void test('property bound syntax is eagerly validated in unused schemas before s
   }
 });
 
-void test('object reference bounds intersect through aliases and reject contradictory or misplaced constraints', async () => {
+void test('object reference bounds intersect through aliases and diagnose contradictory bounds and invalid syntax', async () => {
   const document = fixture();
   document.components.schemas.Unused = {
     $ref: '#/components/schemas/Alias',
@@ -363,11 +363,14 @@ void test('object reference bounds intersect through aliases and reject contradi
     $ref: '#/components/schemas/Text',
     maxProperties: 1,
   };
-  await rejectsAt(
-    wrongReference,
-    'components.schemas.Unused.maxProperties',
-    /unsupported on referenced string/,
-  );
+  const warnings: string[] = [];
+  await compile(wrongReference, {
+    ...selection,
+    onWarning: (warning) => {
+      warnings.push(warning.path);
+    },
+  });
+  assert.deepEqual(warnings, ['components.schemas.Unused.$ref']);
 });
 
 void test('property bounds remain enforced for multipart request object schemas', async (t) => {

@@ -402,18 +402,6 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /recursive schemas/,
   ],
   [
-    'reference constraints',
-    (d) => {
-      Object.assign(d.components.schemas, {
-        Widget: {
-          $ref: '#/components/schemas/Problem',
-          minLength: 1,
-        },
-      });
-    },
-    /minLength.*unsupported on referenced object/,
-  ],
-  [
     'overlapping oneOf',
     (d) => {
       Object.assign(d.components.schemas, {

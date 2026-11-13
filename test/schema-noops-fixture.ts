@@ -1,4 +1,5 @@
 import type { NullableCase } from './schema-helpers.ts';
+import { ref } from './schema-helpers.ts';
 
 // Contradictory bounds on an excluded JSON type remain inactive. The oracle
 // checks the original declarations independently of POM's normalized output.
@@ -186,6 +187,98 @@ export const schemaNoopCases: readonly NullableCase[] = [
       [0, false],
       ['', false],
       [{}, false],
+      [[], false],
+    ],
+  },
+];
+
+export const referenceNoopCases: readonly NullableCase[] = [
+  {
+    name: 'ReferencedArray',
+    schema: { ...ref('NoopArray'), minLength: 5, maxLength: 1, minItems: 2 },
+    equivalent: { ...ref('NoopArray'), minItems: 2 },
+    samples: [
+      [[1, 2], true],
+      [[1], false],
+      [[1, 1], false],
+      [[0, 1], false],
+      [[1, 2, 3, 4], false],
+      ['abcde', false],
+    ],
+  },
+  {
+    name: 'ReferencedString',
+    schema: { ...ref('NoopString'), minimum: 5, maximum: 1, maxLength: 3 },
+    equivalent: { ...ref('NoopString'), maxLength: 3 },
+    samples: [
+      ['abc', true],
+      ['a', false],
+      ['abcd', false],
+      [2, false],
+      [null, false],
+    ],
+  },
+  {
+    name: 'ReferencedNumber',
+    schema: { ...ref('NoopNumber'), minItems: 5, maxItems: 1, minimum: 2 },
+    equivalent: { ...ref('NoopNumber'), minimum: 2 },
+    samples: [
+      [2, true],
+      [2.5, true],
+      [1, false],
+      [4, false],
+      [2.2, false],
+      [[], false],
+    ],
+  },
+  {
+    name: 'ReferencedInteger',
+    schema: { ...ref('NoopInteger'), minLength: 5, maxLength: 1, maximum: 3 },
+    equivalent: { ...ref('NoopInteger'), maximum: 3 },
+    samples: [
+      [2, true],
+      [3, true],
+      [4, false],
+      [2.5, false],
+      ['2', false],
+    ],
+  },
+  {
+    name: 'ReferencedObject',
+    schema: {
+      ...ref('NoopObject'),
+      minLength: 5,
+      maxLength: 1,
+      minProperties: 1,
+    },
+    equivalent: { ...ref('NoopObject'), minProperties: 1 },
+    samples: [
+      [{ id: 1 }, true],
+      [{}, false],
+      [{ id: 0 }, false],
+      [[], false],
+      [null, false],
+    ],
+  },
+  {
+    name: 'ReferencedBoolean',
+    schema: { ...ref('NoopBoolean'), minProperties: 5, maxProperties: 1 },
+    equivalent: ref('NoopBoolean'),
+    samples: [
+      [true, true],
+      [false, false],
+      [1, false],
+      [null, false],
+    ],
+  },
+  {
+    name: 'ReferencedNull',
+    schema: { ...ref('NoopNull'), minLength: 5, maxLength: 1 },
+    equivalent: ref('NoopNull'),
+    samples: [
+      [null, true],
+      [false, false],
+      ['', false],
       [[], false],
     ],
   },

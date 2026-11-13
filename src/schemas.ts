@@ -35,6 +35,7 @@ import {
   objectConstraints,
   referenceConstraints,
   constraintKeys,
+  constraintTypes,
   maximumSchemaNesting,
 } from './schema-node.js';
 import {
@@ -146,10 +147,9 @@ const typedSchemaKeys = [...annotationKeys, 'type'];
 const objectShapeKeys = ['properties', 'required', 'additionalProperties'];
 const objectSchemaKeys = [...objectShapeKeys, ...objectConstraints];
 const keywordTypes = new Map<string, string>([
-  ...stringConstraints.map((key) => [key, 'string'] as const),
-  ...numberConstraints.map((key) => [key, 'number'] as const),
-  ...['items', ...arrayConstraints].map((key) => [key, 'array'] as const),
-  ...objectSchemaKeys.map((key) => [key, 'object'] as const),
+  ...constraintTypes,
+  ['items', 'array'],
+  ...objectShapeKeys.map((key) => [key, 'object'] as const),
 ]);
 const schemaTypes = [
   'object',

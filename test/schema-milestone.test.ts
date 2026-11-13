@@ -418,11 +418,11 @@ for (const [name, mutate, pattern] of [
     /default.*expected an object/,
   ],
   [
-    'reference sibling type mismatch',
+    'malformed reference sibling',
     (d) => {
-      Object.assign(d.components.schemas.ShortLabel, { minimum: 1 });
+      Object.assign(d.components.schemas.ShortLabel, { minimum: '1' });
     },
-    /minimum.*referenced string/,
+    /minimum.*expected a finite number/,
   ],
   [
     'mixed map and fixed properties',

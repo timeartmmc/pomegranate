@@ -17,7 +17,7 @@ import { fileSnapshot, temporary } from './helpers.ts';
 import type { StandaloneModule } from './runtime-types.ts';
 import { ref } from './schema-helpers.ts';
 import type { Schema } from './schema-helpers.ts';
-import { schemaNoopCases } from './schema-noops-fixture.ts';
+import { referenceNoopCases, schemaNoopCases } from './schema-noops-fixture.ts';
 
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -36,7 +36,7 @@ function document(schemas: Record<string, Schema>, openapi = '3.1.2') {
 
 void test('inactive keywords preserve generated types and every applicable runtime rule', async (t) => {
   for (const version of ['3.0.4', '3.1.2']) {
-    const cases = schemaNoopCases.filter(
+    const cases = [...schemaNoopCases, ...referenceNoopCases].filter(
       (entry) =>
         version.startsWith('3.1') ||
         (typeof entry.schema.type === 'string' && entry.schema.type !== 'null'),
@@ -201,6 +201,177 @@ void test('warnings summarize repeated source declarations and honor hidden null
   assert.equal(warnings.length, 2);
   assert.equal(warnings[1]!.path, 'components.schemas.Root.uniqueItems');
   assert.deepEqual(Object.getOwnPropertyDescriptors(hidden), before);
+});
+
+void test('single-reference allOf constraints enforce strings and preserve arrays and maps in both dialects', async (t) => {
+  const cases: [string, unknown[], unknown[]][] = [
+    ['Array', [[1, 2]], [[1], [1, 0], [1, 2, 3, 4], '12']],
+    ['Text', ['ab', 'abc'], ['a', 'abcd', 12]],
+    ['Map', [{ id: 1, other: 2 }], [{}, { id: 0 }, { a: 1, b: 2, c: 3 }]],
+  ];
+  for (const version of ['3.0.4', '3.1.2']) {
+    const input = document(
+      {
+        Items: {
+          type: 'array',
+          items: { type: 'integer', minimum: 1 },
+          maxItems: 3,
+        },
+        Alias: ref('Items'),
+        Array: {
+          allOf: [ref('Alias')],
+          minLength: 5,
+          maxLength: 1,
+          minItems: 2,
+        },
+        TextBase: { type: 'string', pattern: '^a' },
+        Text: {
+          allOf: [ref('TextBase')],
+          minLength: 2,
+          maxLength: 3,
+          minItems: 5,
+        },
+        MapBase: {
+          type: 'object',
+          additionalProperties: { type: 'integer', minimum: 1 },
+          required: ['id'],
+          maxProperties: 2,
+        },
+        Map: { allOf: [ref('MapBase')], minLength: 5 },
+      },
+      version,
+    );
+    const warnings: CompileWarning[] = [];
+    const files = await compile(input, {
+      clients: [],
+      standalone: Object.fromEntries(
+        cases.flatMap(([name]) =>
+          (['request', 'response'] as const).map((usage) => [
+            `${name.toLowerCase()}-${usage}`,
+            { schema: ref(name).$ref, usage },
+          ]),
+        ),
+      ),
+      onWarning: (warning) => {
+        warnings.push(warning);
+      },
+    });
+    assert.ok(
+      warnings.some((w) => w.path === 'components.schemas.Array.allOf[0].$ref'),
+    );
+    const root = await generatedTestWorkspace(t, files);
+    for (const [name, valid, invalid] of cases)
+      for (const usage of ['request', 'response']) {
+        const { schema } = await importGenerated<StandaloneModule>(
+          root,
+          `standalone.${name.toLowerCase()}-${usage}.ts`,
+        );
+        for (const sample of valid)
+          assert.deepEqual(schema.parse(sample), sample);
+        for (const sample of invalid)
+          assert.equal(schema.safeParse(sample).success, false);
+      }
+  }
+});
+
+void test('reference no-ops retain syntax checks and diagnose constraints whose target type is unknown', async () => {
+  for (const restriction of [
+    { minLength: -1 },
+    { maxLength: '1' },
+    { pattern: '[' },
+    { minimum: Infinity },
+    { multipleOf: 0 },
+    { uniqueItems: 'yes' },
+    { not: {} },
+  ])
+    await assert.rejects(
+      compile(
+        document({
+          Items: { type: 'array', items: { type: 'string' } },
+          Root: { ...ref('Items'), ...restriction },
+        }),
+        selection,
+      ),
+      ContractError,
+    );
+  for (const target of [{}, { anyOf: [{ type: 'string' }, { type: 'null' }] }])
+    await assert.rejects(
+      compile(
+        document({
+          Target: target,
+          Root: { ...ref('Target'), minLength: 2 },
+        }),
+        selection,
+      ),
+      /constraint is unsupported on referenced (json|union)/,
+    );
+  await assert.rejects(
+    compile(
+      document({
+        Root: { ...ref('Missing'), minLength: 2 },
+      }),
+      selection,
+    ),
+    /unresolved reference Missing/,
+  );
+  await assert.rejects(
+    compile(
+      document(
+        {
+          Items: { type: 'array', items: { type: 'string' } },
+          Root: { ...ref('Items'), minLength: 2 },
+        },
+        '3.0.4',
+      ),
+      selection,
+    ),
+    /Root.minLength.*unsupported keyword/,
+  );
+});
+
+void test('inactive reference constraints handle long aliases and hidden keys without changing caller records', async (t) => {
+  const schemas: Record<string, Schema> = {
+    Items: {
+      type: 'array',
+      items: { type: 'integer', minimum: 1 },
+      maxItems: 3,
+    },
+  };
+  let name = 'Items';
+  for (let index = 0; index < 1_500; index++) {
+    const alias = `Alias${index}`;
+    schemas[alias] = { ...ref(name), minLength: 5 };
+    name = alias;
+  }
+  const hidden = Object.create(null, {
+    $ref: { value: ref(name).$ref },
+    maxLength: { value: 1 },
+    minItems: { value: 2 },
+  }) as Schema;
+  schemas.Root = hidden;
+  const before = Object.getOwnPropertyDescriptors(hidden);
+  const warnings: CompileWarning[] = [];
+  const files = await compile(document(schemas), {
+    ...selection,
+    onWarning: (warning) => {
+      warnings.push(warning);
+    },
+  });
+  assert.deepEqual(Object.getOwnPropertyDescriptors(hidden), before);
+  assert.equal(warnings.length, 2);
+  assert.ok(
+    warnings.some((w) =>
+      /1500 occurrences; first location shown/.test(w.message),
+    ),
+  );
+  const root = await generatedTestWorkspace(t, files);
+  const { schema } = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.root.ts',
+  );
+  assert.deepEqual(schema.parse([1, 2]), [1, 2]);
+  for (const value of [[1], [1, 0], [1, 2, 3, 4], null])
+    assert.equal(schema.safeParse(value).success, false);
 });
 
 void test('JSON and YAML projects and CLI checks report warnings while preserving output ownership', async (t) => {

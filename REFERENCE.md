@@ -511,9 +511,17 @@ explicit `type` excludes their applicable JSON type, including nullable type
 declarations. This covers string, numeric, array and object validation keywords,
 including `items`, `properties`, `required` and `additionalProperties`. Their
 values must still have valid syntax; nested schemas use POM's supported grammar.
-Constraints on untyped schemas, references or non-narrowing `allOf` fragments
-are not discarded based on an inferred type. Unknown keywords and unsupported
+Constraint siblings of a reference also warn and have no effect when its alias
+chain reaches a single primitive, array, object or map type that excludes the
+constraint's JSON type. Applicable constraints still intersect with the target's
+rules. This includes sibling constraints folded through a single-reference
+`allOf`. Warnings point at the source `$ref`. Constraints on untyped schemas,
+union references or non-narrowing `allOf` fragments remain unsupported rather
+than being discarded based on an inferred type. Unknown keywords and unsupported
 active semantics remain errors.
+
+OpenAPI 3.0 Reference Objects still reject constraint siblings. Put those
+assertions outside a single-reference `allOf` instead.
 
 For fixed objects in 3.0, omit `required` when no properties are required; an
 explicit empty array is rejected. In 3.1, `required: []` is also accepted.

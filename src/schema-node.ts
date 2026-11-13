@@ -20,6 +20,12 @@ export const arrayConstraints = [
   'uniqueItems',
 ] as const;
 export const objectConstraints = ['minProperties', 'maxProperties'] as const;
+export const constraintTypes: ReadonlyMap<string, string> = new Map([
+  ...stringConstraints.map((key) => [key, 'string'] as const),
+  ...numberConstraints.map((key) => [key, 'number'] as const),
+  ...arrayConstraints.map((key) => [key, 'array'] as const),
+  ...objectConstraints.map((key) => [key, 'object'] as const),
+]);
 // Beside a single allOf reference, these restrict it like 3.1 reference
 // siblings without repeating its type. Object count bounds instead compose as
 // object fragments.

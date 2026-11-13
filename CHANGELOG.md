@@ -24,6 +24,11 @@ a same-object type compile with grouped warnings. Their syntax is still checked
 and applicable validation remains unchanged. `compile` accepts `onWarning`;
 project results and CLI checks also report these warnings.
 
+Inactive constraint siblings of references now follow the same warning rule
+when the target's JSON type is known through aliases, including constraints
+folded through a single-reference `allOf`. Applicable bounds still validate;
+union and unconstrained targets keep their explicit limitations.
+
 Nullable object schemas with null-only `enum`, or 3.1 `const`, normalize to
 `null` when no structural assertions are present. Other object enum forms
 remain unsupported.

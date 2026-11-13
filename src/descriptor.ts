@@ -1241,6 +1241,7 @@ function prepareSchemas(
   input: unknown,
   normalize: ReturnType<typeof createSchemaNormalizer>,
   collectErrors = false,
+  warn?: WarnSchema,
 ): { context: SchemaContext; order: readonly string[] } {
   const rawSchemas = record(input, 'components.schemas');
   const errors: ContractError[] = [];
@@ -1280,7 +1281,7 @@ function prepareSchemas(
   // Productive cycles retain references to later component identities while
   // composition resolves only the declarations needed at the same value.
   const schemas = new Map(raw);
-  const compose = createIntersectionNormalizer(schemas);
+  const compose = createIntersectionNormalizer(schemas, warn);
   const failed = new Set<string>();
   for (const name of compositionOrder) {
     const schema = raw.get(name)!;
@@ -1571,6 +1572,7 @@ function describeDocument(
     Object.hasOwn(components, 'schemas') ? components.schemas : {},
     normalize,
     rawMembership.collectErrors === true,
+    rawMembership.warn,
   );
   const parameterComponents = normalizeComponents(
     Object.hasOwn(components, 'parameters') ? components.parameters : {},

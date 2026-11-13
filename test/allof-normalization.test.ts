@@ -396,8 +396,9 @@ void test('composition diagnostics stay within real source declarations after di
     {
       Text: { type: 'string' },
       Value: {
-        allOf: [{ ...ref('Text'), pattern: '^A' }],
+        allOf: [{ ...ref('Text'), pattern: '^A', minLength: 3 }],
         pattern: 'Z$',
+        maxLength: 2,
         minItems: 1,
       },
     },

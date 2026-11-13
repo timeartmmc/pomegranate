@@ -32,10 +32,12 @@ export function interoperabilityFixture(openapi = '3.0.4') {
         additionalProperties: { type: 'string' },
         required: ['primary'],
       },
+      tags: { allOf: [ref('Tags')], minLength: 1, maxItems: 2 },
     },
     required: ['kind', 'amount'],
   };
   const schemas: Record<string, Schema> = {
+    Tags: { type: 'array', items: { type: 'string', minLength: 1 } },
     Cat: cat,
     Dog: {
       type: 'object',
@@ -152,6 +154,7 @@ export function verifyInteroperability(
     cleared: null,
     metadata: { label: 'declared' },
     labels: { primary: 'required key', other: 'retained entry' },
+    tags: ['alpha', 'beta'],
   };
   const request = operation.build({ path: { 'record-id': 'a/b' }, body });
   assert.equal(request.method, 'DELETE');
@@ -161,6 +164,14 @@ export function verifyInteroperability(
     assert.equal(request.contentType, 'text/json; charset=utf-8');
   assert.deepEqual(request.body, body);
   assert.deepEqual(standalone.schema.parse(body), body);
+  const emptyTags = { ...body, tags: [] };
+  const emptyRequest = operation.build({
+    path: { 'record-id': 'x' },
+    body: emptyTags,
+  });
+  assert.equal(emptyRequest.bodyKind, 'json');
+  assert.deepEqual(emptyRequest.body, emptyTags);
+  assert.deepEqual(standalone.schema.parse(emptyTags), emptyTags);
   assert.deepEqual(standalone.schema.parse({ kind: 'Dog', id: 0 }), {
     kind: 'Dog',
     id: 0,
@@ -175,6 +186,9 @@ export function verifyInteroperability(
     { ...body, metadata: { ...body.metadata, extra: true } },
     { ...body, labels: { other: 'retained entry' } },
     { ...body, cleared: {} },
+    { ...body, tags: ['', 'beta'] },
+    { ...body, tags: ['alpha', 'beta', 'gamma'] },
+    { ...body, tags: 'alpha' },
   ]) {
     assert.throws(
       () => operation.build({ path: { 'record-id': 'x' }, body: invalid }),
@@ -226,6 +240,9 @@ operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, extra:
 operations.text1.build({ body: { csv: 'example' } });
 operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, labels: { primary: 'a', other: 'b' } } });
 operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, cleared: null } });
+operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, tags: ['alpha'] } });
+// @ts-expect-error Inactive string bounds do not turn referenced arrays into strings.
+operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, tags: 'alpha' } });
 // @ts-expect-error A null-only enum excludes objects from the nullable type.
 operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, cleared: {} } });
 // @ts-expect-error A map's required key is a named member of the generated type.
