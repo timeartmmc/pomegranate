@@ -84,9 +84,10 @@ validates merged headers with `request.validateHeaders`, serializes the prepared
 body and forwards the signal to its transport. JSON, text and form requests expose
 `request.contentType` for the transport's Content-Type header. For `form`, send
 the already-encoded string `request.body` directly with that Content-Type. For
-text, append a charset consistent with the encoded bytes, such as
-`text/plain; charset=utf-8`, and send the body directly. Serialize JSON bodies
-with `JSON.stringify`. POM invokes the executor once per call. Implement
+text, send the body directly as UTF-8; when `request.contentType` carries no
+charset, append one, as in `text/plain; charset=utf-8`. A declared request
+charset is always UTF-8 and is already part of `request.contentType`. Serialize
+JSON bodies with `JSON.stringify`. POM invokes the executor once per call. Implement
 recovery, retries, deadlines, locale and session checks there. One executor can
 serve direct calls, ordinary queries, and both infinite query profiles without
 casts. `QueryExecutor` accepts only bodyless requests and is sufficient for

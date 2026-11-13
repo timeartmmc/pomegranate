@@ -511,8 +511,11 @@ request representation, including form and multipart bodies.
 Concrete content-map keys may have one `charset` parameter, with a token or
 quoted token value. POM preserves its normalized value in the selected request
 Content-Type and dispatches responses by the lowercase media type without
-parameters. Multiple declarations of the same media type, even with different
-charsets, are rejected. Other parameters, including `stream=watch`, are
+parameters. Request declarations accept only `utf-8` or `utf8`: transports
+serialize JSON and encode request text as UTF-8, so another charset fails
+compilation. Response declarations may name any charset. Multiple declarations
+of the same media type, even with different charsets, are rejected. Other
+parameters, including `stream=watch`, are
 unsupported. Multipart declarations accept no parameters; the transport supplies
 the boundary. Request keys must be concrete; wildcard request media is rejected.
 Response keys may also be the
@@ -566,8 +569,9 @@ Content-Type parameter does not decode bytes or validate the declared charset.
 Decode response bytes according to the endpoint's charset before calling
 `parseResponse`. [Fetch
 `Response.text()`](https://fetch.spec.whatwg.org/#dom-body-text) always decodes
-as UTF-8; other encodings need `arrayBuffer()` and an appropriate decoder. For
-text requests, send a Content-Type charset consistent with the encoded bytes.
+as UTF-8; other encodings need `arrayBuffer()` and an appropriate decoder.
+Requests are UTF-8: send `request.contentType` as prepared, and add
+`; charset=utf-8` to a text type only when the contract declared no charset.
 Text requests reject isolated UTF-16 surrogates because transport encoding would
 replace them after validation. Binary downloads remain unsupported.
 

@@ -15,6 +15,7 @@ const selection = { clients: ['api'], surfaces: { api: ['echo'] } };
 function document(
   content: Record<string, { schema: Schema }>,
   openapi = '3.1.2',
+  responseContent = content,
 ) {
   return {
     openapi,
@@ -24,7 +25,9 @@ function document(
         post: {
           operationId: 'echo',
           requestBody: { required: true, content },
-          responses: { 200: { description: 'Echo', content } },
+          responses: {
+            200: { description: 'Echo', content: responseContent },
+          },
         },
       },
     },
@@ -86,10 +89,14 @@ void test('JSON aliases and textual representations select the same decoder for 
 void test('charset declarations preserve request headers and normalize response dispatch without mutating inputs', async (t) => {
   const content = {
     'Application/JSON; Charset="UTF-8"': { schema: { type: 'integer' } },
-    'text/plain; charset=iso-8859-1': { schema: { type: 'string' } },
+    'text/plain; charset=utf8': { schema: { type: 'string' } },
     'application/a+json': { schema: { type: 'boolean' } },
   };
-  const source = document(content);
+  // Transports decode responses, so a response may declare any charset.
+  const source = document(content, '3.1.2', {
+    'Application/JSON; Charset="UTF-8"': { schema: { type: 'integer' } },
+    'text/plain; charset=iso-8859-1': { schema: { type: 'string' } },
+  });
   const before = structuredClone(source);
   const files = await compile(source, selection);
   assert.deepEqual(
@@ -155,4 +162,32 @@ void test('unsupported media and parameters, ambiguous declarations and non-stri
         compile(document({ [media]: { schema } }), selection),
         /requires a nonnullable string schema/,
       );
+});
+
+void test('request charsets other than UTF-8 fail for JSON and text while responses keep theirs', async () => {
+  const response = { 'application/json': { schema: { type: 'string' } } };
+  for (const media of [
+    'text/plain; charset=iso-8859-1',
+    'text/csv;charset="us-ascii"',
+    'application/json; charset=utf-16',
+    'application/a+json;charset=UTF-16LE',
+  ]) {
+    const declared = { [media]: { schema: { type: 'string' } } };
+    for (const openapi of ['3.0.4', '3.1.2']) {
+      await assert.rejects(
+        compile(document(declared, openapi, response), selection),
+        (error) => {
+          assert.ok(error instanceof ContractError);
+          assert.equal(
+            error.location,
+            `paths./echo.post.requestBody.content.${media}`,
+          );
+          assert.match(error.message, /request bodies require UTF-8/);
+          return true;
+        },
+      );
+      // The same declaration only names the transport's decoder in a response.
+      await compile(document(response, openapi, declared), selection);
+    }
+  }
 });

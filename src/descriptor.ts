@@ -257,19 +257,25 @@ function contentDefinitions(
           path,
           'multipart media parameters are unsupported; the transport supplies the boundary',
         );
+      // JSON serialization and text/form bodies use UTF-8 on the wire. Preserve
+      // only labels consistent with that request contract. Response charsets
+      // stay the transport's decoding concern.
+      if (
+        direction === 'request' &&
+        charset !== undefined &&
+        charset !== 'utf-8' &&
+        charset !== 'utf8'
+      )
+        fail(
+          path,
+          'request bodies require UTF-8; declare charset=utf-8 or omit the charset parameter',
+        );
       const media = record(content[name], path);
       keys(
         media,
         ['schema', ...exampleKeys, ...(kind === 'form' ? ['encoding'] : [])],
         path,
       );
-      if (
-        kind === 'form' &&
-        charset !== undefined &&
-        charset !== 'utf-8' &&
-        charset !== 'utf8'
-      )
-        fail(path, 'form-urlencoded requests require UTF-8 encoding');
       exampleAnnotations(media, path, examples);
       const schemaLocation = `${path}.schema`;
       // A Media Type Object without a schema leaves its payload unconstrained
