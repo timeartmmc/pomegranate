@@ -91,6 +91,7 @@ const children: Readonly<Record<Node, Fields>> = {
     oneOf: 'list:schema',
     discriminator: 'discriminator',
     externalDocs: 'annotation',
+    xml: 'annotation',
   },
   discriminator: {},
   example: {},
@@ -296,7 +297,8 @@ function walkDocument(
       if (
         reference &&
         frame.context === 'schema' &&
-        ((key !== 'externalDocs' && key !== 'allOf') || openApi30)
+        ((key !== 'externalDocs' && key !== 'xml' && key !== 'allOf') ||
+          openApi30)
       )
         continue;
       const value: unknown =

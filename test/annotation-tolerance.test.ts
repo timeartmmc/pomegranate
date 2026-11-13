@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { stringify } from 'yaml';
 import { compile, ContractError } from '../dist/index.js';
+import { parseYaml } from '../dist/yaml.js';
 import {
   generatedTestWorkspace,
   importGenerated,
@@ -24,6 +26,93 @@ function document(schema: Schema, version = '3.1.2') {
     components: { schemas: { Value: schema, Base: { type: 'string' } } },
   };
 }
+
+void test('XML schema metadata preserves JSON names and constraints in both dialects', async (t) => {
+  const plain = {
+    type: 'object',
+    properties: {
+      id: { type: 'integer', minimum: 1 },
+      labels: {
+        type: 'array',
+        minItems: 1,
+        items: { type: 'string', minLength: 2 },
+      },
+    },
+    required: ['id', 'labels'],
+  };
+  for (const version of ['3.0.4', '3.1.2']) {
+    const annotated = structuredClone(plain);
+    Object.assign(annotated, {
+      xml: { name: 'entry', namespace: 'urn:synthetic:xml', prefix: 's' },
+    });
+    Object.assign(annotated.properties.id, {
+      xml: { name: 'external-id', attribute: true },
+    });
+    Object.assign(annotated.properties.labels, {
+      xml: { name: 'names', wrapped: true },
+    });
+    Object.assign(annotated.properties.labels.items, {
+      xml: { name: 'label', attribute: false },
+    });
+    const source = document(annotated, version);
+    const before = structuredClone(source);
+    const files = await compile(source, selection);
+    assert.deepEqual(files, await compile(document(plain, version), selection));
+    assert.deepEqual(
+      await compile(parseYaml(stringify(source), 'xml.yaml'), selection),
+      files,
+    );
+    assert.deepEqual(source, before);
+    assert.deepEqual(
+      await compile(document({ xml: {} }, version), selection),
+      await compile(document({}, version), selection),
+    );
+    const root = await generatedTestWorkspace(t, files);
+    for (const usage of ['input', 'output']) {
+      const { schema } = await importGenerated<StandaloneModule>(
+        root,
+        `standalone.${usage}.ts`,
+      );
+      assert.deepEqual(schema.parse({ id: 1, labels: ['ok'] }), {
+        id: 1,
+        labels: ['ok'],
+      });
+      for (const input of [
+        { id: 0, labels: ['ok'] },
+        { id: 1, labels: [] },
+        { id: 1, labels: ['x'] },
+        { 'external-id': 1, names: ['ok'] },
+      ])
+        assert.equal(schema.safeParse(input).success, false);
+    }
+  }
+});
+
+void test('malformed XML metadata diagnoses schema fields and 3.1 reference siblings', async () => {
+  for (const version of ['3.0.4', '3.1.2'])
+    for (const schema of [
+      { type: 'string' },
+      ...(version === '3.1.2' ? [{ $ref: '#/components/schemas/Base' }] : []),
+    ])
+      for (const [xml, suffix] of [
+        [undefined, ''],
+        [null, ''],
+        [[], ''],
+        ['entry', ''],
+        [{ name: 1 }, '.name'],
+        [{ namespace: false }, '.namespace'],
+        [{ prefix: [] }, '.prefix'],
+        [{ attribute: 'true' }, '.attribute'],
+        [{ wrapped: 0 }, '.wrapped'],
+        [{ unknown: true }, '.unknown'],
+      ] as const)
+        await assert.rejects(
+          compile(document({ ...schema, xml }, version), selection),
+          (error) =>
+            error instanceof ContractError &&
+            error.location === `components.schemas.Value.xml${suffix}`,
+        );
+});
 
 void test('undeclared formats diagnose across schema kinds, nullable types, dialects and reference siblings', async () => {
   const schemas: Schema[] = [

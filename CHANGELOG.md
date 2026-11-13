@@ -12,6 +12,10 @@ prepared Content-Type. See [wire serialization](REFERENCE.md#header-serializatio
 
 ### Features
 
+Schema `xml` annotations are accepted as metadata in OpenAPI 3.0 and 3.1.
+Their fields are checked without changing JSON property names or validation;
+XML payloads remain unsupported.
+
 Markdown, diff/patch, and calendar media types accept string bodies in requests
 and responses, including response media ranges. String constraints remain
 validated; text syntax is passed through unchanged.

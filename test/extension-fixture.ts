@@ -13,7 +13,10 @@ const payload = () => ({
   'x-note': { 'x-note': 'payload', type: 'not a schema' },
 });
 const docs = () => ({ url: './synthetic-docs' });
-const schemaRef = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+const schemaRef = (name: string) => ({
+  $ref: `#/components/schemas/${name}`,
+  xml: { name: 'reference-name' },
+});
 const examples = () => ({
   'x-note': { value: payload() },
   alias: { $ref: '#/components/examples/x-note', description: 'Alias' },
@@ -32,6 +35,7 @@ export function extensionFixture() {
     example: payload(),
     examples: [payload(), { type: 'unknown', 'x-note': ['kept'] }],
     externalDocs: docs(),
+    xml: { name: 'note' },
   };
   return {
     openapi: '3.1.1',
@@ -200,6 +204,7 @@ export function extensionKeywordTargets(
       schema.properties['x-note'],
     ],
     ['components.schemas.x-note.externalDocs', schema.externalDocs],
+    ['components.schemas.x-note.xml', schema.xml],
     ['components.schemas.Nullable', document.components.schemas.Nullable],
     [
       'components.schemas.Nullable.anyOf[0]',
@@ -219,6 +224,10 @@ export function extensionKeywordTargets(
       document.components.schemas.Tagged.discriminator,
     ],
     ['components.schemas.Array.items', document.components.schemas.Array.items],
+    [
+      'components.schemas.Array.items.xml',
+      document.components.schemas.Array.items.xml,
+    ],
     [
       'components.schemas.Map.additionalProperties',
       document.components.schemas.Map.additionalProperties,

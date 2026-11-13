@@ -8,14 +8,16 @@ import type { Schema } from './schema-helpers.ts';
 const textTypes = ['text/markdown', 'text/x-diff', 'text/calendar'] as const;
 export function interoperabilityFixture(openapi = '3.0.4') {
   const shared = {
-    properties: { id: { type: 'integer', format: 'uint32' } },
+    properties: {
+      id: { type: 'integer', format: 'uint32', xml: { attribute: true } },
+    },
     required: ['id'],
   };
   const cat: Schema = {
     type: 'object',
     additionalProperties: true,
     properties: {
-      kind: { type: 'string', enum: ['Cat'] },
+      kind: { type: 'string', enum: ['Cat'], xml: { name: 'species' } },
       amount: { type: 'number', format: 'decimal', multipleOf: 0.1 },
       metadata: {
         properties: { label: { type: 'string' } },

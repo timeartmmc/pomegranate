@@ -20,6 +20,7 @@ const ignoredReferenceSiblings = [
   'example',
   'deprecated',
   'externalDocs',
+  'xml',
 ];
 
 const openApi31SchemaKeys = new Set([

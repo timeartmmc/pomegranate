@@ -472,7 +472,7 @@ OpenAPI 3.1 uses null types/type arrays and numeric exclusive bounds. Schema
 in 3.0. Parameter/media-type named `examples` and schema `example` work in both.
 
 OpenAPI 3.0 ignores every sibling of `$ref`. POM follows that for the
-annotations `title`, `description`, `example`, `deprecated`, and `externalDocs`:
+annotations `title`, `description`, `example`, `deprecated`, `externalDocs`, and `xml`:
 they are dropped without being interpreted, for every kind of reference. Any
 other sibling receives a diagnostic, because POM must not silently lose an
 intended constraint or apply 3.1 reference semantics. In 3.1, supported schema
@@ -640,8 +640,14 @@ generated files:
 | `info.contact`, `info.termsOfService`                                  | Contact has optional string `name`, `url` and `email`; terms of service is a string         |
 | Document, tags, operations, schemas (3.1 also permits `$ref` siblings) | `externalDocs` with required string `url` and optional string `description`                 |
 | Schemas (3.1 also permits `$ref` siblings)                             | `example` as a JSON value; 3.1 also accepts string `$comment` and an `examples` array       |
+| Schemas (3.1 also permits `$ref` siblings)                             | `xml` with optional string `name`, `namespace`, `prefix` and boolean `attribute`, `wrapped` |
 | Parameters, response headers, supported media types                    | A single JSON `example` or an `examples` map of named Example Objects, mutually exclusive   |
 | Operations, parameters, response headers, schemas                      | Boolean `deprecated`; deprecated declarations remain generated                              |
+
+The [`xml` annotation](https://spec.openapis.org/oas/v3.1.2.html#xml-object)
+describes XML serialization only. POM checks its field shapes; JSON property
+names, types, and constraints stay unchanged. XML request and response media
+types remain unsupported.
 
 Example Objects accept string `summary` and `description`, and a JSON `value` or
 string `externalValue`, mutually exclusive. Named examples may reference

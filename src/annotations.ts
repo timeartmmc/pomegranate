@@ -22,6 +22,7 @@ export const schemaAnnotationKeys = [
   'default',
   'deprecated',
   'externalDocs',
+  'xml',
   ...exampleKeys,
 ];
 
@@ -171,6 +172,17 @@ export function schemaAnnotations(
   annotations(value, location);
   externalDocsAnnotation(value, location);
   deprecatedAnnotation(value, location);
+  if (Object.hasOwn(value, 'xml')) {
+    // XML serialization metadata never changes JSON names or assertions
+    // (OAS 3.1.2 §4.8.26). Check its shape before discarding it.
+    const path = `${location}.xml`;
+    const xml = record(value.xml, path);
+    keys(xml, ['name', 'namespace', 'prefix', 'attribute', 'wrapped'], path);
+    stringFields(xml, ['name', 'namespace', 'prefix'], path);
+    for (const name of ['attribute', 'wrapped'])
+      if (Object.hasOwn(xml, name) && typeof xml[name] !== 'boolean')
+        fail(`${path}.${name}`, 'expected a boolean');
+  }
   if (Object.hasOwn(value, 'example'))
     jsonAnnotation(value.example, `${location}.example`);
   // Schema.examples is a JSON Schema array. Unlike Parameter/Media Type examples,

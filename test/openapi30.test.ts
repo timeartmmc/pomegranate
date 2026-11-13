@@ -198,6 +198,7 @@ void test('OpenAPI 3.0 ignores annotation siblings of every reference without in
       example: { any: ['json', null] },
       deprecated: true,
       externalDocs: { url: 'https://example.test/docs', 'x-doc': 'Ignored' },
+      xml: { name: 'ignored', 'x-doc': 'Ignored' },
     },
     // Ignored values are not annotations of the reference, so their shapes
     // are not checked either.
@@ -207,6 +208,7 @@ void test('OpenAPI 3.0 ignores annotation siblings of every reference without in
       example: undefined,
       deprecated: 'yes',
       externalDocs: 'nowhere',
+      xml: 'ignored without shape validation',
     },
   ]) {
     const input = fixture();
@@ -269,7 +271,7 @@ void test('OpenAPI 3.1 keeps reference documentation and extension boundaries', 
 
 void test('OpenAPI 3.0 keeps rejecting reference siblings that could carry meaning', async () => {
   const supported =
-    /unsupported keyword; supported keys: "\$ref", "title", "description", "example", "deprecated", "externalDocs"$/;
+    /unsupported keyword; supported keys: "\$ref", "title", "description", "example", "deprecated", "externalDocs", "xml"$/;
   const rejects = async (
     change: (input: ReturnType<typeof fixture>) => object,
     sibling: Record<string, unknown>,
