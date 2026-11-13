@@ -2,6 +2,8 @@ import { isUtf8 } from 'node:buffer';
 import { constants } from 'node:fs';
 import { open, realpath } from 'node:fs/promises';
 import { dirname, extname, resolve } from 'node:path';
+import { auditContract } from './audit.js';
+import type { AuditResult } from './audit.js';
 import { buildDescriptor, openApiDocument } from './descriptor.js';
 import { fail, keys, record, schemaWarnings, text } from './diagnostics.js';
 import type { CompileWarning, WarnSchema } from './diagnostics.js';
@@ -116,10 +118,7 @@ function describeInput(
   };
 }
 
-export async function compile(
-  document: unknown,
-  options: CompileOptions,
-): Promise<Readonly<Record<string, string>>> {
+function compilerOptions(options: CompileOptions) {
   const selection = record(options, 'compile options');
   keys(selection, [...selectionKeys, 'onWarning'], 'compile options');
   const onWarning = Object.hasOwn(selection, 'onWarning')
@@ -127,11 +126,57 @@ export async function compile(
     : undefined;
   if (onWarning !== undefined && typeof onWarning !== 'function')
     fail('compile options.onWarning', 'expected a function');
+  return { selection, onWarning };
+}
+
+export async function compile(
+  document: unknown,
+  options: CompileOptions,
+): Promise<Readonly<Record<string, string>>> {
+  const { selection, onWarning } = compilerOptions(options);
   const warnings = schemaWarnings();
   const { descriptor } = describeInput(document, selection, warnings.warn);
   const files = await renderSelection(descriptor, selection);
   for (const warning of warnings.values()) onWarning?.(warning);
   return files;
+}
+
+export async function audit(
+  document: unknown,
+  options: CompileOptions,
+): Promise<AuditResult> {
+  const { selection, onWarning } = compilerOptions(options);
+  const result = auditContract(document, selection);
+  for (const warning of result.warnings) onWarning?.(warning);
+  return result;
+}
+
+async function readProject(configFile: string) {
+  const configPath = await realpath(configFile);
+  const config = record(await readJson(configPath), configPath);
+  keys(config, ['version', 'openapi', 'output', ...selectionKeys], configPath);
+  if (config.version !== 2)
+    fail(`${configPath}.version`, 'expected config version 2');
+  const input = resolve(
+    dirname(configPath),
+    text(config.openapi, `${configPath}.openapi`),
+  );
+  const output = resolve(
+    dirname(configPath),
+    text(config.output, `${configPath}.output`),
+  );
+  return {
+    configPath,
+    config,
+    input,
+    output,
+    document: await readOpenApi(input),
+  };
+}
+
+export async function auditProject(configFile: string): Promise<AuditResult> {
+  const { document, config } = await readProject(configFile);
+  return auditContract(document, config);
 }
 
 export async function runProject(
@@ -153,20 +198,8 @@ export async function runProject(
     : undefined;
   if (onWarning !== undefined && typeof onWarning !== 'function')
     fail('project options.onWarning', 'expected a function');
-  const configPath = await realpath(configFile);
-  const config = record(await readJson(configPath), configPath);
-  keys(config, ['version', 'openapi', 'output', ...selectionKeys], configPath);
-  if (config.version !== 2)
-    fail(`${configPath}.version`, 'expected config version 2');
-  const input = resolve(
-    dirname(configPath),
-    text(config.openapi, `${configPath}.openapi`),
-  );
-  const output = resolve(
-    dirname(configPath),
-    text(config.output, `${configPath}.output`),
-  );
-  const document = await readOpenApi(input);
+  const { configPath, config, input, output, document } =
+    await readProject(configFile);
   const warnings = schemaWarnings();
   const { descriptor, metadata } = describeInput(
     document,

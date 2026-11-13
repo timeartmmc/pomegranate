@@ -14,6 +14,11 @@ response charset handling remains the transport's responsibility.
 
 ### Features
 
+`pom audit --config pom.json` and `audit(document, options)` report failing
+operation IDs, shared blockers, and a suggested exclusion list without writing
+files. Global blockers leave unassessed operations explicit. Audits use existing
+contract validation and configuration; generation and drift checks stay separate.
+
 Inactive type-specific schema keywords and OpenAPI 3.0 `nullable: true` without
 a same-object type compile with grouped warnings. Their syntax is still checked
 and applicable validation remains unchanged. `compile` accepts `onWarning`;

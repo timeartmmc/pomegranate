@@ -40,6 +40,10 @@ npx --package=pomegranate-compiler pom generate --config pom.json
 npx --package=pomegranate-compiler pom check --config pom.json
 ```
 
+For a third-party contract, `pom audit --config pom.json` reports failing
+operation IDs and shared blockers as JSON, with a suggested exclusion list. It
+does not write generated files. See [operation audits](REFERENCE.md#operation-audits).
+
 `check` reports differences without writing files. Generate the complete output
 set with one compiler version, keep `.pom-manifest.json`, and exclude generated
 files from application formatters. Generation warns before overwriting edited

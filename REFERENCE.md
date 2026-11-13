@@ -99,6 +99,57 @@ drift checks. The programmatic `compile()` return value remains the generated
 file map. Exclusion preprocessing is bounded to 1,000,000 work units, including
 identities, traversed declarations and dependency edges.
 
+### Operation audits
+
+Run a read-only compatibility audit with the same project configuration:
+
+```sh
+pom audit --config pom.json > audit.json
+```
+
+The JSON report contains sorted `supportedOperations`, `failedOperations`, and
+`unassessedOperations` IDs, grouped `diagnostics`, and schema `warnings`.
+`excludeOperations` combines the configured exclusions with the operations that
+failed during the audit. Review that list before copying it into configuration;
+the audit never changes inputs, configuration, or generated outputs. Exit status
+is 0 for a clean audit, 1 for diagnostics or an input failure, and 2 for invalid
+CLI arguments. Warnings alone do not fail an audit.
+
+Each diagnostic gives `location`, `message`, and `operationIds`. A shared
+component failure lists every retained operation that depends on it. The audit
+collects independent schema and operation failures in batches, then validates the
+remaining contract after setting those operations aside. It does not render
+generated code or rebuild its dependency index. Each failed
+operation receives its first observed blocker, rather than every possible error
+inside it. The result identifies a compatible subset; interacting path or
+selection rules can require reviewing more than one possible subset.
+
+An unrepairable document, global-security, standalone, selection, or
+unused-component failure has an empty `operationIds` list. Remaining IDs stay in
+`unassessedOperations`, and `complete` is false. Fix the shared blocker and rerun.
+The configured pruning policy still applies; enable
+`pruneUnusedComponents` to diagnose only reachable components. Invalid inventory
+or configuration, such as duplicate IDs or unknown exclusions, fails before an
+operation report can be produced. Compiler exceptions are not relabeled as
+unsupported operations.
+
+Overlapping dotted declaration or path names can make a diagnostic's textual
+location ambiguous. The audit reports that ambiguity and leaves remaining
+operations unassessed, without guessing which operations to exclude.
+
+The audit checks contract interpretation and selected compiler features, but
+does not render code, enforce generated-source budgets, or inspect output
+ownership. Generation and drift checks remain separate. Audit dependency work is
+bounded to 10,000,000 units; an exhausted budget leaves remaining operations
+explicitly unassessed. The usual compiler work limits also apply; exhausting a
+shared budget reports a global blocker rather than suggesting endpoint exclusions.
+Runtime varies with the contract and number of distinct
+blockers; there is no fixed duration guarantee.
+
+For parsed documents, `await audit(document, options)` accepts `CompileOptions`
+and returns `AuditResult` without filesystem access. `onWarning` receives the
+same grouped schema warnings included in the report.
+
 ### Unused components
 
 Set `pruneUnusedComponents: true` in `pom.json` or `CompileOptions` to remove

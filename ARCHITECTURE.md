@@ -47,6 +47,12 @@ before discarding them. Preserve every applicable assertion; an inferred
 composition type cannot prove a keyword inactive. Group repeated warning reasons
 at the compiler boundary, keeping generated validation free of diagnostics.
 
+Operation audits reuse canonical descriptor and selection validation. Index
+source dependencies once, group a blocker with all affected retained operations,
+and continue with the remaining contract. Report global blockers and unassessed
+operations explicitly. Audits do not render code or modify inputs or outputs;
+they must not turn compiler exceptions into contract diagnostics.
+
 Keep input normalization, reference analysis and compile-time schema checks
 separate. Generated validators check application payloads at runtime.
 

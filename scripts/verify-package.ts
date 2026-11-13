@@ -995,8 +995,8 @@ ${await readFile(rewritingWorker, 'utf8')}`,
   await writeFile(
     join(consumer, 'extension-generated/consumer.ts'),
     `
-    import { compile, runProject } from 'pomegranate-compiler';
-    import type { CompileOptions, CompileWarning, OutputResult, OutputWarning } from 'pomegranate-compiler';
+    import { audit, compile, runProject } from 'pomegranate-compiler';
+    import type { AuditResult, CompileOptions, CompileWarning, OutputResult, OutputWarning } from 'pomegranate-compiler';
     import { operations } from './client.consumer.ts';
     const options: CompileOptions = {clients: ['consumer'], ignoreExtensions: ['x-note']};
     export const request = operations.echo.build({path: {id: 'id'}, query: {'x-note': 'query'}, headers: {'x-note': 'request'}, body: {'x-note': 'kept'}});
@@ -1009,6 +1009,9 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     export async function inspectSchema(document: unknown) {
       const warnings: CompileWarning[] = [];
       return compile(document, {...options, onWarning: warning => { warnings.push(warning); }});
+    }
+    export function inspectOperations(document: unknown): Promise<AuditResult> {
+      return audit(document, options);
     }
     // @ts-expect-error Ignoring annotations preserves required data fields.
     operations.echo.build({path: {id: 'id'}, body: {}});
@@ -1473,6 +1476,18 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     scratch,
   );
   await run(binary, ['check', '--config', join(consumer, 'pom.json')], scratch);
+  const audited = await run(
+    binary,
+    ['audit', '--config', join(consumer, 'pom.json')],
+    scratch,
+  );
+  const auditResult: unknown = JSON.parse(audited.stdout);
+  assert.ok(
+    auditResult !== null &&
+      typeof auditResult === 'object' &&
+      'clean' in auditResult &&
+      auditResult.clean === true,
+  );
   await run(
     binary,
     ['generate', '--config', join(consumer, 'alias-pom.json')],
@@ -1597,7 +1612,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import {numericFormatProfilesFixture,numericFormatProfilesSelection} from './verification/numeric-format-profiles-fixture.ts';
     import {recursionFixture,recursionSelection} from './verification/recursion-fixture.ts';
     import {compileWithLimit} from './recursive-work-limit-consumer.ts';
-    assert.deepEqual(Object.keys(pom).sort(), ['ContractError', 'compile', 'runProject']);
+    assert.deepEqual(Object.keys(pom).sort(), ['ContractError', 'audit', 'compile', 'runProject']);
     for (const [name, limit] of [['small',2], ['large',32]]) {
       const files=await compileWithLimit(recursionFixture(), {
         clients:[], surfaces:recursionSelection.surfaces,
@@ -1637,6 +1652,16 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     delete noops.components.schemas.Root.nullable;
     delete noops.components.schemas.Text.uniqueItems;
     assert.deepEqual(noopFiles,await pom.compile(noops,noopSelection));
+    const auditDocument={openapi:'3.1.2',info:{title:'Synthetic installed audit',version:'1'},paths:{
+      '/good':{get:{operationId:'good',responses:{204:{description:'Empty'}}}},
+      '/bad':{get:{operationId:'bad',responses:{200:{description:'Binary',content:{'application/octet-stream':{schema:{type:'string',format:'binary'}}}}}}},
+    }};
+    const auditOptions={clients:['consumer'],surfaces:{consumer:['good','bad']},pruneUnusedComponents:true};
+    const auditResult=await pom.audit(auditDocument,auditOptions);
+    assert.equal(auditResult.complete,true);
+    assert.deepEqual(auditResult.failedOperations,['bad']);
+    assert.deepEqual(auditResult.supportedOperations,['good']);
+    await pom.compile(auditDocument,{...auditOptions,excludeOperations:auditResult.excludeOperations});
     assert.deepEqual(openapi30Document,openapi30Before);
     const toleranceDocument=toleranceFixture();
     const toleranceBefore=structuredClone(toleranceDocument);

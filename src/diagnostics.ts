@@ -8,6 +8,17 @@ export class ContractError extends Error {
   }
 }
 
+// Audit phases may report independent failures together, but shared work-budget
+// exhaustion must stop a phase instead of blaming subsequent declarations.
+export class ContractWorkError extends ContractError {}
+
+export class ContractErrors extends Error {
+  constructor(readonly errors: readonly ContractError[]) {
+    super('multiple contract diagnostics');
+    this.name = 'ContractErrors';
+  }
+}
+
 export function fail(location: string, detail: string): never {
   throw new ContractError(location, detail);
 }

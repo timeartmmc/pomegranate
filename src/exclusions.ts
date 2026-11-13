@@ -84,6 +84,17 @@ export function excludeOperations(
   }
   if (excluded.size === 0 && !pruneUnused)
     return { document, excluded: [], pruned: [] };
+  return operationFilter(document, standalone, charge).select(
+    excluded,
+    pruneUnused,
+  );
+}
+
+export function operationFilter(
+  document: Record<string, unknown>,
+  standalone: unknown,
+  charge: (amount: number) => void,
+) {
   const paths = record(document.paths, 'paths');
   const operations = new Map<string, { path: string; method: string }>();
   for (const path of Object.keys(paths)) {
@@ -106,38 +117,6 @@ export function excludeOperations(
       operations.set(id, { path, method });
     }
   }
-  const removals = new Map<string, Set<string>>();
-  for (const [index, id] of input.entries()) {
-    const operation = operations.get(id);
-    if (!operation)
-      fail(
-        `excludeOperations[${index}]`,
-        `unknown operation identifier ${JSON.stringify(id)}`,
-      );
-    const methods = removals.get(operation.path) ?? new Set<string>();
-    methods.add(operation.method);
-    removals.set(operation.path, methods);
-  }
-  const keptPaths = new Map<string, unknown>();
-  const removedPaths = new Map<string, unknown>();
-  const emptyPaths = new Set<string>();
-  for (const [path, methods] of removals) {
-    const item = record(paths[path], `paths.${path}`);
-    const kept = copy(item, methods);
-    if (openApiMethods.some((method) => Object.hasOwn(kept, method)))
-      keptPaths.set(path, kept);
-    else emptyPaths.add(path);
-    removedPaths.set(
-      path,
-      copy(
-        item,
-        openApiMethods.filter((method) => !methods.has(method)),
-      ),
-    );
-  }
-  let filtered = copy(document, [], {
-    paths: copy(paths, emptyPaths, Object.fromEntries(keptPaths)),
-  });
   const components = record(
     Object.hasOwn(document, 'components') ? document.components : {},
     'components',
@@ -215,50 +194,202 @@ export function excludeOperations(
     }
     return visited;
   };
-  const roots = dependencies(copy(filtered, ['components']));
-  for (const root of standaloneSelections(standalone))
-    if (declarations.has(root.schema)) roots.add(root.schema);
-  // Strict mode keeps otherwise-unused declarations and their dependencies.
-  // Opt-in pruning roots only in retained document uses and standalone exports;
-  // client selection must never hide dependencies of an unselected operation.
-  let candidates: Iterable<string> = declarations.keys();
-  if (!pruneUnused) {
-    const removed = closure(
-      dependencies({ paths: Object.fromEntries(removedPaths) }),
-    );
-    for (const reference of declarations.keys())
-      if (!removed.has(reference)) roots.add(reference);
-    candidates = removed;
-  }
-  const protectedComponents = closure(roots);
-  const pruned = new Map<string, string[]>();
-  const prunedReferences: string[] = [];
-  for (const reference of candidates) {
-    if (pruneUnused) charge(1);
-    if (protectedComponents.has(reference)) continue;
-    const { section, name } = declarations.get(reference)!;
-    const names = pruned.get(section) ?? [];
-    names.push(name);
-    pruned.set(section, names);
-    if (pruneUnused)
-      prunedReferences.push(
-        `#/components/${section}/${name.replace(/~/g, '~0').replace(/\//g, '~1')}`,
+  const standaloneRoots = standaloneSelections(standalone).map(
+    (root) => root.schema,
+  );
+
+  function select(excluded: ReadonlySet<string>, pruneUnused: boolean) {
+    const removals = new Map<string, Set<string>>();
+    for (const [index, id] of [...excluded].entries()) {
+      const operation = operations.get(id);
+      if (!operation)
+        fail(
+          `excludeOperations[${index}]`,
+          `unknown operation identifier ${JSON.stringify(id)}`,
+        );
+      const methods = removals.get(operation.path) ?? new Set<string>();
+      methods.add(operation.method);
+      removals.set(operation.path, methods);
+    }
+    const keptPaths = new Map<string, unknown>();
+    const removedPaths = new Map<string, unknown>();
+    const emptyPaths = new Set<string>();
+    for (const [path, methods] of removals) {
+      const item = record(paths[path], `paths.${path}`);
+      const kept = copy(item, methods);
+      if (openApiMethods.some((method) => Object.hasOwn(kept, method)))
+        keptPaths.set(path, kept);
+      else emptyPaths.add(path);
+      removedPaths.set(
+        path,
+        copy(
+          item,
+          openApiMethods.filter((method) => !methods.has(method)),
+        ),
       );
-  }
-  if (pruned.size > 0) {
-    const replacements = Object.fromEntries(
-      [...pruned].map(([section, names]) => [
-        section,
-        copy(record(components[section], `components.${section}`), names),
-      ]),
-    );
-    filtered = copy(filtered, [], {
-      components: copy(components, [], replacements),
+    }
+    let filtered = copy(document, [], {
+      paths: copy(paths, emptyPaths, Object.fromEntries(keptPaths)),
     });
+    const roots = dependencies(copy(filtered, ['components']));
+    for (const root of standaloneRoots)
+      if (declarations.has(root)) roots.add(root);
+    // Strict mode keeps otherwise-unused declarations and their dependencies.
+    // Opt-in pruning roots only in retained document uses and standalone exports;
+    // client selection must never hide dependencies of an unselected operation.
+    let candidates: Iterable<string> = declarations.keys();
+    if (!pruneUnused) {
+      const removed = closure(
+        dependencies({ paths: Object.fromEntries(removedPaths) }),
+      );
+      for (const reference of declarations.keys())
+        if (!removed.has(reference)) roots.add(reference);
+      candidates = removed;
+    }
+    const protectedComponents = closure(roots);
+    const pruned = new Map<string, string[]>();
+    const prunedReferences: string[] = [];
+    for (const reference of candidates) {
+      if (pruneUnused) charge(1);
+      if (protectedComponents.has(reference)) continue;
+      const { section, name } = declarations.get(reference)!;
+      const names = pruned.get(section) ?? [];
+      names.push(name);
+      pruned.set(section, names);
+      if (pruneUnused)
+        prunedReferences.push(
+          `#/components/${section}/${name.replace(/~/g, '~0').replace(/\//g, '~1')}`,
+        );
+    }
+    if (pruned.size > 0) {
+      const replacements = Object.fromEntries(
+        [...pruned].map(([section, names]) => [
+          section,
+          copy(record(components[section], `components.${section}`), names),
+        ]),
+      );
+      filtered = copy(filtered, [], {
+        components: copy(components, [], replacements),
+      });
+    }
+    return {
+      document: filtered,
+      excluded: [...excluded].sort(),
+      pruned: prunedReferences.sort(),
+    };
+  }
+
+  // Compute ownership only for diagnostics. Normal exclusions share the same
+  // dependency grammar and closure without paying for reverse reachability.
+  let ownership:
+    | {
+        owners: Map<string, Set<string>>;
+        parents: Map<string, Set<string>>;
+        protectedRoots: Set<string>;
+      }
+    | undefined;
+  function affected(location: string): readonly string[] {
+    const within = (prefix: string, value: string) =>
+      value === prefix ||
+      value.startsWith(`${prefix}.`) ||
+      value.startsWith(`${prefix}[`);
+    if (location.startsWith('paths.')) {
+      const rest = location.slice('paths.'.length);
+      const candidates = Object.keys(paths).filter((name) =>
+        within(name, rest),
+      );
+      if (candidates.length > 1)
+        fail(
+          'audit',
+          `cannot safely attribute ${JSON.stringify(location)}: declared path names make this diagnostic ambiguous; no exclusions were proposed`,
+        );
+      const path = candidates[0];
+      if (path === undefined) return [];
+      const tail = rest.slice(path.length + 1);
+      const method = openApiMethods.find((name) => within(name, tail));
+      if (
+        method === undefined &&
+        tail &&
+        !['parameters', 'servers', 'summary', 'description'].some((name) =>
+          within(name, tail),
+        )
+      )
+        return [];
+      return [...operations]
+        .filter(
+          ([, operation]) =>
+            operation.path === path &&
+            (method === undefined || operation.method === method),
+        )
+        .map(([id]) => id);
+    }
+    const candidates = [...declarations].filter(([, { section, name }]) =>
+      within(`components.${section}.${name}`, location),
+    );
+    // Location strings cannot distinguish a dotted declaration name from a
+    // child path in another declaration. Never recommend excluding a healthy
+    // operation by guessing the longest textual prefix.
+    if (candidates.length > 1)
+      fail(
+        'audit',
+        `cannot safely attribute ${JSON.stringify(location)}: declared component names make this diagnostic ambiguous; no exclusions were proposed`,
+      );
+    const reference = candidates[0]?.[0];
+    if (reference === undefined) return [];
+    if (ownership === undefined) {
+      const owners = new Map<string, Set<string>>();
+      const parents = new Map<string, Set<string>>();
+      for (const [source, dependencies] of edges)
+        for (const dependency of dependencies) {
+          charge(1);
+          const values = parents.get(dependency) ?? new Set<string>();
+          values.add(source);
+          parents.set(dependency, values);
+        }
+      for (const [id, { path, method }] of operations) {
+        const item = record(paths[path], `paths.${path}`);
+        const roots = dependencies({
+          paths: {
+            [path]: copy(
+              item,
+              openApiMethods.filter((name) => name !== method),
+            ),
+          },
+        });
+        for (const root of roots) {
+          const values = owners.get(root) ?? new Set<string>();
+          values.add(id);
+          owners.set(root, values);
+        }
+      }
+      const roots = dependencies(copy(document, ['components', 'paths']));
+      for (const root of standaloneRoots)
+        if (declarations.has(root)) roots.add(root);
+      // Publish only a complete index: a work limit may interrupt any build step.
+      ownership = { owners, parents, protectedRoots: closure(roots) };
+    }
+    const { owners, parents, protectedRoots } = ownership;
+    // Excluding operations cannot repair global security or a standalone root.
+    if (protectedRoots.has(reference)) return [];
+    const result = new Set<string>();
+    const pending = [reference];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (visited.has(current)) continue;
+      charge(1);
+      visited.add(current);
+      for (const id of owners.get(current) ?? []) result.add(id);
+      for (const parent of parents.get(current) ?? []) pending.push(parent);
+    }
+    return [...result].sort();
   }
   return {
-    document: filtered,
-    excluded: [...excluded].sort(),
-    pruned: prunedReferences.sort(),
+    operations: operations as ReadonlyMap<
+      string,
+      { path: string; method: string }
+    >,
+    select,
+    affected,
   };
 }

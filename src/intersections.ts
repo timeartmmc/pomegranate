@@ -1,4 +1,4 @@
-import { assertNever, fail } from './diagnostics.js';
+import { assertNever, ContractWorkError, fail } from './diagnostics.js';
 import type {
   ConstraintInput,
   Constraints,
@@ -36,7 +36,7 @@ function compositionBudget(): (amount: number, location: string) => void {
   let remaining = maximumCompositionWork;
   return (amount, location) => {
     if ((remaining -= amount) < 0)
-      fail(
+      throw new ContractWorkError(
         location,
         `allOf composition work exceeds the supported limit of ${maximumCompositionWork} units; reduce or split the input contract`,
       );

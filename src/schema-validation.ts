@@ -1,4 +1,4 @@
-import { assertNever, fail } from './diagnostics.js';
+import { assertNever, ContractWorkError, fail } from './diagnostics.js';
 import type { ConstraintInput, Scalar, Schema, SchemaTable } from './model.js';
 import {
   constraintNames,
@@ -40,7 +40,7 @@ export function schemaValidation() {
     // the complete scan before filtering, shared across this validation pass.
     work: (amount: number, location: string): void => {
       if ((remaining -= amount) < 0)
-        fail(
+        throw new ContractWorkError(
           location,
           `schema validation work exceeds the supported limit of ${maximum} units; reduce or split the input contract, or reduce repeated constrained references to wide enums`,
         );

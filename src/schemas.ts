@@ -1,6 +1,7 @@
 import {
   arrayValues,
   contractField,
+  ContractWorkError,
   fail,
   keys,
   record,
@@ -111,7 +112,7 @@ export function createSchemaNormalizer(
   let remaining = maximum;
   const work: WorkCounter = (amount, location) => {
     if ((remaining -= amount) < 0)
-      fail(
+      throw new ContractWorkError(
         location,
         `schema normalization work exceeds the supported limit of ${maximum} units; reduce or split the input contract, or replace repeated inline schemas with local $ref references`,
       );
