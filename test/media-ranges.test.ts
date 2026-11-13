@@ -105,6 +105,11 @@ const cases: readonly (readonly [string | undefined, string, string?])[] = [
   ['application/vnd.api+json; version=*', '"application"', 'application'],
   ['text/plain', 'text', 'text'],
   ['text/plain; charset=utf-8', 'text', 'text'],
+  ['text/markdown; charset=utf-8', 'text', 'text'],
+  ['text/x-markdown', 'text', 'text'],
+  ['text/x-diff', 'text', 'text'],
+  ['text/x-patch', 'text', 'text'],
+  ['text/calendar', 'text', 'text'],
   ['text/vnd.note+json', '"text"', 'text'],
   ['model/gltf+json', '"any"', 'any'],
   // The most specific key alone validates, even where a wider one would pass.
@@ -119,6 +124,9 @@ const cases: readonly (readonly [string | undefined, string, string?])[] = [
   // range does not rescue a type the narrower one covers.
   ['application/xml', '"application"'],
   ['application/octet-stream', '"any"'],
+  ['text/event-stream', 'text'],
+  ['application/x-ndjson', '"application"'],
+  ['text/xml', 'text'],
   ['text/html', 'text', 'text'],
   ['image/png', '"any"'],
   // A range is a declaration, never an observed media type. A wildcard in the
@@ -225,6 +233,11 @@ void test('a range validates only when it is the most specific declaration and t
     'exact',
     'application',
     'application',
+    'text',
+    'text',
+    'text',
+    'text',
+    'text',
     'text',
     'text',
     'text',

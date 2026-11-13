@@ -2692,6 +2692,11 @@ export function mediaDecoder(mediaType: string): 'json' | 'text' | undefined {
     mediaType === 'text/plain' ||
     mediaType === 'text/html' ||
     mediaType === 'text/csv' ||
+    mediaType === 'text/markdown' ||
+    mediaType === 'text/x-markdown' ||
+    mediaType === 'text/x-diff' ||
+    mediaType === 'text/x-patch' ||
+    mediaType === 'text/calendar' ||
     mediaType === 'text/yaml' ||
     mediaType === 'text/x-yaml' ||
     mediaType === 'application/yaml' ||

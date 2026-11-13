@@ -86,7 +86,7 @@ Available integrations:
 
 ## Supported contracts
 
-POM supports JSON, text (plain, HTML, CSV and YAML), flat form-urlencoded
+POM supports JSON, [documented text media](REFERENCE.md#content-types), flat form-urlencoded
 and multipart requests;
 exact, range and default response statuses; response media ranges; API keys, HTTP basic/bearer and
 OAuth2; and public, optional or combined security requirements. Schemas include

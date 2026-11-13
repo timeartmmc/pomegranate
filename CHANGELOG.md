@@ -12,6 +12,10 @@ prepared Content-Type. See [wire serialization](REFERENCE.md#header-serializatio
 
 ### Features
 
+Markdown, diff/patch, and calendar media types accept string bodies in requests
+and responses, including response media ranges. String constraints remain
+validated; text syntax is passed through unchanged.
+
 Path placeholders accept hyphenated names such as `{set-id}`, including embedded
 placeholders. Exact parameter matching and value-encoding rules still apply.
 

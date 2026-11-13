@@ -489,7 +489,8 @@ OpenAPI 2.0 and 3.2 are unsupported.
 
 Request and response content supports `application/json`, `text/json`, concrete
 media types with a `+json` suffix, and strings under `text/plain`, `text/html`,
-`text/csv`, `text/yaml`, `text/x-yaml`, `application/yaml`, and
+`text/csv`, `text/markdown`, `text/x-markdown`, `text/x-diff`, `text/x-patch`,
+`text/calendar`, `text/yaml`, `text/x-yaml`, `application/yaml`, and
 `application/x-yaml`; requests also support flat form-urlencoded and multipart
 bodies as below, and responses also support media ranges. One representation is selected
 for each request. Request preference is `application/json`, then other JSON
@@ -550,8 +551,8 @@ observed header values remain available in `headers`. All representation schemas
 enter the selected client's transitive projection.
 
 Each supported text media type requires a nonnullable string schema, including
-supported constraints and local references. HTML, CSV and YAML syntax is not
-parsed or checked. Text is passed through without JSON quoting or parsing; empty
+supported constraints and local references. Text syntax is not parsed or
+checked. Text is passed through without JSON quoting or parsing; empty
 strings and line breaks remain data. Transports own byte
 encoding/decoding. POM receives already-decoded JavaScript text; matching a
 Content-Type parameter does not decode bytes or validate the declared charset.

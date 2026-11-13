@@ -58,9 +58,9 @@ void test('Chromium preserves selected request bytes and dispatches every declar
     '/suffix': ['POST', 'application/problem+json'],
     '/preferred': ['POST', 'application/json'],
     '/records/a%2Fb.json': ['DELETE', 'text/json; charset=utf-8'],
-    '/text0': ['OPTIONS', 'text/html'],
-    '/text1': ['OPTIONS', 'text/csv'],
-    '/text2': ['OPTIONS', 'application/yaml'],
+    '/text0': ['OPTIONS', 'text/markdown'],
+    '/text1': ['OPTIONS', 'text/x-diff'],
+    '/text2': ['OPTIONS', 'text/calendar'],
   };
   const server = createServer((request, response) => {
     void (async () => {

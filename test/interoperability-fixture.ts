@@ -5,7 +5,7 @@ import type { StandaloneModule } from './runtime-types.ts';
 import { ref } from './schema-helpers.ts';
 import type { Schema } from './schema-helpers.ts';
 
-const textTypes = ['text/html', 'text/csv', 'application/yaml'] as const;
+const textTypes = ['text/markdown', 'text/x-diff', 'text/calendar'] as const;
 export function interoperabilityFixture(openapi = '3.0.4') {
   const shared = {
     properties: { id: { type: 'integer', format: 'uint32' } },

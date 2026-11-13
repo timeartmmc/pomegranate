@@ -33,6 +33,11 @@ function document(
 const textTypes = [
   'text/html',
   'text/csv',
+  'text/markdown',
+  'text/x-markdown',
+  'text/x-diff',
+  'text/x-patch',
+  'text/calendar',
   'text/yaml',
   'text/x-yaml',
   'application/yaml',
@@ -116,7 +121,7 @@ void test('charset declarations preserve request headers and normalize response 
   }
 });
 
-void test('unsupported parameters, ambiguous declarations and non-string textual schemas fail explicitly', async () => {
+void test('unsupported media and parameters, ambiguous declarations and non-string textual schemas fail explicitly', async () => {
   for (const media of [
     'application/json;stream=watch',
     'application/json;charset=',
@@ -126,6 +131,9 @@ void test('unsupported parameters, ambiguous declarations and non-string textual
     'application/json; charset=utf-8\r\n',
     'application/json; charset=utf-8\n',
     'multipart/form-data;charset=utf-8',
+    'text/event-stream',
+    'application/x-ndjson',
+    'text/xml',
   ])
     await assert.rejects(
       compile(document({ [media]: { schema: { type: 'string' } } }), selection),

@@ -250,7 +250,7 @@ function contentDefinitions(
       if (kind === undefined)
         fail(
           path,
-          'unsupported keyword; supported media types are JSON, HTML/CSV/YAML/plain text, form-urlencoded/multipart requests and response media ranges',
+          'unsupported keyword; supported media types are JSON, documented text types, form-urlencoded/multipart requests and response media ranges',
         );
       if (kind === 'multipart' && charset !== undefined)
         fail(
