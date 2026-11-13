@@ -583,10 +583,10 @@ function pathTemplate(path: string, location: string): void {
     if (segment === '.' || segment === '..')
       fail(location, 'dot segments are unsupported');
     const literal = segment.replace(/\{([^{}]*)\}/g, (_, name: string) => {
-      if (/^[A-Za-z_][A-Za-z0-9_]*$/.exec(name)?.[0] !== name)
+      if (/^[A-Za-z_][A-Za-z0-9_-]*$/.exec(name)?.[0] !== name)
         fail(
           location,
-          'path placeholder names must match [A-Za-z_][A-Za-z0-9_]*',
+          'path placeholder names must match [A-Za-z_][A-Za-z0-9_-]*',
         );
       return '';
     });

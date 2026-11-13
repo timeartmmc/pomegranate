@@ -1337,10 +1337,11 @@ omitted and validate the complete body when present. Required bodies retain
 their required inputs. All GET/HEAD request bodies remain unsupported. Response
 validation is independent of whether a request body was sent.
 
-Path placeholders use identifier names (`[A-Za-z_][A-Za-z0-9_]*`) and may occupy
-an entire segment or part of one, as in `/{id}.json`. Path values cannot be
-empty, `.` or `..`. Paths that differ only in placeholder names are rejected, even when their HTTP methods or surfaces
-differ. Concrete paths may coexist with templated paths.
+Path placeholder names match `[A-Za-z_][A-Za-z0-9_-]*`, including hyphenated
+names such as `{set-id}`, and may occupy an entire segment or part of one, as
+in `/{id}.json`. Path values cannot be empty, `.` or `..`. Paths that differ
+only in placeholder names are rejected, even when their HTTP methods or
+surfaces differ. Concrete paths may coexist with templated paths.
 
 Path-item and operation parameter lists accept [reusable component
 references](#reusable-components) as well as inline declarations.

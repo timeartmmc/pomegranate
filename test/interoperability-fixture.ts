@@ -72,12 +72,12 @@ export function interoperabilityFixture(openapi = '3.0.4') {
           },
         },
       },
-      '/records/{id}.json': {
+      '/records/{record-id}.json': {
         delete: {
           operationId: 'remove',
           parameters: [
             {
-              name: 'id',
+              name: 'record-id',
               in: 'path',
               required: true,
               schema: { type: 'string' },
@@ -139,7 +139,7 @@ export function verifyInteroperability(
     amount: 0.5,
     metadata: { label: 'declared' },
   };
-  const request = operation.build({ path: { id: 'a/b' }, body });
+  const request = operation.build({ path: { 'record-id': 'a/b' }, body });
   assert.equal(request.method, 'DELETE');
   assert.equal(request.url, '/records/a%2Fb.json');
   assert.equal(request.bodyKind, 'json');
@@ -161,7 +161,7 @@ export function verifyInteroperability(
     { ...body, metadata: { ...body.metadata, extra: true } },
   ]) {
     assert.throws(
-      () => operation.build({ path: { id: 'x' }, body: invalid }),
+      () => operation.build({ path: { 'record-id': 'x' }, body: invalid }),
       client.RequestValidationError,
     );
     assert.equal(standalone.schema.safeParse(invalid).success, false);
@@ -198,14 +198,14 @@ export const interoperabilityConsumer = `
 import { operations } from './client.consumer.ts';
 import { schema } from './standalone.value.ts';
 const body = { kind: 'Cat', id: 1, amount: 0.5 } as const;
-operations.remove.build({ path: { id: 'demo' }, body });
+operations.remove.build({ path: { 'record-id': 'demo' }, body });
 // @ts-expect-error Shared fields remain required in the generated request type.
-operations.remove.build({ path: { id: 'demo' }, body: { kind: 'Cat', amount: 0.5 } });
+operations.remove.build({ path: { 'record-id': 'demo' }, body: { kind: 'Cat', amount: 0.5 } });
 operations.text0.build({ body: '<p>example</p>' });
 // @ts-expect-error Registered numeric formats retain the numeric TypeScript type.
-operations.remove.build({ path: { id: 'demo' }, body: { ...body, id: '1' } });
+operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, id: '1' } });
 // @ts-expect-error Arbitrary extra declarations do not add a request index signature.
-operations.remove.build({ path: { id: 'demo' }, body: { ...body, extra: true } });
+operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, extra: true } });
 // @ts-expect-error Textual media require strings.
 operations.text1.build({ body: { csv: 'example' } });
 const parsed = schema.parse(body);

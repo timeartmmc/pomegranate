@@ -134,6 +134,7 @@ void test('equivalent multi-segment and trailing-slash templates are rejected', 
     ['/pets/{id}/', '/pets/{name}/'],
     ['/pets//{id}', '/pets//{name}'],
     ['/pets/{id}.json', '/pets/{name}.json'],
+    ['/pets/{pet-id}', '/pets/{pet-name}'],
     ['/pets/{a}-{b}', '/pets/{c}-{d}'],
   ] as const)
     await assert.rejects(
@@ -177,13 +178,50 @@ void test('embedded placeholders encode each value and preserve path literals', 
   }
 });
 
+void test('hyphenated path names bind exact keys and preserve value escaping', async (t) => {
+  const path = '/sets/{set-id}/prefix-{item-id}.json';
+  for (const version of ['3.0.4', '3.1.2']) {
+    const source = document(version, {
+      [path]: { get: operation('first', path) },
+    });
+    const options = {
+      clients: ['selected'],
+      surfaces: { selected: ['first'] },
+    };
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(source, options),
+    );
+    const client = await importGenerated<RuntimeClient>(
+      root,
+      'client.selected.ts',
+    );
+    const build = present(client.operations.first).build;
+    assert.equal(
+      build({ path: { 'set-id': 'a/b?c#d%', 'item-id': 'x y' } }).url,
+      '/sets/a%2Fb%3Fc%23d%25/prefix-x%20y.json',
+    );
+    for (const value of ['', '.', '..', '\ud800'])
+      assert.throws(
+        () => build({ path: { 'set-id': value, 'item-id': 'valid' } }),
+        client.RequestValidationError,
+      );
+    const mismatch = operation('first', path);
+    present(mismatch.parameters[0]).name = 'set_id';
+    await assert.rejects(
+      compile(document(version, { [path]: { get: mismatch } }), options),
+      /path placeholders and path parameters must match exactly/,
+    );
+  }
+});
+
 void test('embedded placeholders retain name, brace and literal diagnostics', async () => {
   for (const path of [
     '/pets/{id',
     '/pets/id}',
     '/pets/{{id}}',
     '/pets/{}.json',
-    '/pets/{bad-name}.json',
+    '/pets/{bad name}.json',
     '/pets/{id}?q',
     '/pets/{id}%2F',
   ])
@@ -231,7 +269,7 @@ void test('concrete overlaps and different literal, slash or placeholder positio
 
 void test('a conflicting hierarchy does not hide malformed or repeated placeholder diagnostics', async () => {
   for (const [first, second, diagnostic] of [
-    ['/pets/{id}', '/pets/{z-bad}', /path placeholder names must match/],
+    ['/pets/{id}', '/pets/{z bad}', /path placeholder names must match/],
     [
       '/pets/{a}/{b}',
       '/pets/{c}/{c}',

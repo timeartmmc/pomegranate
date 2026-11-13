@@ -12,6 +12,9 @@ prepared Content-Type. See [wire serialization](REFERENCE.md#header-serializatio
 
 ### Features
 
+Path placeholders accept hyphenated names such as `{set-id}`, including embedded
+placeholders. Exact parameter matching and value-encoding rules still apply.
+
 `pruneUnusedComponents: true` removes unreachable components before validation,
 independently or alongside operation exclusions. Retained operations, global
 security, and standalone roots keep their dependencies and validation. The

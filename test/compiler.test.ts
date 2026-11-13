@@ -140,8 +140,8 @@ for (const name of ['Set-Cookie', 'sEt-CoOkIe2']) {
   }
 }
 
-void test('invalid placeholder identifiers explain the name restriction', async () => {
-  for (const name of ['widget-id', '9widget', '']) {
+void test('invalid placeholder names explain the name restriction', async () => {
+  for (const name of ['widget id', '9widget', '']) {
     const document = fixture();
     Object.assign(document, {
       paths: {

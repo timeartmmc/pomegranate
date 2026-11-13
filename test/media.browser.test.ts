@@ -214,7 +214,10 @@ void test('Chromium preserves selected request bytes and dispatches every declar
     for (const [name, input] of [
       [
         'remove',
-        { path: { id: 'a/b' }, body: { kind: 'Cat', id: 1, amount: 0.5 } },
+        {
+          path: { 'record-id': 'a/b' },
+          body: { kind: 'Cat', id: 1, amount: 0.5 },
+        },
       ],
       ...['text0', 'text1', 'text2'].map(
         (name) => [name, { body: '<p>😀</p>\ntext' }] as const,
