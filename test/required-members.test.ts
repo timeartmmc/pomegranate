@@ -97,6 +97,32 @@ interface Schemas {
   responseSchemas: Record<string, Validator<unknown>>;
 }
 
+async function typecheckConsumer(root: string, source: string) {
+  await writeFile(join(root, 'consumer.ts'), source);
+  await writeFile(
+    join(root, 'tsconfig.json'),
+    JSON.stringify({
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        strict: true,
+        exactOptionalPropertyTypes: true,
+        noEmit: true,
+        allowImportingTsExtensions: true,
+      },
+      include: ['./*.ts'],
+    }),
+  );
+  await promisify(execFile)(process.execPath, [
+    fileURLToPath(
+      new URL('../node_modules/typescript/bin/tsc', import.meta.url),
+    ),
+    '-p',
+    join(root, 'tsconfig.json'),
+  ]);
+}
+
 void test('required-only members must be present, hold any JSON value and survive response parsing', async (t) => {
   const root = await generatedTestWorkspace(
     t,
@@ -148,8 +174,8 @@ void test('required-only members must be present, hold any JSON value and surviv
     );
     assert.deepEqual(present(responseSchemas[name]).parse(extended), value);
   }
-  await writeFile(
-    join(root, 'consumer.ts'),
+  await typecheckConsumer(
+    root,
     `
     import { operations } from './client.client.ts';
     import type { RequestTypes, ResponseTypes } from './client.client.ts';
@@ -170,31 +196,9 @@ void test('required-only members must be present, hold any JSON value and surviv
     void [extra, missing, absent, unlisted, name, stamp];
   `,
   );
-  await writeFile(
-    join(root, 'tsconfig.json'),
-    JSON.stringify({
-      compilerOptions: {
-        target: 'ES2022',
-        module: 'NodeNext',
-        moduleResolution: 'NodeNext',
-        strict: true,
-        exactOptionalPropertyTypes: true,
-        noEmit: true,
-        allowImportingTsExtensions: true,
-      },
-      include: ['./*.ts'],
-    }),
-  );
-  await promisify(execFile)(process.execPath, [
-    fileURLToPath(
-      new URL('../node_modules/typescript/bin/tsc', import.meta.url),
-    ),
-    '-p',
-    join(root, 'tsconfig.json'),
-  ]);
 });
 
-void test('arbitrary extras declarations keep required-only members fixed through composition', async (t) => {
+void test('declared maps keep every entry and require their listed keys through composition', async (t) => {
   for (const modern of [true, false])
     for (const additionalProperties of [true, {}]) {
       const openMap = { type: 'object', additionalProperties };
@@ -214,6 +218,13 @@ void test('arbitrary extras declarations keep required-only members fixed throug
             { required: ['id'] },
           ],
         },
+        // A declared map can itself arrive through a reference.
+        {
+          allOf: [
+            { $ref: '#/components/schemas/OpenMap' },
+            { ...openMap, required: ['id'] },
+          ],
+        },
       ]) {
         const document = fixture(modern);
         Object.assign(document.components.schemas, {
@@ -224,23 +235,176 @@ void test('arbitrary extras declarations keep required-only members fixed throug
           t,
           await compile(document, selection),
         );
-        const { requestSchemas, responseSchemas } =
-          await importGenerated<Schemas>(root, 'client.client.schemas.ts');
-        const request = present(requestSchemas.Only);
-        const response = present(responseSchemas.Only);
-        const value = { id: { any: [1, null] } };
-        assert.deepEqual(request.parse(value), value);
-        assert.equal(
-          request.safeParse({ ...value, unlisted: true }).success,
-          false,
+        const schemas = await importGenerated<Schemas>(
+          root,
+          'client.client.schemas.ts',
         );
-        assert.deepEqual(response.parse({ ...value, unlisted: true }), value);
-        for (const invalid of [{}, { id: undefined }, { id: () => true }]) {
-          assert.equal(request.safeParse(invalid).success, false);
-          assert.equal(response.safeParse(invalid).success, false);
+        const value = { id: { any: [1, null] }, unlisted: true, 10: null };
+        for (const validator of [
+          present(schemas.requestSchemas.Only),
+          present(schemas.responseSchemas.Only),
+        ]) {
+          assert.deepEqual(validator.parse(value), value);
+          for (const invalid of [
+            {},
+            { unlisted: true },
+            { ...value, id: undefined },
+            { ...value, id: () => true },
+            Object.defineProperty({ unlisted: true }, 'id', { value: 1 }),
+          ])
+            assert.equal(validator.safeParse(invalid).success, false);
         }
       }
     }
+});
+
+void test('required map keys are named members of generated types and typed map values', async (t) => {
+  for (const modern of [true, false]) {
+    const document = fixture(modern);
+    Object.assign(document.components.schemas, {
+      Need: { type: 'object', required: ['id'] },
+      Only: {
+        allOf: [
+          { type: 'object', additionalProperties: true },
+          { $ref: '#/components/schemas/Need' },
+        ],
+      },
+      Neutral: {
+        type: 'object',
+        additionalProperties: { type: 'integer' },
+        required: ['total', 'a-b'],
+        minProperties: 3,
+      },
+    });
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(document, selection),
+    );
+    const { requestSchemas, responseSchemas } = await importGenerated<Schemas>(
+      root,
+      'client.client.schemas.ts',
+    );
+    const counts = { total: 3, 'a-b': 1, other: 2 };
+    for (const schemas of [requestSchemas, responseSchemas]) {
+      const typed = present(schemas.Neutral);
+      assert.deepEqual(typed.parse(counts), counts);
+      for (const invalid of [
+        { total: 3, other: 2, more: 1 },
+        { ...counts, total: 'three' },
+        { ...counts, other: 'two' },
+        { total: 3, 'a-b': 1 },
+      ])
+        assert.equal(typed.safeParse(invalid).success, false);
+    }
+    await typecheckConsumer(
+      root,
+      `
+      import { operations } from './client.client.ts';
+      import type { RequestTypes, ResponseTypes } from './client.client.ts';
+      import { responseSchemas } from './client.client.schemas.ts';
+      import type { JsonValue } from './runtime.ts';
+      const map: RequestTypes['Only'] = { id: 1, unlisted: [true] };
+      const id: JsonValue = map.id;
+      // @ts-expect-error The required key cannot be omitted.
+      const missing: ResponseTypes['Only'] = { unlisted: 1 };
+      const typed: ResponseTypes['Neutral'] = { total: 1, 'a-b': 2, other: 3 };
+      const total: number = typed.total;
+      // @ts-expect-error Required keys share the map's value type.
+      const wrong: RequestTypes['Neutral'] = { total: '1', 'a-b': 2 };
+      // @ts-expect-error Every listed key is required.
+      const partial: RequestTypes['Neutral'] = { total: 1 };
+      const parsed: ResponseTypes['Only'] = responseSchemas.Only.parse({ id: 1 });
+      operations.sendOnly.build({ body: { id: null, more: 'entries' } });
+      // @ts-expect-error A request without the required key does not type check.
+      operations.sendOnly.build({ body: { more: 'entries' } });
+      void [id, missing, total, wrong, partial, parsed];
+    `,
+    );
+  }
+});
+
+void test('required-map composition agrees for inline branches and aliases', async (t) => {
+  for (const modern of [true, false]) {
+    const need: Schema = { type: 'object', required: ['id'] };
+    const needOther: Schema = { type: 'object', required: ['other'] };
+    for (const branch of [need, { $ref: '#/components/schemas/NeedAlias' }]) {
+      const document = fixture(modern);
+      Object.assign(document.components.schemas, {
+        Need: need,
+        NeedAlias: { $ref: '#/components/schemas/Need' },
+        NeedOther: needOther,
+        Only: {
+          allOf: [
+            { type: 'object', additionalProperties: true, maxProperties: 3 },
+            branch,
+            { $ref: '#/components/schemas/NeedOther' },
+          ],
+        },
+      });
+      const root = await generatedTestWorkspace(
+        t,
+        await compile(document, selection),
+      );
+      const schemas = await importGenerated<Schemas>(
+        root,
+        'client.client.schemas.ts',
+      );
+      for (const validator of [
+        present(schemas.requestSchemas.Only),
+        present(schemas.responseSchemas.Only),
+      ]) {
+        const value = { id: 1, other: true, retained: { nested: 'value' } };
+        assert.deepEqual(validator.parse(value), value);
+        for (const invalid of [
+          { other: true },
+          { id: 1 },
+          { ...value, fourth: 4 },
+        ])
+          assert.equal(validator.safeParse(invalid).success, false);
+      }
+    }
+  }
+});
+
+void test('required-map checks stop observing input when the issue budget is exhausted', async (t) => {
+  const document = fixture();
+  document.components.schemas.Only = {
+    type: 'object',
+    additionalProperties: { type: 'string' },
+    required: Array.from({ length: 1_000 }, (_, index) => `field${index}`),
+  };
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(document, selection),
+  );
+  const schemas = await importGenerated<Schemas>(
+    root,
+    'client.client.schemas.ts',
+  );
+  for (const validator of [
+    present(schemas.requestSchemas.Only),
+    present(schemas.responseSchemas.Only),
+  ]) {
+    let descriptors = 0;
+    let keys = 0;
+    const input = new Proxy(
+      {},
+      {
+        getOwnPropertyDescriptor() {
+          descriptors++;
+          return undefined;
+        },
+        ownKeys() {
+          keys++;
+          return [];
+        },
+      },
+    );
+    const result = validator.safeParse(input);
+    assert.equal(result.success, false);
+    assert.equal(descriptors, 100);
+    assert.equal(keys, 0);
+  }
 });
 
 void test('closed objects and unusable names keep their required diagnostics', async () => {
@@ -287,15 +451,38 @@ void test('closed objects and unusable names keep their required diagnostics', a
     '.allOf',
     /allOf property "10" is forbidden by branch-local additionalProperties: false/,
   );
-  // A typed map has no fixed members to require.
+  // Declared properties are fixed fields, which a typed map cannot hold.
   await rejects(
     {
       type: 'object',
+      properties: { extra: { type: 'string' } },
       additionalProperties: { type: 'string' },
       required: ['extra'],
     },
     '.additionalProperties',
     /mixed fixed properties and typed dynamic maps are unsupported$/,
+  );
+  // A closed branch forbids the key a composed map requires.
+  await rejects(
+    {
+      allOf: [
+        closed,
+        { type: 'object', additionalProperties: true, required: ['extra'] },
+      ],
+    },
+    '.allOf[1].required',
+    /unknown property "extra"$/,
+  );
+  // Typed maps still cannot be intersected with other object assertions.
+  await rejects(
+    {
+      allOf: [
+        { type: 'object', additionalProperties: { type: 'string' } },
+        { required: ['extra'] },
+      ],
+    },
+    '.allOf',
+    /cannot combine objects with scalars, arrays, typed maps or binary schemas$/,
   );
   for (const [name, message] of [
     ['__proto__', /unsupported object key "__proto__"$/],

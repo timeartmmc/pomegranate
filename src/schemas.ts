@@ -216,6 +216,9 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
     input: unknown,
     location: string,
     nesting: number,
+    // Shared assertions beside a union are the same conjunction as an allOf
+    // member, but their author wrote no allOf and cannot add a type to them.
+    unionKeyword?: 'anyOf' | 'oneOf',
   ): Schema {
     const branch = record(input, location);
     // Composition fragments commonly declare object assertions without type.
@@ -239,13 +242,19 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
       return schemaNode({
         kind: 'object',
         properties: new Map(),
-        required: [],
+        required: normalized.required,
         typeExplicit: false,
+        additionalPropertiesExplicit: normalized.additionalPropertiesExplicit,
         minProperties: normalized.minProperties,
         maxProperties: normalized.maxProperties,
         readOnly: normalized.readOnly,
         writeOnly: normalized.writeOnly,
       });
+    if (unionKeyword !== undefined)
+      fail(
+        `${location}.additionalProperties`,
+        `typed additionalProperties beside ${unionKeyword} is unsupported; a dynamic map cannot be shared across the alternatives`,
+      );
     fail(
       location,
       'allOf object fragments with dynamic additionalProperties require an explicit type and are unsupported in intersections',
@@ -371,7 +380,7 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
         kind: 'intersection',
         branches: [
           schemaNode(normalizeUnion(alternative, location, nesting)),
-          normalizeIntersectionMember(shared, location, nesting),
+          normalizeIntersectionMember(shared, location, nesting, keyword),
         ],
         branchLocations: [location, location],
         location,
@@ -501,7 +510,7 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
       fail(`${location}.required`, 'duplicate required property');
     // A required name may lack a properties entry here: another allOf member can
     // declare it, and otherwise composition resolves it against object closure.
-    // Either way it becomes a field, so it must be usable as one.
+    // It becomes a field or a required map key, so it must be usable as one.
     for (const name of required) contractField(name, `${location}.required`);
     if (
       Object.hasOwn(value, 'additionalProperties') &&
@@ -520,10 +529,14 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
         (additional.kind === 'json' &&
           !additional.readOnly &&
           !additional.writeOnly);
-      if (names.length === 0 && required.length === 0)
+      // A declared map keeps every entry. Without a declared property nothing
+      // makes its required names fixed fields: they are keys that must exist.
+      if (names.length === 0)
         return {
           kind: 'map',
+          additionalPropertiesExplicit: true,
           values: unrestricted ? true : additional,
+          required: [...required].sort(),
           ...limits,
         };
       // Fixed objects expose declared fields only: requests reject unknown
@@ -547,6 +560,10 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
     return {
       kind: 'object',
       closed: value.additionalProperties === false,
+      additionalPropertiesExplicit: Object.hasOwn(
+        value,
+        'additionalProperties',
+      ),
       properties: normalized,
       required: [...required].sort(),
       ...limits,

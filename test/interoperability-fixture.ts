@@ -23,6 +23,11 @@ export function interoperabilityFixture(openapi = '3.0.4') {
         properties: { label: { type: 'string' } },
         additionalProperties: {},
       },
+      labels: {
+        type: 'object',
+        additionalProperties: { type: 'string' },
+        required: ['primary'],
+      },
     },
     required: ['kind', 'amount'],
   };
@@ -140,6 +145,7 @@ export function verifyInteroperability(
     id: 4_294_967_295,
     amount: 0.5,
     metadata: { label: 'declared' },
+    labels: { primary: 'required key', other: 'retained entry' },
   };
   const request = operation.build({ path: { 'record-id': 'a/b' }, body });
   assert.equal(request.method, 'DELETE');
@@ -161,6 +167,7 @@ export function verifyInteroperability(
     { ...body, kind: 'cat' },
     { ...body, extra: true },
     { ...body, metadata: { ...body.metadata, extra: true } },
+    { ...body, labels: { other: 'retained entry' } },
   ]) {
     assert.throws(
       () => operation.build({ path: { 'record-id': 'x' }, body: invalid }),
@@ -210,6 +217,9 @@ operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, id: '1
 operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, extra: true } });
 // @ts-expect-error Textual media require strings.
 operations.text1.build({ body: { csv: 'example' } });
+operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, labels: { primary: 'a', other: 'b' } } });
+// @ts-expect-error A map's required key is a named member of the generated type.
+operations.remove.build({ path: { 'record-id': 'demo' }, body: { ...body, labels: { other: 'b' } } });
 const parsed = schema.parse(body);
 if (parsed.kind === 'Cat') { const amount: number = parsed.amount; void amount; }
 const response = operations.remove.parseResponse({ status: 200, headers: {}, body: '' });

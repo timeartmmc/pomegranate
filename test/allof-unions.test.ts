@@ -310,6 +310,10 @@ void test('shared union fields diagnose malformed rules, contradictory branches 
         /mixed fixed properties and typed dynamic maps/,
       ],
       [
+        { ...choice, additionalProperties: { type: 'string' } },
+        /Value\.additionalProperties: typed additionalProperties beside oneOf is unsupported/,
+      ],
+      [
         {
           anyOf: [ref('A'), { type: 'string' }],
           properties: { id: { type: 'string' } },

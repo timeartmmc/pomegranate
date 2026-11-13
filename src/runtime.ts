@@ -1448,6 +1448,7 @@ export function map<T>(
   issues: Issues,
   values: Parse<T>,
   rules?: ObjectRules,
+  required?: readonly string[],
 ): Record<string, T> | Invalid {
   if (stopped(issues)) return invalid;
   // Dynamic JSON keys are data: inspect own entries of plain records and build
@@ -1457,6 +1458,14 @@ export function map<T>(
   // also the result's count. Check bounds before reading values.
   if (rules && propertyCount(input, issues, rules)) return invalid;
   const start = issues.length;
+  // A required key is an entry like any other: the loop below validates it.
+  if (required)
+    for (const name of required) {
+      if (stopped(issues)) return invalid;
+      if (!Object.getOwnPropertyDescriptor(input, name)?.enumerable)
+        missingProperty(issues, name);
+    }
+  if (stopped(issues)) return invalid;
   const entries: [string, T][] = [];
   // Snapshot keys, then read values as they are validated. Eager Object.entries
   // would invoke every getter before the issue budget could stop traversal.
@@ -1777,6 +1786,15 @@ export function mapParser<T>(
   rules?: ObjectRules,
 ): Parse<Record<string, T>> {
   return (input, issues) => map(input, issues, value, rules);
+}
+// map() reports every absent required key, so a successful result holds each
+// of them. The key union connects that check to the generated type's members.
+export function requiredMapParser<T, K extends string>(
+  value: Parse<T>,
+  required: readonly K[],
+  rules?: ObjectRules,
+): Parse<Record<string, T> & Record<K, T>> {
+  return (input, issues) => map(input, issues, value, rules, required);
 }
 export function unionParser<T>(branches: readonly Parse<T>[]): Parse<T> {
   const parse: Parse<T> = (input, issues) => union(input, issues, branches);

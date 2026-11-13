@@ -51,7 +51,13 @@ export type SchemaDraft = {
     }
   | {
       readonly kind: 'map';
+      // A declared additionalProperties states map intent. A bare object
+      // assertion is also a JSON map, but composition treats it as neutral.
+      readonly additionalPropertiesExplicit?: boolean | undefined;
       readonly values: Schema | true;
+      // Keys that must be present. Every entry, required or not, is retained
+      // and validated as a map value.
+      readonly required?: readonly string[] | undefined;
       readonly minProperties?: number | undefined;
       readonly maxProperties?: number | undefined;
     }
@@ -84,6 +90,13 @@ export type SchemaDraft = {
       // an omitted type in an object fragment must not narrow primitive values.
       readonly closed?: boolean | undefined;
       readonly typeExplicit?: boolean | undefined;
+      // additionalProperties was declared. Unless it closes the object, a
+      // composition with no declared field is a map whose required names stay
+      // keys instead of becoming a fixed object's fields.
+      readonly additionalPropertiesExplicit?: boolean | undefined;
+      // Required-only fields are synthesized during materialization. Keep
+      // them distinct from source properties when a reference is composed.
+      readonly hasDeclaredProperties?: boolean | undefined;
       readonly properties: ReadonlyMap<string, Schema>;
       readonly required: readonly string[];
       readonly forbidden?: readonly string[] | undefined;
@@ -143,7 +156,9 @@ export type Schema = {
     }
   | ({
       readonly kind: 'map';
+      readonly additionalPropertiesExplicit: boolean;
       readonly values: Schema | true;
+      readonly required: readonly string[];
     } & Pick<Constraints, 'minProperties' | 'maxProperties'>)
   | {
       readonly kind: 'union';
@@ -164,6 +179,8 @@ export type Schema = {
       readonly kind: 'object';
       readonly closed: boolean;
       readonly typeExplicit: boolean;
+      readonly additionalPropertiesExplicit: boolean;
+      readonly hasDeclaredProperties: boolean;
       readonly properties: ReadonlyMap<string, Schema>;
       readonly required: readonly string[];
       readonly forbidden: readonly string[] | undefined;

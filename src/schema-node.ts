@@ -108,7 +108,10 @@ export function schemaNode(
       return {
         kind: value.kind,
         ...access,
+        additionalPropertiesExplicit:
+          own(value, 'additionalPropertiesExplicit') === true,
         values: value.values,
+        required: own(value, 'required') ?? [],
         minProperties: own(value, 'minProperties'),
         maxProperties: own(value, 'maxProperties'),
       };
@@ -129,6 +132,10 @@ export function schemaNode(
         ...access,
         closed: own(value, 'closed') === true,
         typeExplicit: own(value, 'typeExplicit') !== false,
+        additionalPropertiesExplicit:
+          own(value, 'additionalPropertiesExplicit') === true,
+        hasDeclaredProperties:
+          own(value, 'hasDeclaredProperties') ?? value.properties.size > 0,
         properties: value.properties,
         required: value.required,
         forbidden: own(value, 'forbidden'),

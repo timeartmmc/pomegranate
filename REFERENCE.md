@@ -462,9 +462,16 @@ explicit empty array is rejected. In 3.1, `required: []` is also accepted.
 holding any JSON value, exactly as if it were declared with the empty schema
 `{}`. An object that lists only `required` names is therefore a fixed object of
 those fields. Under `additionalProperties: false` the same name is forbidden and
-required at once, and receives a diagnostic. A required name is a fixed member,
-so beside an explicit dynamic `additionalProperties` it is the unsupported
-mixture of fixed and dynamic members, directly or through `allOf`.
+required at once, and receives a diagnostic.
+
+A map is different. An object that declares `additionalProperties` (`true`,
+`{}`, or a value schema) and no `properties` keeps every entry, and its
+`required` names are keys that must be present. A required key holds a map value
+like any other entry. Generated types list it as a named member beside the index
+signature, for example `{ [key: string]: JsonValue; id: JsonValue }`. The direct
+form and `allOf` compositions of arbitrary-JSON maps agree. A property declared
+anywhere in the composition makes the result a fixed object instead, with the
+required names as its fields.
 
 OpenAPI 3.1 uses null types/type arrays and numeric exclusive bounds. Schema
 `const`, `$comment`, `examples`, and `contentMediaType`, plus `info.summary` and
@@ -730,7 +737,8 @@ Supported schema composition:
   Generated fixed-object types have no index signature. Typed extra-value
   schemas beside fixed properties remain unsupported. Pure maps set
   `additionalProperties` to a schema, or `true` / `{}` for arbitrary JSON
-  values, and preserve their entries.
+  values, and preserve their entries. A map may list `required` keys, which
+  must be present.
 - In 3.1, local `$ref` schemas may add string, numeric, or array constraints, or
   `minProperties` and `maxProperties`, appropriate to the referenced type.
   Other semantic siblings are rejected.
@@ -1095,8 +1103,9 @@ unrelated fields from supported closed compositions.
 through local aliases and nested compositions. The combined fixed object keeps
 the same strict request and stripped response behavior. These declarations do
 not override another branch's `additionalProperties: false`. Pure maps of
-arbitrary JSON values may combine with property-count bounds and retain their
-valid members. Typed extra-value schemas cannot combine with fixed fields.
+arbitrary JSON values may combine with property-count bounds and `required`
+names: the result retains every entry and requires those keys. Typed
+extra-value schemas cannot combine with fixed fields.
 Typed maps work alone or in a single-branch wrapper; intersecting them with
 additional assertions is unsupported.
 
@@ -1503,7 +1512,8 @@ from fixed objects while rejecting missing required fields, changed types, and
 unknown enum values. This also applies to fixed objects that explicitly permit
 arbitrary extras with `additionalProperties: true` or `{}`; permitted extras do
 not enter the generated application types. Declared dynamic maps validate and
-preserve their entries.
+preserve their entries, and require each key listed in `required` as an own
+enumerable entry.
 An object schema without `properties` entries, `required` names, or
 `additionalProperties`, such as `{ "type": "object" }`, accepts and preserves
 any JSON members, as in JSON Schema. Declare `additionalProperties: false` for

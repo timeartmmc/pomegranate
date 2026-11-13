@@ -439,18 +439,26 @@ export function createIntersectionNormalizer(
         location,
         'allOf object fragments require an explicit type: object conjunct',
       );
-    const object = requiredMembers(input, location);
+    // Synthesized required-only fields in a referenced component do not make
+    // a composed map fixed. Only source-declared properties establish that.
+    const map =
+      !input.closed &&
+      !input.hasDeclaredProperties &&
+      (input.additionalPropertiesExplicit || input.required.length === 0);
+    const object = map ? input : requiredMembers(input, location);
     assertScalarRules('object', object, undefined, location);
     // Object fragments retain their assertions until composition completes.
-    // With no declared fields, required names or explicit closure, those
+    // With no declared fields, fixed required names or explicit closure, those
     // assertions describe an open JSON map, even if they constrain its property
     // count. Derive the output constructor here, before directional projection:
     // a fixed object whose fields are later excluded must remain a fixed empty
     // object.
-    if (object.properties.size === 0 && !object.closed)
+    if (map)
       return schemaNode({
         kind: 'map',
+        additionalPropertiesExplicit: object.additionalPropertiesExplicit,
         values: true,
+        required: object.required,
         minProperties: object.minProperties,
         maxProperties: object.maxProperties,
         readOnly: object.readOnly,
@@ -777,15 +785,10 @@ export function createIntersectionNormalizer(
       const required = new Set<string>();
       const requiredLocations = new Map<string, string>();
       const closed: Extract<Schema, { kind: 'object' }>[] = [];
-      for (const [index, target] of targets.entries()) {
-        limits = intersectConstraints(limits, target.limits);
-        if (target.schema.kind !== 'object') continue;
-        const object = objectChildren(target.schema, location);
-        charge(object.properties.size + object.required.length, location);
-        if (object.closed) closed.push(object);
-        for (const name of object.required) {
+      const requireNames = (names: readonly string[], index: number): void => {
+        const source = branches[index]!;
+        for (const name of names) {
           required.add(name);
-          const source = branches[index]!;
           requiredLocations.set(
             name,
             source.kind === 'ref'
@@ -793,6 +796,20 @@ export function createIntersectionNormalizer(
               : childLocation(branchLocations[index]!, 'required'),
           );
         }
+      };
+      for (const [index, target] of targets.entries()) {
+        limits = intersectConstraints(limits, target.limits);
+        if (target.schema.kind === 'map') {
+          // A declared map's required keys join the conjunction like any other
+          // required name: fields beside declared properties, keys of a map.
+          charge(target.schema.required.length, location);
+          requireNames(target.schema.required, index);
+        }
+        if (target.schema.kind !== 'object') continue;
+        const object = objectChildren(target.schema, location);
+        charge(object.properties.size + object.required.length, location);
+        if (object.closed) closed.push(object);
+        requireNames(object.required, index);
         for (const [name, child] of object.properties) {
           const existing = fields.get(name);
           if (existing) existing.push(child);
@@ -851,6 +868,15 @@ export function createIntersectionNormalizer(
         required: [...required].sort(),
         closed: closed.length > 0,
         typeExplicit: true,
+        additionalPropertiesExplicit: targets.some(
+          ({ schema }) =>
+            (schema.kind === 'object' || schema.kind === 'map') &&
+            schema.additionalPropertiesExplicit,
+        ),
+        hasDeclaredProperties: targets.some(
+          ({ schema }) =>
+            schema.kind === 'object' && schema.hasDeclaredProperties,
+        ),
         minProperties: limits.minProperties,
         maxProperties: limits.maxProperties,
         ...access,
@@ -866,9 +892,21 @@ export function createIntersectionNormalizer(
       for (const target of targets)
         limits = intersectConstraints(limits, target.limits);
       assertScalarRules('map', limits, undefined, location);
+      const maps = targets.flatMap(({ schema }) =>
+        schema.kind === 'map' ? [schema] : [],
+      );
+      const required = new Set<string>();
+      for (const map of maps) {
+        charge(map.required.length, location);
+        for (const name of map.required) required.add(name);
+      }
       return schemaNode({
         kind: 'map',
+        additionalPropertiesExplicit: maps.some(
+          (map) => map.additionalPropertiesExplicit,
+        ),
         values: true,
+        required: [...required].sort(),
         minProperties: limits.minProperties,
         maxProperties: limits.maxProperties,
         ...access,

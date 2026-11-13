@@ -655,15 +655,22 @@ export function schemaRenderer(
             ? use('jsonValue').source
             : child(value.values, `${location}.additionalProperties`).source;
         const limits = rules(value, objectRules);
+        const bounds = limits
+          ? [constant(`rules_${name}`, limits.source, 'ObjectRules')]
+          : [];
+        if (value.required.length === 0)
+          return construct(
+            'mapParser',
+            [values, ...bounds],
+            `(${type})[string]`,
+          );
+        // The key union ties the parser's presence check to the named members
+        // of the generated type.
+        const keys = value.required.map((key) => jsonSource(key));
         return construct(
-          'mapParser',
-          [
-            values,
-            ...(limits
-              ? [constant(`rules_${name}`, limits.source, 'ObjectRules')]
-              : []),
-          ],
-          `(${type})[string]`,
+          'requiredMapParser',
+          [values, `[${keys.join(', ')}]`, ...bounds],
+          `(${type})[string], ${keys.join(' | ')}`,
         );
       }
       case 'union': {

@@ -56,6 +56,12 @@ export function schemaType(
         schema.values === true
           ? "import('./runtime.ts').JsonValue"
           : child(schema.values);
+      // Required keys are named members beside the index signature: present on
+      // every valid value, and typed like any other entry.
+      if (schema.required.length > 0)
+        return `{ [key: string]: ${value}; ${schema.required
+          .map((name) => `${propertyKey(name)}: ${value}`)
+          .join('; ')} }`;
       // TypeScript permits recursive index signatures but rejects the same
       // self-reference through the generic Record alias (TS2456).
       return recursive
