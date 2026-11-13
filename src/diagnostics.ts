@@ -50,12 +50,36 @@ export function mapKeywordError(
     : new ContractError(error.location, keywordDetail(allowed));
 }
 
+// Compiler inputs are plain data: every own string key of a source object is a
+// declaration, whatever its enumerability, and inherited keys never are. A
+// record is a detached null-prototype view that enumerates all of those keys,
+// so every pass can enumerate, spread and reject unknown keys the same way.
+// Accessors stay accessors: taking a view neither invokes a getter nor mutates
+// the caller's object.
+export function ownDescriptors(value: object): PropertyDescriptorMap {
+  const descriptors: PropertyDescriptorMap =
+    Object.getOwnPropertyDescriptors(value);
+  for (const key of Object.getOwnPropertyNames(descriptors))
+    descriptors[key]!.enumerable = true;
+  return descriptors;
+}
+
+// Only compiler-created views may skip normalization. Caller-owned records can
+// also have null prototypes while still containing hidden declarations.
+const ownViews = new WeakSet<object>();
+
+export function createOwnRecord(
+  descriptors: PropertyDescriptorMap = {},
+): Record<string, unknown> {
+  const view = Object.create(null, descriptors) as Record<string, unknown>;
+  ownViews.add(view);
+  return view;
+}
+
 export function ownRecord<T extends object>(value: T): T {
-  // Compiler records contain declarations, never inherited defaults. Preserve
-  // own descriptors without invoking getters or mutating caller-owned objects.
-  return Object.getPrototypeOf(value) === null
+  return ownViews.has(value)
     ? value
-    : (Object.create(null, Object.getOwnPropertyDescriptors(value)) as T);
+    : (createOwnRecord(ownDescriptors(value)) as T);
 }
 
 export function record(

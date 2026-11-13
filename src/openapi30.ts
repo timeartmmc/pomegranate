@@ -94,11 +94,7 @@ function lowerSchema(
       `${location}.required`,
       'OpenAPI 3.0 requires at least one required property name',
     );
-  // Dialect rewrites need a mutable draft of every own declaration, including
-  // non-enumerable constraints on frozen programmatic schemas.
-  const result = Object.fromEntries(
-    Object.getOwnPropertyNames(value).map((key) => [key, value[key]]),
-  );
+  const result = { ...value };
   if (Object.hasOwn(value, 'nullable')) {
     if (typeof value.nullable !== 'boolean')
       fail(`${location}.nullable`, 'expected a boolean');

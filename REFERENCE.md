@@ -1644,7 +1644,10 @@ checks as the CLI; omit `{ check: true }` to generate files. In check mode,
 `result.clean` reports whether the output agrees with the inputs, and
 `result.changes` describes any drift. Both APIs validate the complete input
 before selecting clients. The same [schema-normalization limits](#schema-limits)
-apply to programmatic inputs.
+apply to programmatic inputs. Documents and options are read as plain data:
+every own string key is a declaration whether or not it is enumerable, and
+inherited properties are ignored. This also applies to records with null
+prototypes. Reading a document never changes the caller's property descriptors.
 
 `result.warnings` contains structured `{ code, path, message }` warnings. Pass
 `onWarning(warning)` to `runProject` for synchronous warnings before generated

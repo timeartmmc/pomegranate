@@ -1,4 +1,9 @@
-import { fail, ownRecord } from './diagnostics.js';
+import {
+  createOwnRecord,
+  fail,
+  ownDescriptors,
+  ownRecord,
+} from './diagnostics.js';
 import { openApiMethods } from './operations.js';
 
 type Node =
@@ -216,7 +221,7 @@ function walkDocument(
       ? (Object.setPrototypeOf([], prototype) as object)
       : // This is already the compiler's detached copy. Give records the own-only
         // view expected by record() so later passes do not copy descriptors again.
-        (Object.create(null) as object);
+        createOwnRecord();
     contexts.set(context, target);
     pending.push({ source: input, target, context, shape: grammar, location });
     return target;
@@ -236,7 +241,11 @@ function walkDocument(
             frame.location,
           )
         : frame.source;
-    const descriptors = Object.getOwnPropertyDescriptors(source);
+    // A list keeps its array descriptors. Every other node is a record, whose
+    // own string keys are all declarations whatever their enumerability.
+    const descriptors: PropertyDescriptorMap = frame.shape.list
+      ? Object.getOwnPropertyDescriptors(source)
+      : ownDescriptors(source);
     if (names !== undefined && frame.context === 'document') {
       const version: unknown = Object.hasOwn(source, 'openapi')
         ? Reflect.get(source, 'openapi')
@@ -260,7 +269,7 @@ function walkDocument(
       ) {
         // Extension payloads are opaque to dependency and dialect walks.
         // Filtering still owns whether an extension may be removed.
-        if (names === undefined || !descriptor.enumerable) continue;
+        if (names === undefined) continue;
         // This flag declares path semantics, not documentation. Keep it visible
         // as an unsupported contract until multi-segment handling is defined.
         if (key === 'x-multi-segment')

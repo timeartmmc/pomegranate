@@ -1,5 +1,13 @@
 import { componentSections } from './component-references.js';
-import { fail, ownRecord, record, stringArray, text } from './diagnostics.js';
+import {
+  createOwnRecord,
+  fail,
+  ownDescriptors,
+  ownRecord,
+  record,
+  stringArray,
+  text,
+} from './diagnostics.js';
 import { mapOpenApi } from './extensions.js';
 import { openApiMethods, operationIdentifier } from './operations.js';
 import { standaloneSelections } from './selection.js';
@@ -13,23 +21,23 @@ function plain(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-// Preserve non-enumerable declarations and frozen source records. Replacements
-// happen in the descriptor table before constructing the detached copy.
+// Source records may be frozen. Removals and replacements happen in the
+// descriptor table before constructing the detached own-key view.
 function copy(
   value: Record<string, unknown>,
   removed: Iterable<string>,
   replacements: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const descriptors = ownDescriptors(value);
   for (const key of removed) delete descriptors[key];
   for (const [key, replacement] of Object.entries(replacements))
     descriptors[key] = {
       value: replacement,
-      enumerable: descriptors[key]?.enumerable ?? true,
+      enumerable: true,
       configurable: true,
       writable: true,
     };
-  return Object.create(null, descriptors) as Record<string, unknown>;
+  return createOwnRecord(descriptors);
 }
 
 const referenceContexts = new Set([
