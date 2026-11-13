@@ -204,6 +204,98 @@ void test('global and standalone blockers keep unassessed operations explicit', 
   );
 });
 
+void test('blockers retained by unused aliases remain explicit after excluding their operations', async () => {
+  for (const openapi of ['3.0.4', '3.1.2']) {
+    const input = {
+      openapi,
+      info: { title: 'Synthetic retained audit blocker', version: '1' },
+      paths: {
+        '/bad': { get: { operationId: 'bad', ...reply('Bad') } },
+        '/good': { get: { operationId: 'good', ...reply() } },
+      },
+      components: {
+        schemas: {
+          Bad: { type: 'string', minLength: -1 },
+          UnusedAlias: ref('Bad'),
+          Good: { type: 'string' },
+        },
+      },
+    };
+    const settings = {
+      clients: ['consumer'],
+      surfaces: { consumer: ['bad', 'good'] },
+    };
+    const result = await audit(input, settings);
+    assert.equal(result.clean, false);
+    assert.equal(result.complete, false);
+    assert.deepEqual(result.failedOperations, ['bad']);
+    assert.deepEqual(result.unassessedOperations, ['good']);
+    assert.deepEqual(result.supportedOperations, []);
+    assert.deepEqual(result.excludeOperations, ['bad']);
+    assert.ok(
+      result.diagnostics.some(
+        (entry) =>
+          entry.location === 'components.schemas.Bad.minLength' &&
+          entry.operationIds.length === 0,
+      ),
+    );
+    await assert.rejects(
+      compile(input, {
+        ...settings,
+        excludeOperations: result.excludeOperations,
+      }),
+      /components.schemas.Bad.minLength/,
+    );
+    const pruned = await audit(input, {
+      ...settings,
+      pruneUnusedComponents: true,
+    });
+    assert.equal(pruned.complete, true);
+    assert.deepEqual(pruned.supportedOperations, ['good']);
+    assert.ok(
+      pruned.diagnostics.every((entry) => entry.operationIds.length > 0),
+    );
+    await compile(input, {
+      ...settings,
+      pruneUnusedComponents: true,
+      excludeOperations: pruned.excludeOperations,
+    });
+  }
+});
+
+void test('multiple blockers of one operation do not prevent assessing healthy operations', async () => {
+  const input = {
+    openapi: '3.1.2',
+    info: { title: 'Synthetic simultaneous audit blockers', version: '1' },
+    paths: {
+      '/bad': { get: { operationId: 'bad', ...reply('Both') } },
+      '/good': { get: { operationId: 'good', ...reply() } },
+    },
+    components: {
+      schemas: {
+        BadA: { type: 'string', minLength: -1 },
+        BadB: { type: 'integer', multipleOf: 0 },
+        Both: { anyOf: [ref('BadA'), ref('BadB')] },
+        Good: { type: 'string' },
+      },
+    },
+  };
+  const settings = {
+    clients: ['consumer'],
+    surfaces: { consumer: ['bad', 'good'] },
+  };
+  const result = await audit(input, settings);
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.failedOperations, ['bad']);
+  assert.deepEqual(result.supportedOperations, ['good']);
+  assert.deepEqual(result.unassessedOperations, []);
+  assert.ok(result.diagnostics.every((entry) => entry.operationIds.length > 0));
+  await compile(input, {
+    ...settings,
+    excludeOperations: result.excludeOperations,
+  });
+});
+
 void test('ambiguous dotted source names never recommend excluding a healthy operation', async () => {
   const controls = [
     (ambiguous: boolean) => {

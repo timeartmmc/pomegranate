@@ -71,9 +71,10 @@ export function auditContract(
   let complete = false;
   const pending = () => operationIds.filter((id) => !failed.has(id));
   for (;;) {
+    const excluded = new Set(failed);
     try {
       const filtered = index.select(
-        failed,
+        excluded,
         selection.pruneUnusedComponents === true,
       );
       const descriptor = buildDescriptor(
@@ -110,7 +111,12 @@ export function auditContract(
         let affected: readonly string[] = [];
         try {
           if (!(diagnostic instanceof ContractWorkError))
-            affected = index.affected(diagnostic.location);
+            // A retained dependency can still fail after all its users were
+            // excluded. Report it globally; only same-attempt duplicates skip
+            // below when their operations have just joined the failed set.
+            affected = index
+              .affected(diagnostic.location)
+              .filter((id) => !excluded.has(id));
         } catch (attributionError) {
           if (!(attributionError instanceof ContractError))
             throw attributionError;
