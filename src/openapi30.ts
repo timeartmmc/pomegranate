@@ -1,17 +1,6 @@
 import { fail, keys, mapKeywordError, record } from './diagnostics.js';
 import type { WarnSchema } from './diagnostics.js';
-import { mapOpenApi } from './extensions.js';
-
-const referenceContexts = new Set([
-  'schema',
-  'parameter',
-  'response',
-  'requestBody',
-  'header',
-  'example',
-  'link',
-  'securityScheme',
-]);
+import { mapOpenApi, referenceContexts } from './extensions.js';
 
 // OAS 3.0.4 §4.7.23 ignores every property beside $ref. Dropping these
 // annotations loses no constraint, so they follow the specification.

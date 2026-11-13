@@ -218,11 +218,7 @@ function exampleObject(
   if (Object.hasOwn(value, 'value'))
     jsonAnnotation(value.value, `${location}.value`);
   // This is a documentation URI only: it is never resolved or fetched.
-  if (
-    Object.hasOwn(value, 'externalValue') &&
-    typeof value.externalValue !== 'string'
-  )
-    fail(`${location}.externalValue`, 'expected a string');
+  stringFields(value, ['externalValue'], location);
   return undefined;
 }
 

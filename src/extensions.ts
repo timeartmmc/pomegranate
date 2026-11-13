@@ -37,6 +37,17 @@ type Context =
   | 'content';
 type Fields = Readonly<Partial<Record<string, Context>>>;
 
+export const referenceContexts: ReadonlySet<string> = new Set([
+  'schema',
+  'parameter',
+  'response',
+  'requestBody',
+  'header',
+  'example',
+  'link',
+  'securityScheme',
+]);
+
 // Map entries are names, not extension keywords. Only their values enter the
 // object grammar. Opaque JSON annotations, discriminator mappings, security
 // requirements and POM policy payloads deliberately have no traversal edge.

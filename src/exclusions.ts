@@ -8,7 +8,7 @@ import {
   stringArray,
   text,
 } from './diagnostics.js';
-import { mapOpenApi } from './extensions.js';
+import { mapOpenApi, referenceContexts } from './extensions.js';
 import { openApiMethods, operationIdentifier } from './operations.js';
 import { standaloneSelections } from './selection.js';
 
@@ -39,17 +39,6 @@ function copy(
     };
   return createOwnRecord(descriptors);
 }
-
-const referenceContexts = new Set([
-  'schema',
-  'parameter',
-  'response',
-  'requestBody',
-  'header',
-  'example',
-  'link',
-  'securityScheme',
-]);
 
 export function excludeOperations(
   document: Record<string, unknown>,

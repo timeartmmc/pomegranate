@@ -2,7 +2,14 @@ import {
   componentReference,
   normalizeComponents,
 } from './component-references.js';
-import { fail, keys, record, text, validComponentName } from './diagnostics.js';
+import {
+  fail,
+  keys,
+  record,
+  stringFields,
+  text,
+  validComponentName,
+} from './diagnostics.js';
 import { jsonAnnotation, serverObject } from './annotations.js';
 
 // Links are descriptive relationships, not generated calls. Check their shape
@@ -29,11 +36,7 @@ function linkObject(link: Record<string, unknown>, location: string): void {
     );
   const target = hasRef ? 'operationRef' : 'operationId';
   text(link[target], `${location}.${target}`);
-  if (
-    Object.hasOwn(link, 'description') &&
-    typeof link.description !== 'string'
-  )
-    fail(`${location}.description`, 'expected a string');
+  stringFields(link, ['description'], location);
   if (Object.hasOwn(link, 'parameters')) {
     const parameters = record(link.parameters, `${location}.parameters`);
     for (const name of Object.keys(parameters))
