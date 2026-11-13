@@ -9,6 +9,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { compile } from '../dist/index.js';
 import { entry, json } from './assertions.ts';
 import { nullableTypeCases } from './nullable-type-fixture.ts';
+import { schemaNoopCases } from './schema-noops-fixture.ts';
 import type { RuntimeClient } from './runtime-types.ts';
 import {
   compositionCases,
@@ -20,6 +21,7 @@ const exec = promisify(execFile);
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const cases: SchemaCase[] = [
   ...nullableTypeCases,
+  ...schemaNoopCases,
   {
     name: 'NullableInteger',
     schema: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },

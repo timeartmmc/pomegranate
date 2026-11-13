@@ -15,6 +15,7 @@ export function interoperabilityFixture(openapi = '3.0.4') {
   };
   const cat: Schema = {
     type: 'object',
+    uniqueItems: true,
     additionalProperties: true,
     properties: {
       kind: { type: 'string', enum: ['Cat'], xml: { name: 'species' } },

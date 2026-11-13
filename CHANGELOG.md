@@ -14,6 +14,11 @@ response charset handling remains the transport's responsibility.
 
 ### Features
 
+Inactive type-specific schema keywords and OpenAPI 3.0 `nullable: true` without
+a same-object type compile with grouped warnings. Their syntax is still checked
+and applicable validation remains unchanged. `compile` accepts `onWarning`;
+project results and CLI checks also report these warnings.
+
 Nullable object schemas with null-only `enum`, or 3.1 `const`, normalize to
 `null` when no structural assertions are present. Other object enum forms
 remain unsupported.

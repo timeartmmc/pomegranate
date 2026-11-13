@@ -332,10 +332,19 @@ void test('object reference bounds intersect through aliases and reject contradi
   ]) {
     const invalid = fixture();
     invalid.components.schemas.Unused = { ...schema, minProperties: 1 };
+    const warnings: string[] = [];
+    await compile(invalid, {
+      ...selection,
+      onWarning: (warning) => {
+        warnings.push(warning.path);
+      },
+    });
+    assert.deepEqual(warnings, ['components.schemas.Unused.minProperties']);
+    invalid.components.schemas.Unused = { ...schema, minProperties: -1 };
     await rejectsAt(
       invalid,
       'components.schemas.Unused.minProperties',
-      /unsupported keyword/,
+      /expected a nonnegative safe integer/,
     );
   }
   const wrongUnion = fixture();

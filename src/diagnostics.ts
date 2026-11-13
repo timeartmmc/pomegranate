@@ -12,6 +12,36 @@ export function fail(location: string, detail: string): never {
   throw new ContractError(location, detail);
 }
 
+export type CompileWarning = Readonly<{
+  code: 'ignored-schema-keyword';
+  path: string;
+  message: string;
+}>;
+
+export type WarnSchema = (path: string, message: string) => void;
+
+// Reasons contain only supported keyword/type names, never source paths. One
+// exporter template can repeat thousands of times without flooding diagnostics.
+export function schemaWarnings() {
+  const groups = new Map<string, { path: string; count: number }>();
+  return {
+    warn: (path: string, message: string): void => {
+      const previous = groups.get(message);
+      if (previous) previous.count++;
+      else groups.set(message, { path, count: 1 });
+    },
+    values(): CompileWarning[] {
+      return [...groups].map(([message, { path, count }]) => ({
+        code: 'ignored-schema-keyword',
+        path,
+        message:
+          message +
+          (count > 1 ? ` (${count} occurrences; first location shown)` : ''),
+      }));
+    },
+  };
+}
+
 // Model extensions must identify every pass that needs to handle the new kind.
 export function assertNever(value: never): never {
   throw new Error('unhandled compiler variant', { cause: value });

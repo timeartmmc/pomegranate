@@ -113,21 +113,11 @@ void test('OpenAPI 3.0 rejects unsupported dialect syntax even in unused compone
       { type: 'integer', exclusiveMaximum: true, minimum: 0 },
       'exclusiveMaximum',
     ],
-    [{ type: 'string', exclusiveMinimum: true }, 'exclusiveMinimum'],
-    [
-      { type: 'string', minimum: 0, exclusiveMinimum: true },
-      'exclusiveMinimum',
-    ],
-    [
-      { type: 'boolean', maximum: 1, exclusiveMaximum: true },
-      'exclusiveMaximum',
-    ],
     [{ minimum: 0, exclusiveMinimum: true }, 'exclusiveMinimum'],
     [{ type: 'string', nullable: 'true' }, 'nullable'],
     [{ type: 'number', minimum: '0', exclusiveMinimum: true }, 'minimum'],
     [{ type: 'number', maximum: null, exclusiveMaximum: true }, 'maximum'],
     [{ $ref: '#/components/schemas/Text', minLength: 4 }, 'minLength'],
-    [{ $ref: '#/components/schemas/Text', nullable: true }, 'nullable'],
   ];
   for (const [schema, keyword] of invalid) {
     const document = fixture();
@@ -149,13 +139,16 @@ void test('OpenAPI 3.0 rejects unsupported dialect syntax even in unused compone
   });
 });
 
-void test('OpenAPI 3.0 false exclusive flags and nullable false preserve their base schemas', async () => {
+void test('OpenAPI 3.0 inactive exclusive flags and nullable false preserve their base schemas', async () => {
   for (const schema of [
     { type: 'number', exclusiveMinimum: false, exclusiveMaximum: false },
     { type: 'string', exclusiveMinimum: false, exclusiveMaximum: false },
     { exclusiveMinimum: false, exclusiveMaximum: false },
     { type: 'number', minimum: 0, exclusiveMinimum: false },
     { type: 'number', nullable: false },
+    { type: 'string', exclusiveMinimum: true },
+    { type: 'string', minimum: 0, exclusiveMinimum: true },
+    { type: 'boolean', maximum: 1, exclusiveMaximum: true },
   ] satisfies Schema[]) {
     const input = fixture();
     input.components.schemas.Amount = schema;
@@ -271,7 +264,7 @@ void test('OpenAPI 3.1 keeps reference documentation and extension boundaries', 
 
 void test('OpenAPI 3.0 keeps rejecting reference siblings that could carry meaning', async () => {
   const supported =
-    /unsupported keyword; supported keys: "\$ref", "title", "description", "example", "deprecated", "externalDocs", "xml"$/;
+    /unsupported keyword; supported keys: "\$ref", "title", "description", "example", "deprecated", "externalDocs", "xml"(?:, "nullable")?$/;
   const rejects = async (
     change: (input: ReturnType<typeof fixture>) => object,
     sibling: Record<string, unknown>,
@@ -294,7 +287,6 @@ void test('OpenAPI 3.0 keeps rejecting reference siblings that could carry meani
     });
   };
   for (const sibling of [
-    { nullable: true },
     { type: 'object' },
     { default: null },
     { readOnly: true },
@@ -429,7 +421,7 @@ void test('dialect lowering preserves application names and opaque annotation pa
   );
 });
 
-void test('removing unsupported untyped nullable preserves composite assertions', async (t) => {
+void test('warning about untyped nullable preserves composite assertions', async (t) => {
   const input = fixture();
   input.components.schemas.Text = {
     nullable: true,
@@ -439,13 +431,14 @@ void test('removing unsupported untyped nullable preserves composite assertions'
   modern.components.schemas.Text = {
     anyOf: [{ type: 'string' }, { type: 'integer' }],
   };
-  await assert.rejects(compile(input, selection), (error) => {
-    assert.ok(error instanceof ContractError);
-    assert.equal(error.location, 'components.schemas.Text.nullable');
-    return true;
+  const warnings: string[] = [];
+  const files = await compile(input, {
+    ...selection,
+    onWarning: (warning) => {
+      warnings.push(warning.path);
+    },
   });
-  delete input.components.schemas.Text.nullable;
-  const files = await compile(input, selection);
+  assert.deepEqual(warnings, ['components.schemas.Text.nullable']);
   assert.deepEqual(files, await compile(modern, selection));
   const root = await generatedTestWorkspace(t, files);
   const client = await importGenerated<RuntimeClient>(

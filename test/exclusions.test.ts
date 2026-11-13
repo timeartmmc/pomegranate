@@ -70,7 +70,7 @@ function fixture(openapi = '3.1.2', privateParts = true) {
   };
   if (privateParts) {
     Object.assign(schemas, {
-      PrivateValue: { type: 'string', minimum: 1 },
+      PrivateValue: { type: 'string', minimum: 'bad' },
       PrivateAlias: ref('PrivateValue'),
       PrivateValid: { type: 'string', minLength: 1 },
       PrivateCycleA: {
@@ -370,7 +370,7 @@ void test('unused component pruning is explicit, transitive and independent of o
     assert.deepEqual(source, before);
 
     const independent = fixture(openapi, false);
-    independent.components.schemas.Unused = { type: 'string', minimum: 1 };
+    independent.components.schemas.Unused = { type: 'string', minimum: 'bad' };
     independent.components.schemas.CycleA = ref('CycleB');
     independent.components.schemas.CycleB = ref('CycleA');
     assert.deepEqual(
@@ -397,7 +397,7 @@ void test('pruning preserves authentication aliases and ignores reference-like e
     surfaces: { consumer: ['keep'] },
   };
   const expected = await compile(source, settings);
-  source.components.schemas.Unused = { type: 'integer', minLength: 1 };
+  source.components.schemas.Unused = { type: 'integer', minLength: -1 };
   assert.deepEqual(
     await compile(source, { ...settings, pruneUnusedComponents: true }),
     expected,
@@ -450,7 +450,7 @@ void test('pruning treats ignored map extensions as opaque while retaining x-pre
   const expected = await compile(baseline, settings);
   for (const context of ['paths', 'responses', 'content']) {
     const source = structuredClone(baseline);
-    source.components.schemas.Unused = { type: 'integer', minLength: 1 };
+    source.components.schemas.Unused = { type: 'integer', minLength: -1 };
     const media = { schema: ref('Unused') };
     const response = { content: { 'application/json': media } };
     const operation = record(present(source.paths['/records']).get);
@@ -556,7 +556,7 @@ void test('pruned component inventory participates in read-only drift without ch
 
 void test('opaque annotation data never marks unrelated components as excluded dependencies', async () => {
   const source = fixture();
-  source.components.schemas.UnrelatedBad = { type: 'integer', minLength: 1 };
+  source.components.schemas.UnrelatedBad = { type: 'integer', minLength: -1 };
   present(source.components.schemas.PrivateValue).example = ref('UnrelatedBad');
   await assert.rejects(
     compile(source, options),

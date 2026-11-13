@@ -3,7 +3,8 @@ import { constants } from 'node:fs';
 import { open, realpath } from 'node:fs/promises';
 import { dirname, extname, resolve } from 'node:path';
 import { buildDescriptor, openApiDocument } from './descriptor.js';
-import { fail, keys, record, text } from './diagnostics.js';
+import { fail, keys, record, schemaWarnings, text } from './diagnostics.js';
+import type { CompileWarning, WarnSchema } from './diagnostics.js';
 import { render } from './emit.js';
 import { ignoreExtensions } from './extensions.js';
 import { excludeOperations } from './exclusions.js';
@@ -17,9 +18,11 @@ import {
   parseSelection,
   selectionKeys,
 } from './selection.js';
-import type { CompileOptions } from './selection.js';
+import type { CompileOptions as SelectionOptions } from './selection.js';
 import { parseYaml } from './yaml.js';
-export type { CompileOptions } from './selection.js';
+
+export type CompileOptions = SelectionOptions &
+  Readonly<{ onWarning?: (warning: CompileWarning) => void }>;
 
 const maximumInputBytes = 32 * 1024 * 1024;
 
@@ -80,6 +83,7 @@ function renderSelection(
 function describeInput(
   document: unknown,
   selection: Record<string, unknown>,
+  warn: WarnSchema,
 ): { descriptor: Descriptor; metadata: OutputMetadata } {
   const filtered = excludeOperations(
     openApiDocument(document),
@@ -93,6 +97,7 @@ function describeInput(
       parseIgnoredExtensions(selection.ignoreExtensions),
     ),
     {
+      warn,
       excludedOperations: filtered.excluded,
       ...(Object.hasOwn(selection, 'surfaces')
         ? { surfaces: selection.surfaces }
@@ -116,9 +121,17 @@ export async function compile(
   options: CompileOptions,
 ): Promise<Readonly<Record<string, string>>> {
   const selection = record(options, 'compile options');
-  keys(selection, selectionKeys, 'compile options');
-  const { descriptor } = describeInput(document, selection);
-  return renderSelection(descriptor, selection);
+  keys(selection, [...selectionKeys, 'onWarning'], 'compile options');
+  const onWarning = Object.hasOwn(selection, 'onWarning')
+    ? options.onWarning
+    : undefined;
+  if (onWarning !== undefined && typeof onWarning !== 'function')
+    fail('compile options.onWarning', 'expected a function');
+  const warnings = schemaWarnings();
+  const { descriptor } = describeInput(document, selection, warnings.warn);
+  const files = await renderSelection(descriptor, selection);
+  for (const warning of warnings.values()) onWarning?.(warning);
+  return files;
 }
 
 export async function runProject(
@@ -154,9 +167,16 @@ export async function runProject(
     text(config.output, `${configPath}.output`),
   );
   const document = await readOpenApi(input);
-  const { descriptor, metadata } = describeInput(document, config);
+  const warnings = schemaWarnings();
+  const { descriptor, metadata } = describeInput(
+    document,
+    config,
+    warnings.warn,
+  );
   const files = await renderSelection(descriptor, config);
-  return synchronizeOutputs(
+  const compilationWarnings = warnings.values();
+  for (const warning of compilationWarnings) onWarning?.(warning);
+  const result = await synchronizeOutputs(
     output,
     files,
     [configPath, input],
@@ -164,4 +184,5 @@ export async function runProject(
     onWarning,
     metadata,
   );
+  return { ...result, warnings: [...compilationWarnings, ...result.warnings] };
 }

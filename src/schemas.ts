@@ -10,6 +10,7 @@ import {
   stringArray,
   validComponentName,
 } from './diagnostics.js';
+import type { WarnSchema } from './diagnostics.js';
 import { localComponentReference } from './component-references.js';
 import {
   jsonAnnotation,
@@ -104,6 +105,8 @@ function assertInlineSchemaNesting(nesting: number, location: string): void {
 export function createSchemaNormalizer(
   registered: FormatRegistry,
   maximum = 1_000_000,
+  warn?: WarnSchema,
+  validateInactive?: (schema: Schema) => void,
 ) {
   let remaining = maximum;
   const work: WorkCounter = (amount, location) => {
@@ -113,7 +116,7 @@ export function createSchemaNormalizer(
         `schema normalization work exceeds the supported limit of ${maximum} units; reduce or split the input contract, or replace repeated inline schemas with local $ref references`,
       );
   };
-  const normalize = schemaNormalizer(registered, work);
+  const normalize = schemaNormalizer(registered, work, warn, validateInactive);
   return (input: unknown, location: string): Schema =>
     normalize(input, location);
 }
@@ -139,25 +142,109 @@ function referenceName(input: unknown, location: string): string {
 
 const annotationKeys = [...schemaAnnotationKeys, 'readOnly', 'writeOnly'];
 const typedSchemaKeys = [...annotationKeys, 'type'];
-const objectSchemaKeys = [
-  'properties',
-  'required',
-  'additionalProperties',
-  ...objectConstraints,
+const objectShapeKeys = ['properties', 'required', 'additionalProperties'];
+const objectSchemaKeys = [...objectShapeKeys, ...objectConstraints];
+const keywordTypes = new Map<string, string>([
+  ...stringConstraints.map((key) => [key, 'string'] as const),
+  ...numberConstraints.map((key) => [key, 'number'] as const),
+  ...['items', ...arrayConstraints].map((key) => [key, 'array'] as const),
+  ...objectSchemaKeys.map((key) => [key, 'object'] as const),
+]);
+const schemaTypes = [
+  'object',
+  'array',
+  'string',
+  'number',
+  'integer',
+  'boolean',
+  'null',
 ];
 
-function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
+function schemaNormalizer(
+  registered: FormatRegistry,
+  work?: WorkCounter,
+  warn?: WarnSchema,
+  validateInactive?: (schema: Schema) => void,
+) {
+  function applicableKeywords(
+    value: Record<string, unknown>,
+    location: string,
+    nesting: number,
+  ): Record<string, unknown> {
+    const type = value.type;
+    // Only a supported, explicit type proves a keyword inactive. In particular,
+    // object fragments inferred inside allOf do not exclude non-object data.
+    const kind =
+      typeof type === 'string'
+        ? type
+        : stringArray(type) &&
+            type.length === 2 &&
+            type[0] !== type[1] &&
+            type.includes('null')
+          ? type.find((name) => name !== 'null')
+          : undefined;
+    if (kind === undefined || !schemaTypes.includes(kind)) return value;
+    const ignored = Object.keys(value).filter((key) => {
+      const appliesTo = keywordTypes.get(key);
+      return (
+        appliesTo !== undefined &&
+        appliesTo !== (kind === 'integer' ? 'number' : kind)
+      );
+    });
+    if (ignored.length === 0) return value;
+    // Inactive does not mean malformed values are permitted. Reuse the owning
+    // syntax parsers, without requiring inactive scalar intervals to be nonempty.
+    const inactiveConstraints = ignored.filter((key) =>
+      constraintKeys.includes(key),
+    );
+    if (inactiveConstraints.length > 0)
+      constraints(
+        Object.fromEntries(inactiveConstraints.map((key) => [key, value[key]])),
+        location,
+      );
+    const inactiveObject = ignored.filter((key) =>
+      objectShapeKeys.includes(key),
+    );
+    // Check each keyword independently: composing an unused object here could
+    // trigger active-only restrictions such as fixed fields plus typed maps.
+    for (const key of inactiveObject) {
+      const object = normalizeObject(
+        { type: 'object', [key]: value[key] },
+        location,
+        nesting,
+      );
+      validateInactive?.(schemaNode(object));
+    }
+    if (ignored.includes('items')) {
+      const items = normalize(value.items, `${location}.items`, nesting + 1);
+      validateInactive?.(items);
+    }
+    const result = { ...value };
+    for (const key of ignored) {
+      warn?.(
+        `${location}.${key}`,
+        `${key} has no effect on type ${kind}${Array.isArray(type) ? ' or null' : ''}; it applies only to ${keywordTypes.get(key)} values`,
+      );
+      delete result[key];
+    }
+    return result;
+  }
+
   function normalize(
     input: unknown,
     location: string,
     nesting = 1,
     intersectionMember = false,
+    inferredObject = false,
   ): Schema {
     // Bound schema recursion before entering either JS or the native formatter.
     // Annotation values have their own iterative validation and do not add depth.
     assertInlineSchemaNesting(nesting, location);
     work?.(1, location);
-    const value = record(input, location);
+    const source = record(input, location);
+    const value = inferredObject
+      ? source
+      : applicableKeywords(source, location, nesting);
     if (Object.hasOwn(value, 'format')) {
       if (typeof value.format !== 'string')
         fail(`${location}.format`, 'expected a string');
@@ -234,6 +321,7 @@ function schemaNormalizer(registered: FormatRegistry, work?: WorkCounter) {
       location,
       nesting,
       true,
+      inferred,
     );
     if (!inferred) return normalized;
     if (normalized.kind === 'object')

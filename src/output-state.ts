@@ -9,6 +9,7 @@ import {
   record,
   stringArray,
 } from './diagnostics.js';
+import type { CompileWarning } from './diagnostics.js';
 
 export const inventoryName = '.pom-manifest.json';
 export const lockName = '.pom-lock';
@@ -29,15 +30,17 @@ export type OutputPlan = {
   warnings: OutputWarning[];
   nextManifest: string;
 };
-export type OutputWarning = Readonly<{
-  code:
-    | 'modified-output'
-    | 'preserved-stale-output'
-    | 'recovered-manifest'
-    | 'recovered-output';
-  path: string;
-  message: string;
-}>;
+export type OutputWarning =
+  | CompileWarning
+  | Readonly<{
+      code:
+        | 'modified-output'
+        | 'preserved-stale-output'
+        | 'recovered-manifest'
+        | 'recovered-output';
+      path: string;
+      message: string;
+    }>;
 export const hash = (content: string | Uint8Array): string =>
   createHash('sha256').update(content).digest('hex');
 export const hasCode = (error: unknown, code: string): boolean =>

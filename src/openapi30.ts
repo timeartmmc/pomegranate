@@ -1,4 +1,5 @@
 import { fail, keys, mapKeywordError, record } from './diagnostics.js';
+import type { WarnSchema } from './diagnostics.js';
 import { mapOpenApi } from './extensions.js';
 
 const referenceContexts = new Set([
@@ -75,6 +76,7 @@ function defaultMatchesType(value: unknown, type: unknown): boolean {
 function lowerSchema(
   value: Record<string, unknown>,
   location: string,
+  warn?: WarnSchema,
 ): Record<string, unknown> {
   for (const key of openApi31SchemaKeys)
     if (Object.hasOwn(value, key))
@@ -101,14 +103,10 @@ function lowerSchema(
     // OAS 3.0.4 §4.7.24.2: nullable modifies only an explicitly declared type.
     // Enum and composition assertions still apply; the existing nullable-type
     // normalizer implements their intersection, including enums excluding null.
-    if (value.nullable && typeof value.type !== 'string')
-      fail(
+    if (value.nullable && !Object.hasOwn(value, 'type'))
+      warn?.(
         `${location}.nullable`,
-        Object.hasOwn(value, 'anyOf') ||
-          Object.hasOwn(value, 'oneOf') ||
-          Object.hasOwn(value, 'allOf')
-          ? 'nullable: true requires an explicit type in the same schema; for a composition, remove nullable and wrap the supported composition in an outer anyOf with the null-only branch { type: "string", nullable: true, enum: [null] }'
-          : 'nullable: true requires an explicit type in the same schema',
+        'nullable: true has no effect without an explicit type in the same OpenAPI 3.0 schema; it does not add null to a referenced or composed type',
       );
     if (value.nullable && typeof value.type === 'string')
       result.type = [value.type, 'null'];
@@ -130,9 +128,20 @@ function lowerSchema(
     if (typeof value[exclusive] !== 'boolean')
       fail(`${location}.${exclusive}`, 'OpenAPI 3.0 requires a boolean');
     delete result[exclusive];
-    // POM rejects active flags that cannot express a numeric constraint.
-    // Exporter false flags normalize to omission, including without a bound.
+    // False flags normalize to omission, including without a bound. An explicit
+    // nonnumeric type makes true flags inactive too; numeric assertions retain
+    // the existing same-object type and bound requirements.
     if (!value[exclusive]) continue;
+    if (
+      typeof value.type === 'string' &&
+      ['string', 'object', 'array', 'boolean'].includes(value.type)
+    ) {
+      warn?.(
+        `${location}.${exclusive}`,
+        `${exclusive} has no effect on type ${value.type}; it applies only to number values`,
+      );
+      continue;
+    }
     if (value.type !== 'number' && value.type !== 'integer')
       fail(
         `${location}.${exclusive}`,
@@ -155,16 +164,36 @@ function lowerSchema(
   return result;
 }
 
-export function normalizeOpenApi30(document: unknown): unknown {
+export function normalizeOpenApi30(
+  document: unknown,
+  warn?: WarnSchema,
+): unknown {
   return mapOpenApi(document, (value, context, location) => {
     if (referenceContexts.has(context) && Object.hasOwn(value, '$ref')) {
-      // In 3.0 this is a Reference Object, even at a schema location. Reject
-      // every other sibling rather than accidentally enforcing 3.1 constraints
-      // or discarding an author's intended restriction.
-      keys(value, ['$ref', ...ignoredReferenceSiblings], location);
+      // In 3.0 this is a Reference Object, even at a schema location. Nullable
+      // flags warn without modifying the target; other constraint siblings keep
+      // their explicit unsupported diagnostic.
+      keys(
+        value,
+        [
+          '$ref',
+          ...ignoredReferenceSiblings,
+          ...(context === 'schema' ? ['nullable'] : []),
+        ],
+        location,
+      );
+      if (Object.hasOwn(value, 'nullable')) {
+        if (typeof value.nullable !== 'boolean')
+          fail(`${location}.nullable`, 'expected a boolean');
+        if (value.nullable)
+          warn?.(
+            `${location}.nullable`,
+            'nullable: true has no effect beside an OpenAPI 3.0 $ref; reference siblings do not add null to the referenced type',
+          );
+      }
       return { $ref: value.$ref };
     }
-    if (context === 'schema') return lowerSchema(value, location);
+    if (context === 'schema') return lowerSchema(value, location, warn);
     if (context === 'info') {
       if (Object.hasOwn(value, 'summary'))
         fail(`${location}.summary`, 'unsupported OpenAPI 3.0 keyword');

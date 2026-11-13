@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compile, ContractError } from '../dist/index.js';
+import type { CompileWarning } from '../dist/index.js';
 import type { Schema } from './schema-helpers.ts';
 
 const selection = {
@@ -19,7 +20,7 @@ function document(version: string, schemas: Record<string, Schema>) {
   };
 }
 
-void test('OpenAPI 3.0 rejects active nullable without a same-object type before projection or selection', async () => {
+void test('OpenAPI 3.0 warns about ineffective nullable before projection or selection', async () => {
   for (const version of ['3.0.0', '3.0.4'])
     for (const schema of [
       { nullable: true },
@@ -40,12 +41,19 @@ void test('OpenAPI 3.0 rejects active nullable without a same-object type before
       ] satisfies [Record<string, Schema>, string][]) {
         const input = document(version, schemas);
         const before = structuredClone(input);
-        await assert.rejects(compile(input, selection), (error) => {
-          assert.ok(error instanceof ContractError);
-          assert.equal(error.location, location);
-          assert.match(error.message, /nullable.*explicit type.*same schema/);
-          return true;
+        const warnings: CompileWarning[] = [];
+        await compile(input, {
+          ...selection,
+          onWarning: (warning) => {
+            warnings.push(warning);
+          },
         });
+        assert.equal(warnings.length, 1);
+        assert.equal(warnings[0]!.path, location);
+        assert.match(
+          warnings[0]!.message,
+          /nullable.*has no effect.*explicit type.*same.*schema/,
+        );
         assert.deepEqual(input, before);
       }
 });

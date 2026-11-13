@@ -103,9 +103,12 @@ void test('properties without type preserve conditional object semantics in both
       server: 'visible',
     });
   }
-  await assert.rejects(
-    compile(document({ properties: {}, nullable: true }, '3.0.4'), selection),
-    /nullable.*explicit type/,
+  assert.deepEqual(
+    await compile(
+      document({ properties: {}, nullable: true }, '3.0.4'),
+      selection,
+    ),
+    await compile(document({ properties: {} }, '3.0.4'), selection),
   );
   await assert.rejects(
     compile(
@@ -402,7 +405,7 @@ void test('redundant object types retain overlap, discriminator and sibling-keyw
     const cases: readonly [Schema, RegExp][] = [
       [base, /oneOf alternatives.*disjoint JSON types/],
       [{ ...base, discriminator: { propertyName: 'value' } }, /discriminator/],
-      [{ ...base, minLength: 1 }, /minLength.*unsupported keyword/],
+      [{ ...base, minLength: 1 }, /oneOf alternatives.*disjoint JSON types/],
       [
         { type: 'number', anyOf: [{ type: 'integer' }] },
         /type.*only redundant type: object/,

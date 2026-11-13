@@ -275,12 +275,6 @@ void test('untyped literals stay scalar and alone, and other untyped assertions 
   );
   // 3.0 keeps its own rules for the keywords it does not define.
   await rejects(
-    { enum: ['a', null], nullable: true },
-    '.nullable',
-    /nullable: true requires an explicit type in the same schema$/,
-    [false],
-  );
-  await rejects(
     { const: 'a' },
     '.const',
     /unsupported OpenAPI 3\.0 schema keyword$/,

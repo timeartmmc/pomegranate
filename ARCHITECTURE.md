@@ -41,6 +41,12 @@ compiler model used by types, validators, builders and protocol helpers. Reject
 unsupported declarations with a useful error; never silently drop an operation
 or response.
 
+Warn about supported schema keywords that have no effect on an explicitly
+declared type, and ineffective OpenAPI 3.0 nullable flags. Validate their syntax
+before discarding them. Preserve every applicable assertion; an inferred
+composition type cannot prove a keyword inactive. Group repeated warning reasons
+at the compiler boundary, keeping generated validation free of diagnostics.
+
 Keep input normalization, reference analysis and compile-time schema checks
 separate. Generated validators check application payloads at runtime.
 

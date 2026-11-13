@@ -995,8 +995,8 @@ ${await readFile(rewritingWorker, 'utf8')}`,
   await writeFile(
     join(consumer, 'extension-generated/consumer.ts'),
     `
-    import { runProject } from 'pomegranate-compiler';
-    import type { CompileOptions, OutputResult, OutputWarning } from 'pomegranate-compiler';
+    import { compile, runProject } from 'pomegranate-compiler';
+    import type { CompileOptions, CompileWarning, OutputResult, OutputWarning } from 'pomegranate-compiler';
     import { operations } from './client.consumer.ts';
     const options: CompileOptions = {clients: ['consumer'], ignoreExtensions: ['x-note']};
     export const request = operations.echo.build({path: {id: 'id'}, query: {'x-note': 'query'}, headers: {'x-note': 'request'}, body: {'x-note': 'kept'}});
@@ -1005,6 +1005,10 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     export async function inspectOutput(): Promise<OutputResult> {
       const warnings: OutputWarning[] = [];
       return runProject('../extension-pom.json', {check: true, onWarning: warning => {warnings.push(warning);}});
+    }
+    export async function inspectSchema(document: unknown) {
+      const warnings: CompileWarning[] = [];
+      return compile(document, {...options, onWarning: warning => { warnings.push(warning); }});
     }
     // @ts-expect-error Ignoring annotations preserves required data fields.
     operations.echo.build({path: {id: 'id'}, body: {}});
@@ -1622,6 +1626,17 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     const openapi30Document=openapi30Fixture();
     const openapi30Before=structuredClone(openapi30Document);
     assert.deepEqual(await pom.compile(openapi30Document,openapi30Selection),await pom.compile(openapi30Fixture(true),openapi30Selection));
+    const noops={openapi:'3.0.4',info:{title:'Synthetic installed warnings',version:'1'},paths:{},components:{schemas:{
+      Root:{$ref:'#/components/schemas/Text',nullable:true},Text:{type:'string',minLength:2,uniqueItems:true},
+    }}};
+    const noopSelection={clients:[],standalone:{root:{schema:'#/components/schemas/Root',usage:'request'}}};
+    const noopWarnings=[];
+    const noopFiles=await pom.compile(noops,{...noopSelection,onWarning:warning=>{noopWarnings.push(warning);}});
+    assert.equal(noopWarnings.length,2);
+    assert.ok(noopWarnings.every(warning=>warning.code==='ignored-schema-keyword'&&warning.path.includes('components.schemas.')&&warning.message.includes('has no effect')));
+    delete noops.components.schemas.Root.nullable;
+    delete noops.components.schemas.Text.uniqueItems;
+    assert.deepEqual(noopFiles,await pom.compile(noops,noopSelection));
     assert.deepEqual(openapi30Document,openapi30Before);
     const toleranceDocument=toleranceFixture();
     const toleranceBefore=structuredClone(toleranceDocument);

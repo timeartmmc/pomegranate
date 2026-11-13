@@ -35,7 +35,11 @@ import {
   createSchemaNormalizer,
   normalizeFormats,
 } from './schemas.js';
-import { orderSchemas, resolveSchema } from './schema-graph.js';
+import {
+  orderSchemas,
+  resolveSchema,
+  schemaReferences,
+} from './schema-graph.js';
 import { validateSchema, schemaValidation } from './schema-validation.js';
 import {
   normalizeMemberships,
@@ -51,6 +55,7 @@ import { mediaDecoder, mediaToken } from './runtime.js';
 import { projectSchemas, schemaAccess } from './directional.js';
 import { schemaNode } from './schema-node.js';
 import { normalizeOpenApi30, openApi30Diagnostic } from './openapi30.js';
+import type { WarnSchema } from './diagnostics.js';
 import { isRequired } from './required-index.js';
 import { responseKey, successResponses } from './response-status.js';
 import { createIntersectionNormalizer } from './intersections.js';
@@ -1370,6 +1375,7 @@ function describeDocument(
   source: Record<string, unknown>,
   openApi30: boolean,
   membershipInput: {
+    warn?: WarnSchema;
     surfaces?: unknown;
     formats?: unknown;
     excludedOperations?: readonly string[];
@@ -1377,10 +1383,32 @@ function describeDocument(
 ): Descriptor {
   const rawMembership = ownRecord(membershipInput);
   const value = openApi30
-    ? record(normalizeOpenApi30(source), 'OpenAPI')
+    ? record(normalizeOpenApi30(source, rawMembership.warn), 'OpenAPI')
     : source;
   const registeredFormats = normalizeFormats(rawMembership.formats);
-  const normalize = createSchemaNormalizer(registeredFormats);
+  let schemaDeclarations: Record<string, unknown> | undefined;
+  const normalize = createSchemaNormalizer(
+    registeredFormats,
+    undefined,
+    rawMembership.warn,
+    (schema) => {
+      const references = schemaReferences(schema);
+      if (references.length === 0) return;
+      // Inactive children never enter the semantic graph. Their local reference
+      // targets must still exist, including when policy schemas normalize first.
+      if (schemaDeclarations === undefined) {
+        const components = Object.hasOwn(value, 'components')
+          ? record(value.components, 'components')
+          : {};
+        schemaDeclarations = Object.hasOwn(components, 'schemas')
+          ? record(components.schemas, 'components.schemas')
+          : {};
+      }
+      for (const reference of references)
+        if (!Object.hasOwn(schemaDeclarations, reference.name))
+          fail(reference.location, `unresolved reference ${reference.name}`);
+    },
+  );
   validateDocumentMetadata(value);
   let vocabulary = normalizeVocabulary(
     Object.hasOwn(value, 'x-pom-policy')
@@ -1518,6 +1546,7 @@ function describeDocument(
 export function buildDescriptor(
   input: unknown,
   membershipInput: {
+    warn?: WarnSchema;
     surfaces?: unknown;
     formats?: unknown;
     excludedOperations?: readonly string[];

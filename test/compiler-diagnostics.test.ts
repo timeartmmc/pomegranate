@@ -162,21 +162,26 @@ void test('format advice does not suggest string registration for container or b
       );
 });
 
-void test('3.0 nullable allOf requires an explicit type rather than changing the referenced type', async () => {
+void test('3.0 nullable allOf warns without changing the referenced type', async () => {
   const input = document(
     { nullable: true, allOf: [{ $ref: '#/components/schemas/Text' }] },
     { Text: { type: 'string' } },
   );
   input.openapi = '3.0.4';
-  await assert.rejects(compile(input, selection), (error) => {
-    assert.ok(error instanceof ContractError);
-    assert.equal(error.location, 'components.schemas.Value.nullable');
-    assert.match(error.message, /nullable: true requires an explicit type/);
-    return true;
+  const warnings: string[] = [];
+  const files = await compile(input, {
+    ...selection,
+    onWarning: (warning) => {
+      warnings.push(warning.message);
+    },
   });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /nullable: true has no effect/);
+  delete input.components.schemas.Value.nullable;
+  assert.deepEqual(files, await compile(input, selection));
 });
 
-void test('3.0 nullable composition advice gives a supported outer anyOf spelling', async (t) => {
+void test('3.0 nullable composition remains nonnullable until an explicit null branch is declared', async (t) => {
   const schemas: Record<string, Schema> = {
     Cat: {
       type: 'object',
@@ -204,14 +209,16 @@ void test('3.0 nullable composition advice gives a supported outer anyOf spellin
   ] satisfies [Schema, unknown][]) {
     const input = document({ ...composition, nullable: true }, schemas);
     input.openapi = '3.0.4';
-    await assert.rejects(compile(input, selection), (error) => {
-      assert.ok(error instanceof ContractError);
-      assert.equal(error.location, 'components.schemas.Value.nullable');
-      assert.match(error.message, /remove nullable/);
-      assert.match(error.message, /outer anyOf/);
-      assert.match(error.message, /null-only branch/);
-      return true;
-    });
+    const original = await generatedTestWorkspace(
+      t,
+      await compile(input, selection),
+    );
+    const nonnullable = await importGenerated<StandaloneModule>(
+      original,
+      'standalone.value.ts',
+    );
+    assert.equal(nonnullable.schema.safeParse(null).success, false);
+    assert.deepEqual(nonnullable.schema.parse(sample), sample);
     input.components.schemas.Value = {
       anyOf: [composition, { type: 'string', nullable: true, enum: [null] }],
     };

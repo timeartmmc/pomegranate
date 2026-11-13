@@ -105,7 +105,7 @@ void test('source dialect hints preserve reference restrictions and unrelated po
     name: 'ContractError',
     location: 'components.schemas.Root.typo',
     message:
-      'components.schemas.Root.typo: unsupported keyword; supported keys: "$ref", "title", "description", "example", "deprecated", "externalDocs", "xml"',
+      'components.schemas.Root.typo: unsupported keyword; supported keys: "$ref", "title", "description", "example", "deprecated", "externalDocs", "xml", "nullable"',
   });
   const policy = {
     ...document('3.0.4'),

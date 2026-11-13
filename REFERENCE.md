@@ -446,13 +446,23 @@ Schema syntax follows the declared OpenAPI version. OpenAPI 3.0 schemas use
 `nullable: true` alongside a single explicit `type`, and boolean
 `exclusiveMinimum` / `exclusiveMaximum` alongside `minimum` / `maximum`. A
 nullable enum accepts null only when its enum lists null. Without a same-object
-`type`, `nullable: true` has no effect under OpenAPI; POM diagnoses that active
-flag instead of silently discarding it. `nullable: false` may be omitted. Use a
+`type`, `nullable: true` has no effect under OpenAPI; POM warns and preserves the
+schema's validation. This includes flags beside 3.0 schema references: the flag
+does not add null to the referenced type. `nullable: false` may be omitted. Use a
 single-value `enum` for 3.0 literals. POM accepts and ignores `false` exclusive
 flags, including without a bound. As a stricter POM policy, `true` requires a
-same-object `type: number` or `type: integer` and its matching finite `minimum`
-or `maximum`. Incomplete or inapplicable active flags receive a diagnostic
-instead of silently doing nothing.
+matching finite `minimum` or `maximum` on a same-object `type: number` or
+`type: integer`. On an explicitly nonnumeric type, exclusive flags are inactive
+and warn instead.
+
+Supported type-specific keywords warn and have no effect when a supported,
+explicit `type` excludes their applicable JSON type, including nullable type
+declarations. This covers string, numeric, array and object validation keywords,
+including `items`, `properties`, `required` and `additionalProperties`. Their
+values must still have valid syntax; nested schemas use POM's supported grammar.
+Constraints on untyped schemas, references or non-narrowing `allOf` fragments
+are not discarded based on an inferred type. Unknown keywords and unsupported
+active semantics remain errors.
 
 For fixed objects in 3.0, omit `required` when no properties are required; an
 explicit empty array is rejected. In 3.1, `required: []` is also accepted.
@@ -871,7 +881,8 @@ declared. Values of several JSON types generate one literal alternative per
 type, such as `'a' | 1 | null`. Members must be strings, finite numbers,
 booleans, or null. Other assertions beside an untyped `enum` or `const`,
 including `format` and length or numeric bounds, need a declared `type`. In 3.0,
-`nullable: true` still requires a `type`, and `const` remains a 3.1 keyword.
+`nullable: true` without a same-object `type` warns without changing which
+literals are accepted. `const` remains a 3.1 keyword.
 
 ### String validation and formats
 
@@ -1671,11 +1682,15 @@ inherited properties are ignored. This also applies to records with null
 prototypes. Reading a document never changes the caller's property descriptors.
 
 `result.warnings` contains structured `{ code, path, message }` warnings. Pass
-`onWarning(warning)` to `runProject` for synchronous warnings before generated
-files are replaced. The CLI writes warnings to stderr without prompting. Codes
-are `modified-output`, `preserved-stale-output`, `recovered-manifest`, and
-`recovered-output`. Check mode reports the same ownership warnings without
-changing files.
+`onWarning(warning)` to `compile` to receive `CompileWarning` values for inactive
+schema keywords, or to `runProject` to receive these and output ownership
+warnings before generated files are replaced. The CLI writes warnings to stderr
+without prompting. Code `ignored-schema-keyword` reports a keyword with no
+effect. Identical reasons are grouped into one warning with the first source
+location and occurrence count. The output ownership codes are `modified-output`,
+`preserved-stale-output`, `recovered-manifest`, and `recovered-output`. Check mode
+reports the same warnings without changing files; warnings alone do not fail a
+check. Compilation warnings are delivered after the complete output set renders.
 
 ## Generated output
 

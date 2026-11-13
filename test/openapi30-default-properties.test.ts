@@ -82,7 +82,6 @@ function* defaultCases() {
             name: `${type ?? 'untyped'}_${valueName}_${nullable === undefined ? 'absent' : nullable ? 'nullable' : 'nonnullable'}_${constrained ? 'constrained' : 'plain'}`,
             schema,
             withoutDefault,
-            nullableError: nullable === true && type === undefined,
             accepted:
               type === undefined ||
               jsonTypes(value).includes(type) ||
@@ -106,7 +105,6 @@ function* defaultCases() {
       name,
       schema,
       withoutDefault,
-      nullableError: false,
       accepted: jsonTypes(value).includes(type),
     };
   }
@@ -140,7 +138,7 @@ function batch(
 void test('OpenAPI 3.0 defaults follow JSON types before selection with precise source diagnostics', async () => {
   for (const version of ['3.0.0', '3.0.4'])
     for (const entry of cases) {
-      if (!entry.nullableError && entry.accepted) continue;
+      if (entry.accepted) continue;
       for (const placement of ['selected', 'unused'] as const) {
         const schemas: Record<string, Schema> =
           placement === 'selected'
@@ -162,10 +160,8 @@ void test('OpenAPI 3.0 defaults follow JSON types before selection with precise 
           compile(input, selection),
           {
             name: 'ContractError',
-            location: `${location}.${entry.nullableError ? 'nullable' : 'default'}`,
-            message: entry.nullableError
-              ? /nullable: true requires an explicit type in the same schema/
-              : /OpenAPI 3\.0 default must match its declared type/,
+            location: `${location}.default`,
+            message: /OpenAPI 3\.0 default must match its declared type/,
           },
           `${version} ${placement} ${entry.name}`,
         );
@@ -182,9 +178,7 @@ void test('matching OpenAPI 3.0 defaults remain annotations independent of sibli
   // OAS3.0.4 §4.7.24.1 checks the same-object type. POM keeps defaults as
   // annotations: bounds, formats, enum, item types and required fields do not insert or
   // validate default payloads. Include matching values that violate each one.
-  const accepted = cases.filter(
-    (entry) => !entry.nullableError && entry.accepted,
-  );
+  const accepted = cases.filter((entry) => entry.accepted);
   for (const version of ['3.0.0', '3.0.4']) {
     const input = document(version, batch(accepted, true));
     const before = structuredClone(input);

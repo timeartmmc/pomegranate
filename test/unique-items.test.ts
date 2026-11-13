@@ -395,7 +395,6 @@ void test('uniqueItems applies through 3.0 allOf siblings and diagnoses unsuppor
       { type: 'array', items: { type: 'string' }, uniqueItems: 'yes' },
       /uniqueItems: expected a boolean/,
     ],
-    [{ type: 'string', uniqueItems: true }, /uniqueItems.*unsupported keyword/],
   ] as const) {
     await assert.rejects(
       compile(contract('3.1.2', { Invalid: schema }), {
