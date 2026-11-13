@@ -1451,16 +1451,18 @@ function normalizeOperations(
   );
 }
 
+type DescriptorOptions = {
+  collectErrors?: boolean;
+  warn?: WarnSchema;
+  surfaces?: unknown;
+  formats?: unknown;
+  excludedOperations?: readonly string[];
+};
+
 function describeDocument(
   source: Record<string, unknown>,
   openApi30: boolean,
-  membershipInput: {
-    collectErrors?: boolean;
-    warn?: WarnSchema;
-    surfaces?: unknown;
-    formats?: unknown;
-    excludedOperations?: readonly string[];
-  } = {},
+  membershipInput: DescriptorOptions = {},
 ): Descriptor {
   const rawMembership = ownRecord(membershipInput);
   const value = openApi30
@@ -1628,13 +1630,7 @@ function describeDocument(
 
 export function buildDescriptor(
   input: unknown,
-  membershipInput: {
-    collectErrors?: boolean;
-    warn?: WarnSchema;
-    surfaces?: unknown;
-    formats?: unknown;
-    excludedOperations?: readonly string[];
-  } = {},
+  membershipInput: DescriptorOptions = {},
 ): Descriptor {
   const source = openApiDocument(input);
   const openApi30 =

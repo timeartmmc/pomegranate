@@ -925,14 +925,10 @@ export function createIntersectionNormalizer(
     });
     const plan = scalarValidationPlan(result, schemas);
     const summary = plan.base;
-    const canonical = schemaNode({
-      kind: 'intersection',
-      branches,
-      branchLocations,
-      location,
-      ...access,
+    const canonical = {
+      ...result,
       literals: 'literals' in summary ? summary.literals : undefined,
-    });
+    };
     scalarPlans.get(schemas)!.set(canonical, plan);
     return canonical;
   }

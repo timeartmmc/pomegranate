@@ -75,6 +75,24 @@ function runtimeTypeImports(imports: ReadonlySet<string>): string {
 // and cannot populate this emission-only order cache.
 const parserOrders = new WeakMap<SchemaTable, readonly string[]>();
 
+function componentRenderer(
+  descriptor: Descriptor,
+  componentType: ReturnType<typeof renderTypes>,
+  target: Client['target'],
+  imports?: Set<string>,
+): SchemaRenderer {
+  return schemaRenderer(
+    descriptor.schemas,
+    (name, direction) => {
+      const symbol = parseSymbol(name, direction);
+      imports?.add(symbol);
+      return identifier(symbol);
+    },
+    (schema, direction) => componentType.schema(schema, direction, target),
+    target,
+  );
+}
+
 function renderComponents(
   descriptor: Descriptor,
   selections: readonly { direction: Direction; names: readonly string[] }[],
@@ -82,12 +100,7 @@ function renderComponents(
   target?: Client['target'],
   exportValidators = false,
 ) {
-  const renderer = schemaRenderer(
-    descriptor.schemas,
-    (name, direction) => identifier(parseSymbol(name, direction)),
-    (schema, direction) => componentType.schema(schema, direction, target),
-    target,
-  );
+  const renderer = componentRenderer(descriptor, componentType, target);
   const declarations = selections.flatMap(({ direction, names }) => {
     const schemas = descriptor.schemas[direction];
     let order = parserOrders.get(schemas);
@@ -657,16 +670,11 @@ function renderClient(
     ${schemaMaps.join('\n')}`;
   addOutput(`client.${moduleName(client.name)}.schemas.ts`, emittedSchema);
   const schemaImports = new Set<string>();
-  const inline = schemaRenderer(
-    descriptor.schemas,
-    (name, direction) => {
-      const symbol = parseSymbol(name, direction);
-      schemaImports.add(symbol);
-      return identifier(symbol);
-    },
-    (schema, direction) =>
-      componentType.schema(schema, direction, client.target),
+  const inline = componentRenderer(
+    descriptor,
+    componentType,
     client.target,
+    schemaImports,
   );
   const accountPrepared = sourceBudget();
   const accountDeclarations = sourceBudget();
@@ -996,16 +1004,11 @@ function renderQueries(
   // Removing cursors and transport headers can remove every schema reference
   // from base inputs, even when the ordinary client needs those components.
   const schemaImports = new Set<string>();
-  const renderer = schemaRenderer(
-    descriptor.schemas,
-    (name, direction) => {
-      const symbol = parseSymbol(name, direction);
-      schemaImports.add(symbol);
-      return identifier(symbol);
-    },
-    (schema, direction) =>
-      componentType.schema(schema, direction, client.target),
+  const renderer = componentRenderer(
+    descriptor,
+    componentType,
     client.target,
+    schemaImports,
   );
   const infiniteTypes: string[] = [];
   const infiniteEntries = client.infiniteQueries.map(

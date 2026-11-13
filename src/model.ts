@@ -26,6 +26,12 @@ export type Constraints = {
 };
 export type ConstraintInput = Partial<Constraints>;
 
+type Discriminator = Readonly<{
+  propertyName: string;
+  // Tag to branch position, so composed branches keep their tags.
+  mapping: ReadonlyMap<string, number>;
+}>;
+
 export type SchemaDraft = {
   readonly readOnly?: boolean | undefined;
   readonly writeOnly?: boolean | undefined;
@@ -76,13 +82,7 @@ export type SchemaDraft = {
       // Different-type enum groups may narrow an intersection; explicit
       // anyOf/oneOf alternatives must retain their ordinary contradiction checks.
       readonly sourceLiterals?: true | undefined;
-      readonly discriminator?:
-        | {
-            readonly propertyName: string;
-            // Tag to branch position, so composed branches keep their tags.
-            readonly mapping: ReadonlyMap<string, number>;
-          }
-        | undefined;
+      readonly discriminator?: Discriminator | undefined;
     }
   | {
       readonly kind: 'object';
@@ -167,13 +167,7 @@ export type Schema = {
       readonly sourceTypeArray: true | undefined;
       readonly sourceObjectType: true | undefined;
       readonly sourceLiterals: true | undefined;
-      readonly discriminator:
-        | {
-            readonly propertyName: string;
-            // Tag to branch position, so composed branches keep their tags.
-            readonly mapping: ReadonlyMap<string, number>;
-          }
-        | undefined;
+      readonly discriminator: Discriminator | undefined;
     }
   | ({
       readonly kind: 'object';
