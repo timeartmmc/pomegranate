@@ -127,6 +127,7 @@ export function schemaNode(
         ...access,
         branches: value.branches,
         cardinality: own(value, 'cardinality') ?? 'any',
+        nullableType: own(value, 'nullableType') === true,
         typeArrayLocation: own(value, 'typeArrayLocation'),
         sourceLiterals: own(value, 'sourceLiterals'),
         discriminator: own(value, 'discriminator'),

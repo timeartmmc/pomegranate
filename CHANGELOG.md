@@ -121,6 +121,12 @@ reference](REFERENCE.md) for the supported forms and limits.
 
 ### Fixes
 
+Composed nullable schemas retain enum and const narrowing through references,
+including when only null remains. Redundant object-type assertions beside
+recursive references preserve the reference instead of triggering recursive
+object expansion. Constraints, directional fields and source closure remain
+active.
+
 Programmatic documents and options treat every own string key as a declaration
 regardless of enumerability. Hidden keywords are enforced, hidden unsupported
 keywords and extensions receive their usual diagnostics, and hidden map entries

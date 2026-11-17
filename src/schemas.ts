@@ -890,7 +890,11 @@ function schemaNormalizer(
     }
     if (schema.kind === 'union') {
       assertInlineSchemaNesting(nesting + 1, location);
-      return { ...schema, typeArrayLocation: `${location}.type` };
+      return {
+        ...schema,
+        nullableType: true,
+        typeArrayLocation: `${location}.type`,
+      };
     }
     return schema;
   }

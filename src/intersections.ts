@@ -631,36 +631,35 @@ export function createIntersectionNormalizer(
         }
       }
     }
-    // Discover neutral JSON aliases without composing their targets. Resolving
-    // a recursive reference first would reenter its active allOf even when the
-    // other conjunct adds no assertion. Cache this pure-link classification per
-    // intersection; the component table is still being composed.
+    // Inspect assertion-only aliases without composing their targets. Resolving
+    // an active recursive allOf first would reenter it before a redundant type
+    // can be removed. This cache is local: composition still mutates the table.
+    const terminals = new WeakMap<Schema, Schema>();
+    const unrefined = (input: Schema): Schema => {
+      const path: Schema[] = [];
+      let current = input;
+      while (
+        current.kind === 'ref' &&
+        !hasConstraints(current.constraints) &&
+        !terminals.has(current)
+      ) {
+        charge(1, location);
+        path.push(current);
+        current = referenceTarget(current, schemas);
+      }
+      const target = terminals.get(current) ?? current;
+      for (const link of path) terminals.set(link, target);
+      return target;
+    };
     if (branches.length > 1) {
-      const neutral = new WeakMap<Schema, boolean>();
-      const json = (input: Schema): boolean => {
-        const path: Schema[] = [];
-        let current = input;
-        while (
-          current.kind === 'ref' &&
-          !hasConstraints(current.constraints) &&
-          !neutral.has(current)
-        ) {
-          charge(1, location);
-          path.push(current);
-          current = referenceTarget(current, schemas);
-        }
-        const value = neutral.get(current) ?? current.kind === 'json';
-        for (const link of path) neutral.set(link, value);
-        return value;
-      };
       const retained: string[] = [];
       branches = branches.filter((branch, index) => {
         const path = branchLocations[index]!;
-        if (!json(branch)) {
+        if (unrefined(branch).kind !== 'json') {
           retained.push(path);
           return true;
         }
-        access = accessFlags(access, resolve(branch, location), location);
+        access = accessFlags(access, sourceAccess(branch, location), location);
         return false;
       });
       branchLocations = retained;
@@ -670,37 +669,32 @@ export function createIntersectionNormalizer(
       const branch = branches[0]!;
       return materializeObject({ ...branch, ...access }, location);
     }
-    let targets = branches.map((branch, index) =>
-      resolve(branch, branchLocations[index]!),
-    );
-    for (const target of targets)
-      access = accessFlags(access, target, location);
     // A conjunct that only restates JSON types every other conjunct already
     // implies adds no rule, wherever it is written. Dropping it keeps the other
     // references intact, rather than merging and recursively expanding their
     // fields just to establish a top-level type.
-    const bareObject = (target: Resolved): boolean =>
-      target.schema.kind === 'map' &&
-      target.schema.values === true &&
-      !target.schema.additionalPropertiesExplicit &&
-      target.schema.required.length === 0 &&
-      target.limits.minProperties === undefined &&
-      target.limits.maxProperties === undefined;
-    const restated = (target: Resolved): readonly string[] | undefined => {
-      if (bareObject(target)) return ['object'];
-      const { schema } = target;
+    const bareObject = (schema: Schema): boolean =>
+      schema.kind === 'map' &&
+      schema.values === true &&
+      !schema.additionalPropertiesExplicit &&
+      schema.required.length === 0 &&
+      schema.minProperties === undefined &&
+      schema.maxProperties === undefined;
+    const restated = (input: Schema): readonly string[] | undefined => {
+      const schema = unrefined(input);
+      if (bareObject(schema)) return ['object'];
       return schema.kind === 'union' &&
-        schema.typeArrayLocation &&
+        schema.nullableType &&
         schema.branches.every((branch) => {
-          const value = resolve(branch, location);
-          return value.schema.kind === 'null' || bareObject(value);
+          const value = unrefined(branch);
+          return value.kind === 'null' || bareObject(value);
         })
         ? ['object', 'null']
         : undefined;
     };
-    const kept = targets.map(() => true);
-    for (const [index, target] of targets.entries()) {
-      const types = restated(target);
+    const kept = branches.map(() => true);
+    for (const [index, branch] of branches.entries()) {
+      const types = restated(branch);
       if (!types) continue;
       const others = branches.filter(
         (_, position) => position !== index && kept[position],
@@ -713,6 +707,7 @@ export function createIntersectionNormalizer(
         )
       )
         continue;
+      access = accessFlags(access, sourceAccess(branch, location), location);
       kept[index] = false;
       if (
         types.includes('null') &&
@@ -723,15 +718,18 @@ export function createIntersectionNormalizer(
     if (kept.includes(false)) {
       branches = branches.filter((_, index) => kept[index]);
       branchLocations = branchLocations.filter((_, index) => kept[index]);
-      targets = targets.filter((_, index) => kept[index]);
       if (branches.length === 1)
         return materializeObject({ ...branches[0]!, ...access }, location);
     }
+    const targets = branches.map((branch, index) =>
+      resolve(branch, branchLocations[index]!),
+    );
+    for (const target of targets)
+      access = accessFlags(access, target, location);
     const finiteValues = (input: Schema): readonly Scalar[] | undefined => {
       const target = resolve(input, location).schema;
       if (target.kind === 'union') {
-        if (!target.sourceLiterals && !target.typeArrayLocation)
-          return undefined;
+        if (!target.sourceLiterals && !target.nullableType) return undefined;
         const values: Scalar[] = [];
         for (const branch of target.branches) {
           const members = finiteValues(branch);
@@ -772,7 +770,7 @@ export function createIntersectionNormalizer(
     // Type declarations distribute first: literal candidates then narrow them
     // the same way whichever member order the author chose.
     const factor =
-      unions.find(({ union }) => union.typeArrayLocation) ??
+      unions.find(({ union }) => union.nullableType) ??
       unions.find(
         ({ union }) => !union.discriminator && !union.sourceLiterals,
       ) ??
@@ -803,7 +801,7 @@ export function createIntersectionNormalizer(
         else if (target.kind === 'union') {
           // Explicit alternatives remain structural: distribution, rather than
           // finite pruning, diagnoses any contradictory explicit branch.
-          if (target.sourceLiterals || target.typeArrayLocation) {
+          if (target.sourceLiterals || target.nullableType) {
             const alternatives = target.branches.map(acceptsLiteral);
             accepts = (value) => alternatives.some((branch) => branch(value));
           } else accepts = () => true;
@@ -867,7 +865,7 @@ export function createIntersectionNormalizer(
               commonTypes.includes(type),
             ) &&
             (!candidates ||
-              (!union.sourceLiterals && !union.typeArrayLocation) ||
+              (!union.sourceLiterals && !union.nullableType) ||
               candidates.some(acceptsLiteral(alternative)))
           );
         });
@@ -926,7 +924,7 @@ export function createIntersectionNormalizer(
       );
       const sourceLiterals =
         union.sourceLiterals ||
-        (union.typeArrayLocation && literalNarrowing ? true : undefined);
+        (union.nullableType && literalNarrowing ? true : undefined);
       // One remaining anyOf alternative is that schema. An untagged oneOf
       // stays a union: its branch keeps source closure during matching.
       if (
@@ -941,6 +939,7 @@ export function createIntersectionNormalizer(
       return schemaNode({
         kind: 'union',
         cardinality: union.cardinality,
+        nullableType: union.nullableType,
         discriminator: union.discriminator && {
           propertyName: union.discriminator.propertyName,
           mapping: new Map(

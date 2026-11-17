@@ -1135,7 +1135,8 @@ POM: components.schemas.WidgetId.format: expected a string
 any existing supported shape; a wrapper around one local schema reference retains
 that reference's identity. A member that only restates JSON types every other
 member already implies, such as `type: object` beside an object reference,
-adds nothing, so the remaining reference also keeps its identity. Fixed-object compositions may combine inline schemas,
+adds nothing, so the remaining reference also keeps its identity, including
+recursive references. Fixed-object compositions may combine inline schemas,
 local references, and nested compositions. Sibling object `properties` and
 `required` declarations participate in the same composition. Repeated references
 to the same component without use-site constraints are idempotent, including
@@ -1263,7 +1264,8 @@ incompatible array items or map values receive diagnostics even when an empty
 container could satisfy the source schema. Contradictory constraints within a
 type also remain diagnostics. The exception is a nullable type declaration
 composed with `enum` or `const` values: its alternatives that admit none of
-those values are removed, which can leave only `null`. An empty schema `{}` adds no constraints. Unsupported
+those values are removed, which can leave only `null`. This also applies through
+references to composed nullable definitions. An empty schema `{}` adds no constraints. Unsupported
 compositions fail before selection or writes, including in unused components.
 Recursion through a composed object's properties is supported; recursive object
 merging at the same value is unsupported.
