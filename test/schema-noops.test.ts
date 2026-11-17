@@ -274,6 +274,60 @@ void test('single-reference allOf constraints enforce strings and preserve array
   }
 });
 
+void test('inactive reference constraints behave consistently through recursive object composition', async (t) => {
+  let expectedWarnings: CompileWarning[] | undefined;
+  for (const recursive of [false, true])
+    for (const composedBase of [false, true]) {
+      const node = {
+        type: 'object',
+        properties: {
+          id: { type: 'integer', minimum: 1 },
+          ...(recursive ? { next: ref('Root') } : {}),
+        },
+        required: ['id'],
+      };
+      const warnings: CompileWarning[] = [];
+      const files = await compile(
+        document({
+          Node: composedBase ? { allOf: [node, { type: 'object' }] } : node,
+          Alias: { ...ref('Node'), minLength: 3, minProperties: 2 },
+          Root: {
+            allOf: [
+              ref('Alias'),
+              { type: 'object', properties: { name: { type: 'string' } } },
+            ],
+          },
+        }),
+        {
+          ...selection,
+          onWarning: (warning) => {
+            warnings.push(warning);
+          },
+        },
+      );
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0]!.message, /minLength has no effect/);
+      if (expectedWarnings) assert.deepEqual(warnings, expectedWarnings);
+      else expectedWarnings = warnings;
+      const root = await generatedTestWorkspace(t, files);
+      const { schema } = await importGenerated<StandaloneModule>(
+        root,
+        'standalone.root.ts',
+      );
+      const value = recursive
+        ? { id: 1, next: { id: 2, name: 'leaf' } }
+        : { id: 1, name: 'leaf' };
+      assert.deepEqual(schema.parse(value), value);
+      assert.equal(schema.safeParse({ id: 1 }).success, false);
+      assert.equal(schema.safeParse({ id: 0, name: 'leaf' }).success, false);
+      if (recursive)
+        assert.equal(
+          schema.safeParse({ id: 1, next: { id: 2 } }).success,
+          false,
+        );
+    }
+});
+
 void test('reference no-ops retain syntax checks and diagnose constraints whose target type is unknown', async () => {
   for (const restriction of [
     { minLength: -1 },

@@ -407,6 +407,11 @@ function validateUsage(
   work: WorkCounter,
 ): void {
   if (checked.has(schema)) return;
+  // Publish visited marks only after the complete usage succeeds. Failed
+  // operations must not discard completed constraint/depth work for other users.
+  const visited = new Set<Schema>();
+  const known = (value: Schema): boolean =>
+    checked.has(value) || visited.has(value);
   type Frame =
     | { kind: 'schema' | 'branch'; schema: Schema; location: string }
     | {
@@ -435,8 +440,8 @@ function validateUsage(
           'readOnly and writeOnly on union branches are not supported in this version; remove the annotation from the branch or its referenced component; use separate request and response schemas when their shapes differ',
         );
     }
-    if (checked.has(schema)) continue;
-    checked.add(schema);
+    if (known(schema)) continue;
+    visited.add(schema);
     const access = schemaAccess(schema, schemas);
     if (access.readOnly && access.writeOnly)
       fail(
@@ -479,8 +484,8 @@ function validateUsage(
         let target: Schema = schema;
         let targetLocation = location;
         while (target.kind === 'ref') {
-          if (target !== schema && checked.has(target)) break;
-          checked.add(target);
+          if (target !== schema && known(target)) break;
+          visited.add(target);
           for (const name of constraintNames(target.constraints))
             if (!allowed.includes(name))
               fail(
@@ -541,6 +546,7 @@ function validateUsage(
         assertNever(schema);
     }
   }
+  for (const value of visited) checked.add(value);
 }
 
 export function validateSchema(

@@ -296,6 +296,196 @@ void test('multiple blockers of one operation do not prevent assessing healthy o
   });
 });
 
+void test('failing component aliases and recursive groups retain an independently compilable audit subset', async () => {
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const recursive of [false, true])
+      for (const [target, alias] of [
+        ['A', 'B_alias'],
+        ['A.Bad', 'B.Alias'],
+      ] as const) {
+        const tagged: Schema = {
+          oneOf: [ref('Cat')],
+          discriminator: {
+            propertyName: 'kind',
+            mapping: { cat: ref('Cat').$ref },
+          },
+        };
+        const input = {
+          openapi,
+          info: { title: 'Synthetic alias validation audit', version: '1' },
+          components: {
+            schemas: {
+              [target]: recursive
+                ? {
+                    type: 'object',
+                    properties: { next: ref(alias), bad: tagged },
+                  }
+                : tagged,
+              [alias]: ref(target),
+              // Dotted and textual prefix neighbors must stay independent of
+              // an alias's diagnostic boundary.
+              [`${alias}.Other`]: ref('Good'),
+              [`${alias}Tail`]: ref('Good'),
+              Cat: { type: 'object', properties: { kind: { type: 'string' } } },
+              Good: { type: 'string' },
+            },
+          },
+          paths: {
+            '/a': { get: { operationId: 'usesTarget', ...reply(target) } },
+            '/b': { get: { operationId: 'usesAlias', ...reply(alias) } },
+            '/healthy': {
+              get: { operationId: 'healthy', ...reply(`${alias}.Other`) },
+            },
+            '/prefix': {
+              get: { operationId: 'healthy-prefix', ...reply(`${alias}Tail`) },
+            },
+          },
+        };
+        const settings = {
+          clients: ['consumer'],
+          surfaces: {
+            consumer: ['usesTarget', 'usesAlias', 'healthy', 'healthy-prefix'],
+          },
+          pruneUnusedComponents: true,
+        };
+        const before = structuredClone(input);
+        const result = await audit(input, settings);
+        assert.equal(result.complete, true);
+        assert.deepEqual(result.failedOperations, ['usesAlias', 'usesTarget']);
+        assert.deepEqual(result.supportedOperations, [
+          'healthy',
+          'healthy-prefix',
+        ]);
+        assert.deepEqual(result.unassessedOperations, []);
+        assert.equal(result.diagnostics.length, 1);
+        assert.deepEqual(result.diagnostics[0]!.operationIds, [
+          'usesAlias',
+          'usesTarget',
+        ]);
+        await compile(input, {
+          ...settings,
+          excludeOperations: result.excludeOperations,
+        });
+        assert.deepEqual(input, before);
+      }
+});
+
+void test('failed recursive groups preserve a healthy audit subset without repeating each member', async () => {
+  for (const [phase, count] of [
+    ['composition', 1_200],
+    ['validation', 3_300],
+  ] as const) {
+    const schemas: Record<string, Schema> = {};
+    const properties: Record<string, Schema> = {};
+    const branches: Schema[] = [];
+    for (let index = 0; index < count; index++) {
+      const name = `Leaf${String(index).padStart(4, '0')}`;
+      schemas[name] =
+        phase === 'composition'
+          ? { anyOf: [ref('Hub'), { type: 'string' }] }
+          : { type: 'object', properties: { parent: ref('Hub') } };
+      if (phase === 'composition')
+        branches.push({ type: 'object', properties: { [name]: ref(name) } });
+      else properties[name] = ref(name);
+    }
+    if (phase === 'composition')
+      schemas.Hub = {
+        allOf: [
+          ...branches,
+          { type: 'object', readOnly: true },
+          { type: 'object', writeOnly: true },
+        ],
+      };
+    else {
+      schemas.Cat = {
+        type: 'object',
+        properties: { kind: { type: 'string' } },
+      };
+      properties.zbad = {
+        oneOf: [ref('Cat')],
+        discriminator: {
+          propertyName: 'kind',
+          mapping: { cat: ref('Cat').$ref },
+        },
+      };
+      schemas.Hub = { type: 'object', properties };
+    }
+    const input = {
+      openapi: '3.1.2',
+      info: { title: 'Synthetic failing recursive audit groups', version: '1' },
+      components: { schemas },
+      paths: {
+        '/hub': { get: { operationId: 'bad', ...reply('Hub') } },
+        '/leaf': { get: { operationId: 'alias', ...reply('Leaf0000') } },
+        '/good': {
+          get: {
+            operationId: 'good',
+            responses: { 204: { description: 'Empty' } },
+          },
+        },
+      },
+    };
+    const settings = {
+      clients: ['consumer'],
+      surfaces: { consumer: ['alias', 'bad', 'good'] },
+      pruneUnusedComponents: true,
+    };
+    const result = await audit(input, settings);
+    assert.equal(result.complete, true, phase);
+    assert.deepEqual(result.supportedOperations, ['good'], phase);
+    assert.deepEqual(result.failedOperations, ['alias', 'bad'], phase);
+    assert.deepEqual(result.unassessedOperations, [], phase);
+    assert.equal(result.diagnostics.length, 1, phase);
+    await compile(input, {
+      ...settings,
+      excludeOperations: result.excludeOperations,
+    });
+  }
+});
+
+void test('alias-chain locations preserve conservative attribution of dotted component collisions', () => {
+  const input = {
+    openapi: '3.1.2',
+    info: { title: 'Synthetic alias attribution boundaries', version: '1' },
+    components: {
+      schemas: {
+        Alias: ref('Target'),
+        'Alias.Other': ref('Good'),
+        AliasTail: ref('Good'),
+        Target: { type: 'string' },
+        Good: { type: 'string' },
+      },
+    },
+    paths: {
+      '/bad': { get: { operationId: 'bad', ...reply('Alias') } },
+      '/dotted': { get: { operationId: 'dotted', ...reply('Alias.Other') } },
+      '/tail': { get: { operationId: 'tail', ...reply('AliasTail') } },
+    },
+  };
+  const index = operationFilter(input, {}, () => undefined);
+  assert.deepEqual(
+    index.affected('components.schemas.Alias -> components.schemas.Target'),
+    ['bad'],
+  );
+  assert.deepEqual(
+    index.affected('components.schemas.AliasTail -> components.schemas.Good'),
+    ['tail'],
+  );
+  assert.deepEqual(
+    index.affected(
+      'components.schemas.AliasTailUnknown -> components.schemas.Good',
+    ),
+    [],
+  );
+  assert.throws(
+    () =>
+      index.affected(
+        'components.schemas.Alias.Other -> components.schemas.Good',
+      ),
+    /declared component names make this diagnostic ambiguous/,
+  );
+});
+
 void test('ambiguous dotted source names never recommend excluding a healthy operation', async () => {
   const controls = [
     (ambiguous: boolean) => {
@@ -470,6 +660,58 @@ void test('independent schema failures retain dialect diagnostics across normali
       excludeOperations: result.excludeOperations,
     });
   }
+});
+
+void test('failed operations retain completed validation work for later healthy operations', async () => {
+  const ids = Array.from({ length: 400 }, (_, index) => `op${index}`);
+  const failed = ids.filter((_, index) => index % 2 === 0).sort();
+  const input = {
+    openapi: '3.1.2',
+    info: { title: 'Synthetic shared validation cache audit', version: '1' },
+    components: {
+      schemas: {
+        Wide: {
+          type: 'string',
+          enum: Array.from({ length: 6_000 }, (_, index) => `v${index}`),
+        },
+        Narrow: { ...ref('Wide'), minLength: 1 },
+      },
+    },
+    paths: Object.fromEntries(
+      ids.map((operationId, index) => [
+        `/p${String(index).padStart(4, '0')}`,
+        {
+          get: {
+            operationId,
+            responses: {
+              200: {
+                description: 'Value',
+                content: {
+                  [index % 2 === 0 ? 'application/xml' : 'application/json']: {
+                    schema: ref('Narrow'),
+                  },
+                },
+              },
+            },
+          },
+        },
+      ]),
+    ),
+  };
+  const settings = { clients: ['consumer'], surfaces: { consumer: ids } };
+  const result = await audit(input, settings);
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.failedOperations, failed);
+  assert.deepEqual(
+    result.supportedOperations,
+    ids.filter((id) => !failed.includes(id)).sort(),
+  );
+  assert.deepEqual(result.unassessedOperations, []);
+  assert.equal(result.diagnostics.length, failed.length);
+  await compile(input, {
+    ...settings,
+    excludeOperations: result.excludeOperations,
+  });
 });
 
 void test('a failed JSON usage cannot hide later failures or reject a valid multipart usage of the same schema', async () => {

@@ -439,26 +439,14 @@ function normalizeParameter(
     'request',
   );
   const schemas = context.projection.schemas.request;
-  const resolved = resolveSchema(schema, schemas);
-  const primitive = (candidate: Schema): boolean =>
-    ['string', 'number', 'integer', 'boolean'].includes(
-      resolveSchema(candidate, schemas).kind,
-    );
-  const nullable =
-    resolved.kind === 'union' &&
-    resolved.branches.length === 2 &&
-    resolved.branches.some(
-      (branch) => resolveSchema(branch, schemas).kind === 'null',
-    );
-  const headerShape =
-    position === 'header' ? flatParameterShape(schema, schemas) : undefined;
+  const shape = flatParameterShape(schema, schemas);
+  const primitive = shape !== undefined && !shape.array && !shape.nullable;
+  const headerShape = position === 'header' ? shape : undefined;
   const nullableHeader = headerShape?.nullable === true;
   const nullableQuery =
-    position === 'query' && nullable && resolved.branches.some(primitive);
+    position === 'query' && shape?.nullable === true && !shape.array;
   const queryArray =
-    position === 'query' &&
-    resolved.kind === 'array' &&
-    primitive(resolved.items);
+    position === 'query' && shape?.array === true && !shape.nullable;
   if (nullableHeader && required)
     fail(
       `${location}.required`,
@@ -469,7 +457,7 @@ function normalizeParameter(
       `${location}.required`,
       'nullable query parameters must be optional; null represents omission',
     );
-  if (!primitive(resolved) && !headerShape && !nullableQuery && !queryArray)
+  if (!primitive && !headerShape && !nullableQuery && !queryArray)
     fail(
       `${location}.schema`,
       'parameters require primitive schemas, flat primitive header arrays, primitive query arrays, or optional nullable primitive queries/headers',
@@ -1283,20 +1271,34 @@ function prepareSchemas(
   const schemas = new Map(raw);
   const compose = createIntersectionNormalizer(schemas, warn);
   const failed = new Set<string>();
+  const dependents = new Map<string, string[]>();
+  if (collectErrors)
+    for (const [name, schema] of raw)
+      for (const reference of schemaReferences(schema)) {
+        const users = dependents.get(reference.name);
+        if (users) users.push(name);
+        else dependents.set(reference.name, [name]);
+      }
+  // A failed traversal must invalidate every user, including the rest of a
+  // recursive group. The raw graph also covers references copied by composition:
+  // each copied field was reachable through an original named dependency.
+  function markFailed(name: string): void {
+    const pending = [name];
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (failed.has(current)) continue;
+      failed.add(current);
+      for (const user of dependents.get(current) ?? []) pending.push(user);
+    }
+  }
   for (const name of compositionOrder) {
     const schema = raw.get(name)!;
-    if (
-      collectErrors &&
-      schemaReferences(schema).some((reference) => failed.has(reference.name))
-    ) {
-      failed.add(name);
-      continue;
-    }
+    if (failed.has(name)) continue;
     try {
       schemas.set(name, compose(schema, `components.schemas.${name}`));
     } catch (error) {
       recordError(error);
-      failed.add(name);
+      markFailed(name);
     }
   }
   finish();
@@ -1307,10 +1309,15 @@ function prepareSchemas(
   // Share traversal work only within this descriptor. Separate usage checks
   // keep multipart binary fields from weakening ordinary JSON validation.
   const validation = schemaValidation();
-  for (const name of schemaOrder)
+  for (const name of schemaOrder) {
+    const schema = schemas.get(name)!;
+    // Failed usage traversals do not publish visited marks. Do not revalidate
+    // their dependents: the original diagnostic already covers every user of
+    // the failing component, including aliases and productive recursive groups.
+    if (failed.has(name)) continue;
     try {
       validateSchema(
-        schemas.get(name)!,
+        schema,
         schemas,
         `components.schemas.${name}`,
         'component',
@@ -1318,7 +1325,9 @@ function prepareSchemas(
       );
     } catch (error) {
       recordError(error);
+      markFailed(name);
     }
+  }
   // No partial schema table or validation cache escapes a failed audit phase.
   finish();
   const context: SchemaContext = {
@@ -1349,17 +1358,6 @@ function normalizeOperations(
     if (error instanceof ContractWorkError)
       throw new ContractErrors([...errors, error]);
     errors.push(error);
-    // Usage checks mark visited nodes before completing validation. A failed
-    // operation must not let later users of the same schema skip those checks.
-    // Keep the shared work counters and immutable projection tables.
-    for (const cache of [
-      context.sourceValidation,
-      ...Object.values(context.directionValidation),
-    ]) {
-      cache.checked.clear();
-      cache.constraints.clear();
-      cache.depths.clear();
-    }
   };
   const paths = record(input, 'paths');
   const operations: Operation[] = [];

@@ -15,6 +15,7 @@ type Node =
   | 'components'
   | 'pathItem'
   | 'operation'
+  | 'callback'
   | 'parameter'
   | 'requestBody'
   | 'media'
@@ -82,12 +83,14 @@ const children: Readonly<Record<Node, Fields>> = {
     servers: 'list:server',
   },
   operation: {
+    callbacks: 'map:callback',
     parameters: 'list:parameter',
     requestBody: 'requestBody',
     responses: 'responses',
     servers: 'list:server',
     externalDocs: 'annotation',
   },
+  callback: {},
   parameter: { schema: 'schema', examples: 'map:example', content: 'content' },
   requestBody: { content: 'content' },
   media: {
@@ -131,6 +134,15 @@ type Shape = Readonly<{
 }>;
 
 function shape(context: Context): Shape {
+  // Callback expression keys name Path Items. Traverse them for exclusions and
+  // audit attribution even though retained callbacks are not supported yet.
+  if (context === 'callback')
+    return {
+      list: false,
+      entries: 'pathItem',
+      fields: children.callback,
+      keywords: true,
+    };
   if (context.startsWith('list:'))
     return {
       list: true,
@@ -311,7 +323,8 @@ function walkDocument(
         (frame.context === 'parameter' ||
           frame.context === 'response' ||
           frame.context === 'requestBody' ||
-          frame.context === 'header')
+          frame.context === 'header' ||
+          frame.context === 'callback')
       )
         continue;
       if (

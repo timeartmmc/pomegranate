@@ -8,10 +8,6 @@
 exhaustively inspect body kinds must handle it or reject it explicitly, even
 when no operation declares a form body.
 
-JSON and text request declarations with a non-UTF-8 charset now fail compilation.
-Transports must encode request text as UTF-8 after JSON serialization when needed;
-response charset handling remains the transport's responsibility.
-
 ### Features
 
 `pom audit --config pom.json` and `audit(document, options)` report failing

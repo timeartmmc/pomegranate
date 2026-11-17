@@ -412,14 +412,6 @@ export function createIntersectionNormalizer(
     };
     for (let index = path.length - 1; index >= 0; index--) {
       const reference = path[index]!;
-      if (value.schema.kind === 'object' || value.schema.kind === 'map') {
-        for (const name of constraintNames(reference.constraints))
-          if (name !== 'minProperties' && name !== 'maxProperties')
-            fail(
-              reference.location,
-              `constraint ${JSON.stringify(name)} is not supported on an object reference`,
-            );
-      }
       if (
         value.schema.kind === 'json' &&
         constraintNames(reference.constraints).length > 0

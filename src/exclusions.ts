@@ -281,7 +281,10 @@ export function operationFilter(
     const within = (prefix: string, value: string) =>
       value === prefix ||
       value.startsWith(`${prefix}.`) ||
-      value.startsWith(`${prefix}[`);
+      value.startsWith(`${prefix}[`) ||
+      // Validation follows aliases in the same value and records that hop in
+      // the location. Attribute it to its source, just like an inline child.
+      value.startsWith(`${prefix} -> `);
     if (location.startsWith('paths.')) {
       const rest = location.slice('paths.'.length);
       const candidates = Object.keys(paths).filter((name) =>

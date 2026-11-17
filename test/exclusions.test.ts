@@ -6,7 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
-import { compile, ContractError, runProject } from '../dist/index.js';
+import { audit, compile, ContractError, runProject } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
 import {
   commandFailure,
@@ -282,6 +282,79 @@ void test('exclusions stay explicit in read-only manifest drift even when select
     JSON.stringify({ ...excluded, excludeOperations: ['drop', 'extra'] }),
   );
   assert.equal((await runProject(config, { check: true })).clean, true);
+});
+
+void test('excluded callbacks remove exclusive schema dependencies and protect retained uses', async () => {
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const nested of [false, true]) {
+      const source = fixture(openapi, false);
+      const beforeFiles = await compile(source, {
+        clients: ['consumer'],
+        surfaces: { consumer: ['keep'] },
+      });
+      source.components.schemas.OnlyCallback = {
+        type: 'string',
+        minLength: -1,
+      };
+      const callback = {
+        '{$request.body#/url}': {
+          post: {
+            responses: {
+              200: {
+                description: 'Event',
+                content: {
+                  'application/json': { schema: ref('OnlyCallback') },
+                },
+              },
+            },
+          },
+        },
+      };
+      present(source.paths['/records']).post = {
+        operationId: 'drop',
+        callbacks: {
+          event: nested
+            ? {
+                '{$request.body#/next}': {
+                  post: {
+                    callbacks: { nested: callback },
+                    responses: { 204: { description: 'Empty' } },
+                  },
+                },
+              }
+            : callback,
+        },
+        responses: { 204: { description: 'Empty' } },
+      };
+      const before = structuredClone(source);
+      assert.deepEqual(await compile(source, options), beforeFiles);
+      const report = await audit(source, {
+        clients: ['consumer'],
+        surfaces: { consumer: ['keep', 'drop'] },
+      });
+      assert.equal(report.complete, true);
+      assert.deepEqual(report.failedOperations, ['drop']);
+      assert.deepEqual(report.supportedOperations, ['keep']);
+      assert.deepEqual(
+        await compile(source, {
+          ...options,
+          excludeOperations: report.excludeOperations,
+        }),
+        beforeFiles,
+      );
+      assert.deepEqual(source, before);
+      // A retained use protects the same schema from exclusion cleanup.
+      present(source.paths['/records']).get = {
+        operationId: 'keep',
+        responses: {
+          200: {
+            description: 'Shared',
+            content: { 'application/json': { schema: ref('OnlyCallback') } },
+          },
+        },
+      };
+      await assert.rejects(compile(source, options), /OnlyCallback.minLength/);
+    }
 });
 
 void test('generated operation IDs and unsupported TRACE operations can be excluded without changing other methods', async () => {

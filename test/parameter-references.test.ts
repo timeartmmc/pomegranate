@@ -95,6 +95,57 @@ void test('referenced path, query and header parameters retain constraints and w
   verifyParameterReferences(client, staff);
 });
 
+void test('single-branch unions retain scalar validation and wire forms in every parameter position', async (t) => {
+  for (const keyword of ['anyOf', 'oneOf']) {
+    const document = {
+      openapi: '3.1.2',
+      info: { title: 'Synthetic single-branch parameter unions', version: '1' },
+      paths: {
+        '/values/{id}': {
+          get: {
+            operationId: 'read',
+            parameters: ['path', 'query', 'header'].map((position) => ({
+              name: position === 'path' ? 'id' : position,
+              in: position,
+              required: position === 'path',
+              schema: { [keyword]: [{ type: 'integer', minimum: 2 }] },
+            })),
+            responses: { 204: { description: 'Empty' } },
+          },
+        },
+      },
+    };
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(document, {
+        clients: ['consumer'],
+        surfaces: { consumer: ['read'] },
+      }),
+    );
+    const client = await importGenerated<RuntimeClient>(
+      root,
+      'client.consumer.ts',
+    );
+    const operation = present(client.operations.read);
+    const request = operation.build({
+      path: { id: 2 },
+      query: { query: 3 },
+      headers: { header: 4 },
+    });
+    assert.equal(request.url, '/values/2?query=3');
+    assert.equal(request.headers.header, '4');
+    for (const invalid of [
+      { path: { id: 1 } },
+      { path: { id: 2 }, query: { query: 1 } },
+      { path: { id: 2 }, headers: { header: 1 } },
+    ])
+      assert.throws(
+        () => operation.build(invalid),
+        client.RequestValidationError,
+      );
+  }
+});
+
 void test('empty operation lists retain referenced inheritance and inline overrides work across references', async (t) => {
   const document = fixture();
   document.paths['/entries/{entryId}'].get.parameters = [];
