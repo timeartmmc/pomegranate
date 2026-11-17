@@ -748,6 +748,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'recursive-work-small/*.ts',
     'recursive-work-large/*.ts',
     'recursive-group-generated/*.ts',
+    'pointer-generated/*.ts',
     'required-membership-generated/*.ts',
     'composition-graph-generated/*.ts',
     'openapi30-generated/*.ts',
@@ -1638,6 +1639,24 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     await mkdir('recursive-group-generated');
     for (const [file,source] of Object.entries(groupFiles))
       await writeFile('recursive-group-generated/'+file,source);
+    const treePointer='#/components/parameters/Entry/schema/properties/a~1b~0c';
+    const pointerDocument={openapi:'3.1.2',info:{title:'Synthetic installed pointer',version:'1'},paths:{},
+      components:{parameters:{Entry:{name:'unused',in:'cookie',schema:{type:'object',properties:{
+        'a/b~c':{type:'object',properties:{value:{type:'string',enum:['ok']},children:{type:'array',items:{$ref:treePointer}}},required:['value']},
+      }}}}},
+    };
+    const pointerBefore=structuredClone(pointerDocument);
+    const pointerFiles=await pom.compile(pointerDocument,{clients:[],pruneUnusedComponents:true,
+      standalone:{tree:{schema:treePointer,usage:'response'}},
+    });
+    assert.deepEqual(pointerDocument,pointerBefore);
+    await mkdir('pointer-generated');
+    for (const [file,source] of Object.entries(pointerFiles))
+      await writeFile('pointer-generated/'+file,source);
+    await writeFile('pointer-generated/consumer.ts',
+      "import {schema} from './standalone.tree.ts'; "+
+      "const parsed=schema.parse({value:'ok',children:[{value:'ok'}]}); "+
+      "const value:'ok'=parsed.value; void value;");
     const openapi30Document=openapi30Fixture();
     const openapi30Before=structuredClone(openapi30Document);
     assert.deepEqual(await pom.compile(openapi30Document,openapi30Selection),await pom.compile(openapi30Fixture(true),openapi30Selection));
@@ -2137,6 +2156,9 @@ ${await readFile(rewritingWorker, 'utf8')}`,
   // Both runtimes execute the same sources; Node strips only erasable syntax.
   const sourceChecks = `
     import assert from 'node:assert/strict';
+    import {schema as pointerTree} from './pointer-generated/standalone.tree.ts';
+    assert.deepEqual(pointerTree.parse({value:'ok',children:[{value:'ok',extra:true}]}),{value:'ok',children:[{value:'ok'}]});
+    assert.equal(pointerTree.safeParse({value:'other'}).success,false);
     import * as extensionClient from './extension-generated/client.consumer.ts';
     import {verifyExtensionData} from './verification/extension-fixture.ts';
     verifyExtensionData(extensionClient);

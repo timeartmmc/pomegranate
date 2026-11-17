@@ -4,10 +4,11 @@ import {
   ContractErrors,
   ContractWorkError,
   schemaWarnings,
+  errorSource,
+  fail,
 } from './diagnostics.js';
 import type { CompileWarning } from './diagnostics.js';
-import { excludeOperations, operationFilter } from './exclusions.js';
-import { ignoreExtensions } from './extensions.js';
+import { parseOperationExclusions, operationFilter } from './exclusions.js';
 import { selectClients, selectStandalone } from './projection.js';
 import { parseIgnoredExtensions, parseSelection } from './selection.js';
 
@@ -36,26 +37,30 @@ export function auditContract(
   selection: Record<string, unknown>,
 ): AuditResult {
   const parsed = parseSelection(selection);
-  const initial = excludeOperations(
-    openApiDocument(document),
-    selection.excludeOperations,
-    selection.standalone,
-    selection.pruneUnusedComponents,
-  );
+  if (
+    selection.pruneUnusedComponents !== undefined &&
+    typeof selection.pruneUnusedComponents !== 'boolean'
+  )
+    fail('pruneUnusedComponents', 'expected a boolean');
   const ignoredExtensions = parseIgnoredExtensions(selection.ignoreExtensions);
   let remaining = 10_000_000;
+  const charge = (amount: number): void => {
+    if ((remaining -= amount) < 0)
+      throw new ContractWorkError(
+        'audit',
+        'operation audit exceeds the supported limit of 10000000 work units; reduce or split the input contract',
+      );
+  };
+  const initial = parseOperationExclusions(selection.excludeOperations, charge);
   const index = operationFilter(
-    initial.document,
+    openApiDocument(document),
     selection.standalone,
-    (amount) => {
-      if ((remaining -= amount) < 0)
-        throw new ContractWorkError(
-          'audit',
-          'operation audit exceeds the supported limit of 10000000 work units; reduce or split the input contract',
-        );
-    },
+    charge,
   );
-  const operationIds = [...index.operations.keys()].sort();
+  index.validateExclusions(initial);
+  const operationIds = [...index.operations.keys()]
+    .filter((id) => !initial.has(id))
+    .sort();
   const failed = new Set<string>();
   const diagnostics: AuditDiagnostic[] = [];
   const warnings = schemaWarnings();
@@ -75,26 +80,27 @@ export function auditContract(
   let complete = false;
   const pending = () => operationIds.filter((id) => !failed.has(id));
   for (;;) {
-    const excluded = new Set(failed);
+    // Keep the original source registry for every retry: a retained fragment
+    // may live inside an operation removed by this or an earlier attempt.
+    const excluded = new Set([...initial, ...failed]);
     try {
       const filtered = index.select(
         excluded,
         selection.pruneUnusedComponents === true,
       );
-      const descriptor = buildDescriptor(
-        ignoreExtensions(filtered.document, ignoredExtensions),
-        {
-          collectErrors: true,
-          excludedOperations: [...initial.excluded, ...failed],
-          warn,
-          ...(Object.hasOwn(selection, 'surfaces')
-            ? { surfaces: selection.surfaces }
-            : {}),
-          ...(Object.hasOwn(selection, 'formats')
-            ? { formats: selection.formats }
-            : {}),
-        },
-      );
+      const descriptor = buildDescriptor(filtered.document, {
+        collectErrors: true,
+        excludedOperations: [...excluded],
+        schemaSources: filtered.schemaSources,
+        ignoreExtensions: ignoredExtensions,
+        warn,
+        ...(Object.hasOwn(selection, 'surfaces')
+          ? { surfaces: selection.surfaces }
+          : {}),
+        ...(Object.hasOwn(selection, 'formats')
+          ? { formats: selection.formats }
+          : {}),
+      });
       // Check selected compiler features too, without formatting generated code.
       selectStandalone(descriptor, parsed.standalone, warn);
       selectClients(descriptor, parsed);
@@ -119,7 +125,7 @@ export function auditContract(
             // excluded. Report it globally; only same-attempt duplicates skip
             // below when their operations have just joined the failed set.
             affected = index
-              .affected(diagnostic.location)
+              .affected(diagnostic.location, errorSource(diagnostic))
               .filter((id) => !excluded.has(id));
         } catch (attributionError) {
           if (!(attributionError instanceof ContractError))
@@ -159,7 +165,7 @@ export function auditContract(
     supportedOperations: supported,
     failedOperations: [...failed].sort(),
     unassessedOperations: unassessed,
-    excludeOperations: [...initial.excluded, ...failed].sort(),
+    excludeOperations: [...initial, ...failed].sort(),
     diagnostics,
     warnings: warnings.values(),
   };

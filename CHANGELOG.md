@@ -17,6 +17,14 @@ when no operation declares a form body.
 
 ### Features
 
+Schema references and standalone roots accept schema-valued local JSON Pointers,
+including escaped property names and fragments inside reusable HTTP components.
+Referenced fragments survive exclusions and pruning independently of their
+containers, support productive recursion, and keep their source diagnostics.
+
+Audits distinguish dotted and overlapping source names using private structured
+ownership, preserving readable diagnostic locations and the public error shape.
+
 Untagged `oneOf` supports overlapping branches and validates exactly one match,
 including literals, enums, objects and containers. Sibling types and constraints
 use canonical composition. Proven overlap produces compile-time warnings with

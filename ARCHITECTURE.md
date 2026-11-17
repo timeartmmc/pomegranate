@@ -35,6 +35,13 @@ dependencies; do not use client selection to decide which operations need
 validation. Record pruned component references in the output manifest.
 Record exclusions in the output manifest; unknown or ambiguous IDs fail.
 
+Resolve schema-valued local JSON Pointers against the original supported object
+grammar. Give referenced fragments private identities in the existing schema
+graph, with their original source tokens. Retain needed targets independently
+of their containers through exclusions and pruning, normalize each source once,
+and keep private identities out of public component maps. Do not fetch external
+references or infer schemas from arbitrary annotation objects.
+
 Validate the remaining document before selecting output, including retained unused
 components and unselected retained operations. Normalize OpenAPI 3.0 and 3.1 into one
 compiler model used by types, validators, builders and protocol helpers. Reject
@@ -52,6 +59,8 @@ source dependencies once, group a blocker with all affected retained operations,
 and continue with the remaining contract. Report global blockers and unassessed
 operations explicitly. Audits do not render code or modify inputs or outputs;
 they must not turn compiler exceptions into contract diagnostics.
+Carry structured source ownership privately on canonical diagnostics; display
+locations are readable text and cannot identify dotted names unambiguously.
 
 Keep input normalization, reference analysis and compile-time schema checks
 separate. Generated validators check application payloads at runtime.

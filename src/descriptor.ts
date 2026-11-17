@@ -5,6 +5,7 @@ import {
 import {
   arrayValues,
   annotations,
+  atSource,
   contractField,
   ContractError,
   ContractErrors,
@@ -64,6 +65,8 @@ import { responseKey, successResponses } from './response-status.js';
 import { createIntersectionNormalizer } from './intersections.js';
 import { linkComponents, responseLinks } from './links.js';
 import { flatParameterShape } from './parameter-shape.js';
+import { ignoreExtensions, openApiLocation } from './extensions.js';
+import type { SchemaSource, SchemaSources } from './schema-pointers.js';
 import {
   operationIdentifier,
   supportedMethods as methods,
@@ -1230,8 +1233,12 @@ function prepareSchemas(
   normalize: ReturnType<typeof createSchemaNormalizer>,
   collectErrors = false,
   warn?: WarnSchema,
+  fragments: SchemaSources = new Map(),
 ): { context: SchemaContext; order: readonly string[] } {
   const rawSchemas = record(input, 'components.schemas');
+  const source = (name: string): readonly string[] =>
+    fragments.get(name)?.path ?? ['components', 'schemas', name];
+  const location = (name: string): string => openApiLocation(source(name));
   const errors: ContractError[] = [];
   const recordError = (error: unknown): void => {
     if (!collectErrors || !(error instanceof ContractError)) throw error;
@@ -1245,27 +1252,44 @@ function prepareSchemas(
   const raw = new Map<string, Schema>();
   for (const name of Object.keys(rawSchemas).sort())
     try {
-      raw.set(
-        componentName(name, `components.schemas.${name}`),
-        normalize(rawSchemas[name], `components.schemas.${name}`),
+      atSource(['components', 'schemas', name], () => {
+        raw.set(
+          componentName(name, `components.schemas.${name}`),
+          normalize(rawSchemas[name], `components.schemas.${name}`),
+        );
+      });
+    } catch (error) {
+      recordError(error);
+    }
+  // Referenced source fragments are ordinary named graph nodes, normalized once
+  // independently of their containing operation/component. Their private IDs
+  // never pass through public component-name validation.
+  for (const [name, fragment] of fragments)
+    try {
+      atSource(fragment.path, () =>
+        raw.set(name, normalize(fragment.schema, location(name))),
       );
     } catch (error) {
       recordError(error);
     }
   finish();
   if (collectErrors) {
-    for (const schema of raw.values())
+    for (const [name, schema] of raw)
       for (const reference of schemaReferences(schema))
         if (!raw.has(reference.name))
-          errors.push(
-            new ContractError(
-              reference.location,
-              `unresolved reference ${reference.name}`,
-            ),
-          );
+          try {
+            atSource(source(name), () =>
+              fail(
+                reference.location,
+                `unresolved reference ${reference.name}`,
+              ),
+            );
+          } catch (error) {
+            recordError(error);
+          }
     finish();
   }
-  const compositionOrder = orderSchemas(raw);
+  const compositionOrder = orderSchemas(raw, source);
   // Productive cycles retain references to later component identities while
   // composition resolves only the declarations needed at the same value.
   const schemas = new Map(raw);
@@ -1295,7 +1319,9 @@ function prepareSchemas(
     const schema = raw.get(name)!;
     if (failed.has(name)) continue;
     try {
-      schemas.set(name, compose(schema, `components.schemas.${name}`));
+      atSource(source(name), () =>
+        schemas.set(name, compose(schema, location(name))),
+      );
     } catch (error) {
       recordError(error);
       markFailed(name);
@@ -1305,7 +1331,7 @@ function prepareSchemas(
   // Composition can replace a reference with fields that directly reference
   // other components. Order the resulting graph so eager parser constructors
   // cannot capture a dependency that the source graph placed later.
-  const schemaOrder = orderSchemas(schemas);
+  const schemaOrder = orderSchemas(schemas, source);
   // Share traversal work only within this descriptor. Separate usage checks
   // keep multipart binary fields from weakening ordinary JSON validation.
   const validation = schemaValidation();
@@ -1316,13 +1342,15 @@ function prepareSchemas(
     // the failing component, including aliases and productive recursive groups.
     if (failed.has(name)) continue;
     try {
-      validateSchema(
-        schema,
-        schemas,
-        `components.schemas.${name}`,
-        'component',
-        validation,
-      );
+      atSource(source(name), () => {
+        validateSchema(
+          schema,
+          schemas,
+          location(name),
+          'component',
+          validation,
+        );
+      });
     } catch (error) {
       recordError(error);
       markFailed(name);
@@ -1364,51 +1392,57 @@ function normalizeOperations(
   const pathHierarchies = new Map<string, string>();
   for (const path of Object.keys(paths).sort()) {
     try {
-      pathTemplate(path, `paths.${path}`);
-      const pathItem = record(paths[path], `paths.${path}`);
-      keys(
-        pathItem,
-        [...methods, 'summary', 'description', 'parameters', 'servers'],
-        `paths.${path}`,
-      );
-      annotations(pathItem, `paths.${path}`);
-      // OpenAPI permits empty Path Items, for example after ACL filtering.
-      // Validate their metadata even when there is no operation to generate.
-      const inheritedParameters = parameterList(
-        Object.hasOwn(pathItem, 'parameters') ? pathItem.parameters : [],
-        context,
-        examples,
-        parameterComponents,
-        `paths.${path}.parameters`,
-      );
-      const inheritedServers = serverOverride(pathItem, `paths.${path}`);
-      for (const method of methods)
-        if (Object.hasOwn(pathItem, method)) {
-          try {
-            operations.push(
-              normalizeOperation(
-                pathItem[method],
-                method,
-                path,
-                inheritedParameters,
-                inheritedServers,
-                operationContext,
-              ),
-            );
-          } catch (error) {
-            recordError(error);
-          }
-        }
-      // Placeholder names bind parameters, but do not distinguish OpenAPI paths,
-      // including when their Path Items declare different HTTP methods.
-      const hierarchy = path.replace(/\{[^}]+\}/g, '{}');
-      const first = pathHierarchies.get(hierarchy);
-      if (first !== undefined)
-        fail(
+      atSource(['paths', path], () => {
+        pathTemplate(path, `paths.${path}`);
+        const pathItem = record(paths[path], `paths.${path}`);
+        keys(
+          pathItem,
+          [...methods, 'summary', 'description', 'parameters', 'servers'],
           `paths.${path}`,
-          `duplicate templated path hierarchy; first declared at paths.${first}`,
+          undefined,
+          ['paths', path],
         );
-      pathHierarchies.set(hierarchy, path);
+        annotations(pathItem, `paths.${path}`);
+        // OpenAPI permits empty Path Items, for example after ACL filtering.
+        // Validate their metadata even when there is no operation to generate.
+        const inheritedParameters = parameterList(
+          Object.hasOwn(pathItem, 'parameters') ? pathItem.parameters : [],
+          context,
+          examples,
+          parameterComponents,
+          `paths.${path}.parameters`,
+        );
+        const inheritedServers = serverOverride(pathItem, `paths.${path}`);
+        for (const method of methods)
+          if (Object.hasOwn(pathItem, method)) {
+            try {
+              operations.push(
+                atSource(['paths', path, method], () =>
+                  normalizeOperation(
+                    pathItem[method],
+                    method,
+                    path,
+                    inheritedParameters,
+                    inheritedServers,
+                    operationContext,
+                  ),
+                ),
+              );
+            } catch (error) {
+              recordError(error);
+            }
+          }
+        // Placeholder names bind parameters, but do not distinguish OpenAPI paths,
+        // including when their Path Items declare different HTTP methods.
+        const hierarchy = path.replace(/\{[^}]+\}/g, '{}');
+        const first = pathHierarchies.get(hierarchy);
+        if (first !== undefined)
+          fail(
+            `paths.${path}`,
+            `duplicate templated path hierarchy; first declared at paths.${first}`,
+          );
+        pathHierarchies.set(hierarchy, path);
+      });
     } catch (error) {
       recordError(error);
     }
@@ -1456,6 +1490,8 @@ type DescriptorOptions = {
   surfaces?: unknown;
   formats?: unknown;
   excludedOperations?: readonly string[];
+  schemaSources?: SchemaSources;
+  ignoreExtensions?: ReadonlySet<string>;
 };
 
 function describeDocument(
@@ -1464,11 +1500,36 @@ function describeDocument(
   membershipInput: DescriptorOptions = {},
 ): Descriptor {
   const rawMembership = ownRecord(membershipInput);
+  const filtered =
+    rawMembership.ignoreExtensions === undefined
+      ? source
+      : record(
+          ignoreExtensions(source, rawMembership.ignoreExtensions),
+          'OpenAPI',
+        );
   const value = openApi30
-    ? record(normalizeOpenApi30(source, rawMembership.warn), 'OpenAPI')
-    : source;
+    ? record(normalizeOpenApi30(filtered, rawMembership.warn), 'OpenAPI')
+    : filtered;
+  const fragments = new Map<string, SchemaSource>();
+  for (const [name, fragment] of rawMembership.schemaSources ?? []) {
+    const root = { context: 'schema' as const, path: fragment.path, openApi30 };
+    const schema =
+      rawMembership.ignoreExtensions === undefined
+        ? fragment.schema
+        : ignoreExtensions(
+            fragment.schema,
+            rawMembership.ignoreExtensions,
+            root,
+          );
+    fragments.set(name, {
+      path: fragment.path,
+      schema: openApi30
+        ? normalizeOpenApi30(schema, rawMembership.warn, root)
+        : schema,
+    });
+  }
   const registeredFormats = normalizeFormats(rawMembership.formats);
-  let schemaDeclarations: Record<string, unknown> | undefined;
+  let schemaDeclarations: ReadonlySet<string> | undefined;
   const normalize = createSchemaNormalizer(
     registeredFormats,
     undefined,
@@ -1482,12 +1543,17 @@ function describeDocument(
         const components = Object.hasOwn(value, 'components')
           ? record(value.components, 'components')
           : {};
-        schemaDeclarations = Object.hasOwn(components, 'schemas')
-          ? record(components.schemas, 'components.schemas')
-          : {};
+        schemaDeclarations = new Set([
+          ...Object.keys(
+            Object.hasOwn(components, 'schemas')
+              ? record(components.schemas, 'components.schemas')
+              : {},
+          ),
+          ...fragments.keys(),
+        ]);
       }
       for (const reference of references)
-        if (!Object.hasOwn(schemaDeclarations, reference.name))
+        if (!schemaDeclarations.has(reference.name))
           fail(reference.location, `unresolved reference ${reference.name}`);
     },
   );
@@ -1571,6 +1637,7 @@ function describeDocument(
     normalize,
     rawMembership.collectErrors === true,
     rawMembership.warn,
+    fragments,
   );
   const parameterComponents = normalizeComponents(
     Object.hasOwn(components, 'parameters') ? components.parameters : {},

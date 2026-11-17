@@ -133,9 +133,10 @@ or configuration, such as duplicate IDs or unknown exclusions, fails before an
 operation report can be produced. Compiler exceptions are not relabeled as
 unsupported operations.
 
-Overlapping dotted declaration or path names can make a diagnostic's textual
-location ambiguous. The audit reports that ambiguity and leaves remaining
-operations unassessed, without guessing which operations to exclude.
+Canonical diagnostics retain source tokens internally, so dotted or overlapping
+component names and paths remain distinct even when their displayed locations
+look alike. If a diagnostic lacks that source identity and its textual location
+is ambiguous, the audit leaves remaining operations unassessed without guessing.
 
 The audit checks contract interpretation and selected compiler features, but
 does not render code, enforce generated-source budgets, or inspect output
@@ -469,7 +470,8 @@ For a non-HTTP payload, add an explicit root to configuration:
 ```
 
 This emits `standalone.message.ts` with `schema`, `Input`, `Output` and the
-required schema dependencies. It follows the same [request and response
+required schema dependencies. `schema` can also name a supported local schema
+fragment, such as `#/components/parameters/Filter/schema`. It follows the same [request and response
 validation rules](#schema-validation) as an operation. `clients` may be empty
 when at least one standalone root is selected. After explicit operation
 exclusions, the remaining contract is still validated, including operations not
@@ -483,7 +485,7 @@ selected for output.
 | Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; path placeholders in complete segments or within a segment                                                                                                                                                                                                       |
 | Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; primitive/array request headers and optional nullable primitive headers; simple path/header and form query serialization |
 | Bodies      | Required or optional JSON/text, flat form-urlencoded and multipart bodies; response statuses 200–599, ranges `2XX`–`5XX`, and `default`, with at least one possible success; JSON, text, or bodyless responses; primitive/array response headers; local component references and aliases                                                                   |
-| Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; productive local component references; restricted unions and maps described below                                                                             |
+| Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; productive local schema references; restricted unions and maps described below                                                                                |
 | Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length and `uniqueItems`, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                    |
 | Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, `ipv6`, and `byte`; string `password` hint; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                                                 |
 
@@ -818,9 +820,10 @@ Supported schema composition:
   when no structural assertions accompany the literal. The 3.0 spelling is
   `type: object` with `nullable: true` and `enum: [null]`. Object-valued enums
   and constants remain unsupported.
-- A discriminated `oneOf` uses component references without sibling
-  constraints. Mapping may be omitted or partial: the referenced component name
-  supplies the tag for each branch without an explicit mapping. Each branch
+- A discriminated `oneOf` uses local schema references without sibling
+  constraints. Mapping may be omitted or partial for component schemas: the
+  component name supplies the tag for each branch without an explicit mapping.
+  Fragment references require explicit mappings. Each branch
   requires the discriminator field with a distinct string literal; the resulting
   mapping must cover every branch exactly once. Implicit/explicit tag collisions
   receive a diagnostic.
@@ -1125,7 +1128,7 @@ POM: components.schemas.WidgetId.format: expected a string
 ### allOf composition
 
 `allOf` requires a nonempty array of supported schemas. A single branch may wrap
-any existing supported shape; a wrapper around one component reference retains
+any existing supported shape; a wrapper around one local schema reference retains
 that reference's identity. Fixed-object compositions may combine inline schemas,
 local references, and nested compositions. Sibling object `properties` and
 `required` declarations participate in the same composition. Repeated references
@@ -1252,9 +1255,25 @@ compositions fail before selection or writes, including in unused components.
 Recursion through a composed object's properties is supported; recursive object
 merging at the same value is unsupported.
 
+### Local schema references
+
+Schema `$ref` values and standalone roots accept local JSON Pointers to schema
+positions, including `#/components/schemas/Tag/allOf/0`, object properties,
+array items, and schemas inside parameters, headers, or media declarations.
+URI fragment percent escapes are decoded before JSON Pointer escapes: use `~1`
+for `/` and `~0` for `~` within a token. References to missing values,
+non-schema positions, and unsupported boolean schemas fail explicitly. Anchors
+and external references remain unsupported; POM does not fetch schemas.
+
+A fragment keeps its original source location and its own schema semantics.
+Referencing one `allOf` member does not apply the surrounding conjunction.
+Exclusions and pruning retain referenced fragments even when they remove the
+containing operation or component. Fragment identities remain internal;
+`RequestTypes`, `ResponseTypes`, and exported schema maps use component names.
+
 ### Recursive schemas
 
-Local component references may form self-referential or mutually recursive
+Local schema references may form self-referential or mutually recursive
 schemas when each cycle descends through an object property, array item, or map
 value. For example, a tree may contain an optional parent or an array of
 children referring to the same tree component. Nullable wrappers, tagged unions,

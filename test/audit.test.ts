@@ -486,7 +486,7 @@ void test('alias-chain locations preserve conservative attribution of dotted com
   );
 });
 
-void test('ambiguous dotted source names never recommend excluding a healthy operation', async () => {
+void test('exact source ownership distinguishes dotted components and path names', async () => {
   const controls = [
     (ambiguous: boolean) => {
       const healthy = ambiguous ? 'Bad.minLength' : 'Healthy';
@@ -534,23 +534,211 @@ void test('ambiguous dotted source names never recommend excluding a healthy ope
     surfaces: { consumer: ['bad', 'healthy'] },
     pruneUnusedComponents: true,
   };
-  for (const control of controls) {
-    const result = await audit(control(true), settings);
-    assert.equal(result.complete, false);
-    assert.deepEqual(result.failedOperations, []);
-    assert.deepEqual(result.excludeOperations, []);
-    assert.deepEqual(result.unassessedOperations, ['bad', 'healthy']);
-    assert.ok(
-      result.diagnostics.some(
-        (entry) =>
-          entry.location === 'audit' && entry.message.includes('ambiguous'),
-      ),
+  for (const control of controls)
+    for (const ambiguous of [false, true]) {
+      const input = control(ambiguous);
+      const before = structuredClone(input);
+      const result = await audit(input, settings);
+      assert.equal(result.complete, true);
+      assert.deepEqual(result.failedOperations, ['bad']);
+      assert.deepEqual(result.excludeOperations, ['bad']);
+      assert.deepEqual(result.supportedOperations, ['healthy']);
+      assert.deepEqual(result.unassessedOperations, []);
+      assert.equal(result.diagnostics.length, 1);
+      assert.deepEqual(result.diagnostics[0]!.operationIds, ['bad']);
+      await compile(input, {
+        ...settings,
+        excludeOperations: result.excludeOperations,
+      });
+      assert.deepEqual(input, before);
+    }
+});
+
+async function verifyAttributedSubset(
+  input: unknown,
+  failed: string[],
+  supported = ['healthy'],
+) {
+  const settings = {
+    clients: ['consumer'],
+    pruneUnusedComponents: true,
+    surfaces: { consumer: [...failed, ...supported] },
+  };
+  const before = structuredClone(input);
+  const result = await audit(input, settings);
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.failedOperations, [...failed].sort());
+  assert.deepEqual(result.supportedOperations, [...supported].sort());
+  assert.deepEqual(result.unassessedOperations, []);
+  assert.ok(
+    result.diagnostics.every(
+      (diagnostic) => diagnostic.operationIds.length > 0,
+    ),
+  );
+  await compile(input, {
+    ...settings,
+    excludeOperations: result.excludeOperations,
+  });
+  assert.deepEqual(input, before);
+  return result;
+}
+
+void test('different source owners can have identical display locations without losing a healthy subset', async () => {
+  for (const openapi of ['3.0.4', '3.1.2']) {
+    const result = await verifyAttributedSubset(
+      {
+        openapi,
+        info: {
+          title: 'Synthetic identical diagnostic locations',
+          version: '1',
+        },
+        components: {
+          schemas: {
+            A: { type: 'object', properties: { b: { type: 'invalid' } } },
+            'A.properties.b': { type: 'invalid' },
+            Good: { type: 'string' },
+          },
+        },
+        paths: {
+          '/a': { get: { operationId: 'a', ...reply('A') } },
+          '/b': { get: { operationId: 'b', ...reply('A.properties.b') } },
+          '/healthy': { get: { operationId: 'healthy', ...reply() } },
+        },
+      },
+      ['a', 'b'],
     );
-    const unambiguous = await audit(control(false), settings);
-    assert.equal(unambiguous.complete, true);
-    assert.deepEqual(unambiguous.failedOperations, ['bad']);
-    assert.deepEqual(unambiguous.supportedOperations, ['healthy']);
+    assert.equal(result.diagnostics.length, 2);
+    assert.deepEqual(
+      result.diagnostics.map(({ location }) => location),
+      [
+        'components.schemas.A.properties.b.type',
+        'components.schemas.A.properties.b.type',
+      ],
+    );
+    assert.deepEqual(
+      result.diagnostics.map(({ operationIds }) => operationIds),
+      [['a'], ['b']],
+    );
   }
+});
+
+void test('extension, dialect and remapped keyword errors retain exact component ownership', async () => {
+  for (const [openapi, schema, suffix] of [
+    ['3.1.2', { type: 'string', 'x-private': true }, 'x-private'],
+    ['3.0.4', { type: 'string', const: 'one' }, 'const'],
+    ['3.0.4', { type: 'string', not: {} }, 'not'],
+  ] satisfies [string, Schema, string][]) {
+    const result = await verifyAttributedSubset(
+      {
+        openapi,
+        info: { title: 'Synthetic preprocessing provenance', version: '1' },
+        components: {
+          schemas: { A: schema, [`A.${suffix}`]: { type: 'string' } },
+        },
+        paths: {
+          '/bad': { get: { operationId: 'bad', ...reply('A') } },
+          '/healthy': {
+            get: { operationId: 'healthy', ...reply(`A.${suffix}`) },
+          },
+        },
+      },
+      ['bad'],
+    );
+    assert.equal(
+      result.diagnostics[0]!.location,
+      `components.schemas.A.${suffix}`,
+    );
+    if (suffix === 'not')
+      assert.equal(result.diagnostics[0]!.message.includes('"const"'), false);
+  }
+});
+
+void test('reusable parameter and example roots preserve dotted-name ownership', async () => {
+  for (const section of ['parameters', 'examples']) {
+    const parameter = (name: string) => ({
+      name: 'q',
+      in: 'query',
+      schema: { type: 'string' },
+      ...(section === 'examples'
+        ? { examples: { value: { $ref: `#/components/examples/${name}` } } }
+        : {}),
+    });
+    const declared =
+      section === 'parameters'
+        ? {
+            P: { ...parameter('P'), style: 'matrix' },
+            'P.style': parameter('P.style'),
+          }
+        : { P: { value: undefined }, 'P.value': { value: 'one' } };
+    const bind = (name: string) =>
+      section === 'parameters'
+        ? { $ref: `#/components/parameters/${name}` }
+        : parameter(name);
+    await verifyAttributedSubset(
+      {
+        openapi: '3.1.2',
+        info: { title: 'Synthetic reusable source owners', version: '1' },
+        components: {
+          schemas: { Good: { type: 'string' } },
+          [section]: declared,
+        },
+        paths: {
+          '/bad': {
+            get: { operationId: 'bad', parameters: [bind('P')], ...reply() },
+          },
+          '/healthy': {
+            get: {
+              operationId: 'healthy',
+              parameters: [
+                bind(section === 'parameters' ? 'P.style' : 'P.value'),
+              ],
+              ...reply(),
+            },
+          },
+        },
+      },
+      ['bad'],
+    );
+  }
+});
+
+void test('unsupported TRACE does not exclude a healthy method on the same path', async () => {
+  await verifyAttributedSubset(
+    {
+      openapi: '3.1.2',
+      info: { title: 'Synthetic method source owners', version: '1' },
+      components: { schemas: { Good: { type: 'string' } } },
+      paths: {
+        '/shared': {
+          trace: { operationId: 'trace', ...reply() },
+          get: { operationId: 'healthy', ...reply() },
+        },
+      },
+    },
+    ['trace'],
+  );
+});
+
+void test('dotted alias-cycle sources remain attributable to their full dependent group', async () => {
+  await verifyAttributedSubset(
+    {
+      openapi: '3.1.2',
+      info: { title: 'Synthetic dotted alias cycle', version: '1' },
+      components: {
+        schemas: {
+          A: { type: 'string' },
+          'A.B': ref('A.B.C'),
+          'A.B.C': ref('A.B'),
+        },
+      },
+      paths: {
+        '/b': { get: { operationId: 'b', ...reply('A.B') } },
+        '/c': { get: { operationId: 'c', ...reply('A.B.C') } },
+        '/healthy': { get: { operationId: 'healthy', ...reply('A') } },
+      },
+    },
+    ['b', 'c'],
+  );
 });
 
 void test('audit retains strict inventory checks and does not convert compiler exceptions into contract failures', async () => {

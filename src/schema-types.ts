@@ -2,8 +2,18 @@ import { fail } from './diagnostics.js';
 import { jsonSource, propertyKey } from './code.js';
 import { isRequired } from './required-index.js';
 import type { Client, Direction, Schema } from './model.js';
+import { isSchemaFragment } from './schema-pointers.js';
 
 function identifier(name: string): string {
+  // _r cannot be produced by public-name escaping (_u, _h and _d). Encoding
+  // the complete canonical pointer is injective, including Unicode and '%'.
+  if (isSchemaFragment(name))
+    return (
+      '_r' +
+      Buffer.from(name)
+        .toString('base64url')
+        .replace(/[_-]/g, (character) => (character === '_' ? '_u' : '_h'))
+    );
   // Escape the escape character too: A-B, A.B and A_hB must remain distinct.
   // Symbols depend only on their component, so adding a reachable schema does
   // not rename every subsequent validator in a generated diff.

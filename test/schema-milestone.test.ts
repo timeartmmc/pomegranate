@@ -157,7 +157,10 @@ void test('component names and references reject invalid characters and reserved
         error.location === `components.schemas.${name}`,
     );
   }
-  for (const name of ['Shape/Circle', 'Shape%2ECircle', 'Shape~1Circle']) {
+  for (const [name, message] of [
+    ['Shape/Circle', /unresolved local schema reference/],
+    ['Shape~1Circle', /component schema names/],
+  ] as const) {
     const document = schemaFixture();
     Object.assign(document.components.schemas, {
       Broken: {
@@ -169,9 +172,14 @@ void test('component names and references reject invalid characters and reserved
       (error) =>
         error instanceof ContractError &&
         error.location === 'components.schemas.Broken.$ref' &&
-        /component schema names/.test(error.message),
+        message.test(error.message),
     );
   }
+  const encoded = schemaFixture();
+  Object.assign(encoded.components.schemas, {
+    Broken: { $ref: '#/components/schemas/Shape%2ECircle' },
+  });
+  await compile(encoded, { clients: ['samples'] });
   const document = schemaFixture();
   Object.assign(document.components.schemas, {
     '3.Missing-Ref': {

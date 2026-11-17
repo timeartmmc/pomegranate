@@ -1,4 +1,4 @@
-import { assertNever, fail } from './diagnostics.js';
+import { assertNever, atSource, fail } from './diagnostics.js';
 import type { Schema, SchemaTable } from './model.js';
 import { scalarIntersectionBase } from './intersections.js';
 
@@ -154,6 +154,7 @@ function sameValueReferences(
 function dependencyOrder(
   schemas: SchemaTable,
   sameValue: boolean,
+  source: (name: string) => readonly string[],
 ): readonly string[] {
   const ordered: string[] = [];
   const visited = new Set<string>();
@@ -185,26 +186,38 @@ function dependencyOrder(
   // Component aliases add no value nesting, so their graph can be much deeper
   // than an inline schema. Preserve depth-first order without the JS call stack.
   for (const name of [...schemas.keys()].sort()) {
-    enter(name, `components.schemas.${name}`);
-    while (stack.length > 0) {
-      const frame = stack[stack.length - 1]!;
-      const next = frame.targets.next();
-      if (next.done) {
-        pending.delete(frame.name);
-        visited.add(frame.name);
-        ordered.push(frame.name);
-        stack.pop();
-      } else enter(next.value.name, next.value.location);
-    }
+    atSource(source(name), () => {
+      enter(name, `components.schemas.${name}`);
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1]!;
+        const next = frame.targets.next();
+        if (next.done) {
+          pending.delete(frame.name);
+          visited.add(frame.name);
+          ordered.push(frame.name);
+          stack.pop();
+        } else
+          atSource(source(frame.name), () =>
+            enter(next.value.name, next.value.location),
+          );
+      }
+    });
   }
   return ordered;
 }
 
-export function orderSchemas(schemas: SchemaTable): readonly string[] {
+export function orderSchemas(
+  schemas: SchemaTable,
+  source: (name: string) => readonly string[] = (name) => [
+    'components',
+    'schemas',
+    name,
+  ],
+): readonly string[] {
   // Same-value applicators cannot make progress through a recursive instance.
   // Productive cycles are permitted in the full graph; DAG order stays stable.
-  dependencyOrder(schemas, true);
-  return dependencyOrder(schemas, false);
+  dependencyOrder(schemas, true, source);
+  return dependencyOrder(schemas, false, source);
 }
 
 // Renderers share immutable normalized tables across clients and standalone

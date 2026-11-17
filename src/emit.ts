@@ -33,6 +33,7 @@ import { successKey, successResponses } from './response-status.js';
 import { parseSymbol, schemaType, typeSymbol } from './schema-types.js';
 import { sourceBudget } from './source-budget.js';
 import { orderSchemas } from './schema-graph.js';
+import { isSchemaFragment } from './schema-pointers.js';
 
 // `.d.ts` is a declaration file, and the formatter also treats `.d.` path
 // segments as declarations. `_d` cannot collide with a legal selection name,
@@ -611,7 +612,10 @@ function renderClient(
     client.target,
     true,
   );
-  const schemaMaps = selections.map(({ direction, names }) => {
+  const schemaMaps = selections.map(({ direction, names: selected }) => {
+    // Pointer targets participate in parser/type closures but do not become
+    // invented public component names in consumer schema registries.
+    const names = selected.filter((name) => !isSchemaFragment(name));
     const identity = parserIdentities(descriptor.schemas[direction]);
     // An explicit shape argument checks the literal once. Inferring Object.freeze's
     // T through the Readonly annotation re-checks every member several times.

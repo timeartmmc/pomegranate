@@ -12,6 +12,7 @@ import type {
   InfiniteQueryBindingInput,
 } from './model.js';
 import { surfaceNames } from './policy.js';
+import { schemaReference, schemaReferenceName } from './schema-pointers.js';
 
 export type CompileOptions = Readonly<{
   clients: readonly string[];
@@ -119,7 +120,9 @@ export function standaloneSelections(
       fail(`${location}.usage`, 'expected request or response');
     return {
       name,
-      schema: text(value.schema, `${location}.schema`),
+      schema: schemaReference(
+        schemaReferenceName(value.schema, `${location}.schema`),
+      ),
       usage: value.usage,
     };
   });

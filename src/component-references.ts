@@ -1,5 +1,6 @@
 import {
   annotations,
+  atSource,
   fail,
   keys,
   record,
@@ -63,18 +64,20 @@ export function validateComponentAliases(
   // Targets were checked at their declarations. These are pure alias chains;
   // schema references retain separate constraint and directional traversal.
   for (const name of references.keys()) {
-    const pending = new Set<string>();
-    let current: string | undefined = name;
-    while (current !== undefined && !checked.has(current)) {
-      if (pending.has(current))
-        fail(
-          `components.${section}.${current}.$ref`,
-          `cyclic ${labels[section]} reference`,
-        );
-      pending.add(current);
-      current = references.get(current);
-    }
-    for (const visited of pending) checked.add(visited);
+    atSource(['components', section, name], () => {
+      const pending = new Set<string>();
+      let current: string | undefined = name;
+      while (current !== undefined && !checked.has(current)) {
+        if (pending.has(current))
+          fail(
+            `components.${section}.${current}.$ref`,
+            `cyclic ${labels[section]} reference`,
+          );
+        pending.add(current);
+        current = references.get(current);
+      }
+      for (const visited of pending) checked.add(visited);
+    });
   }
 }
 
@@ -106,33 +109,37 @@ export function normalizeComponents<T>(
   const values = new Map<string, T>();
   const references = new Map<string, string>();
   for (const name of Object.keys(components).sort()) {
-    const path = `${location}.${name}`;
-    componentName(name, section, path);
-    const value = record(components[name], path);
-    const target = componentReference(value, section, path);
-    if (target === undefined) {
-      // Normalize unused terminals too. Each caller owns its direction-specific
-      // validation; references cannot hide an unsupported declaration.
-      values.set(name, normalize(value, path));
-    } else {
-      if (!Object.hasOwn(components, target))
-        fail(`${path}.$ref`, `unresolved ${label} reference ${target}`);
-      references.set(name, target);
-    }
+    atSource(['components', section, name], () => {
+      const path = `${location}.${name}`;
+      componentName(name, section, path);
+      const value = record(components[name], path);
+      const target = componentReference(value, section, path);
+      if (target === undefined) {
+        // Normalize unused terminals too. Each caller owns its direction-specific
+        // validation; references cannot hide an unsupported declaration.
+        values.set(name, normalize(value, path));
+      } else {
+        if (!Object.hasOwn(components, target))
+          fail(`${path}.$ref`, `unresolved ${label} reference ${target}`);
+        references.set(name, target);
+      }
+    });
   }
   for (const name of references.keys()) {
-    const pending = new Set<string>();
-    let current = name;
-    // Alias depth does not add schema nesting. Iteration and caching every
-    // visited alias keep long chains/shared tails linear without recursion.
-    while (!values.has(current)) {
-      if (pending.has(current))
-        fail(`${location}.${current}.$ref`, `cyclic ${label} reference`);
-      pending.add(current);
-      current = references.get(current)!;
-    }
-    const value = values.get(current)!;
-    for (const alias of pending) values.set(alias, value);
+    atSource(['components', section, name], () => {
+      const pending = new Set<string>();
+      let current = name;
+      // Alias depth does not add schema nesting. Iteration and caching every
+      // visited alias keep long chains/shared tails linear without recursion.
+      while (!values.has(current)) {
+        if (pending.has(current))
+          fail(`${location}.${current}.$ref`, `cyclic ${label} reference`);
+        pending.add(current);
+        current = references.get(current)!;
+      }
+      const value = values.get(current)!;
+      for (const alias of pending) values.set(alias, value);
+    });
   }
   return values;
 }

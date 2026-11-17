@@ -1,6 +1,7 @@
 import { fail, keys, mapKeywordError, record } from './diagnostics.js';
 import type { WarnSchema } from './diagnostics.js';
 import { mapOpenApi, referenceContexts } from './extensions.js';
+import type { OpenApiRoot } from './extensions.js';
 
 // OAS 3.0.4 §4.7.23 ignores every property beside $ref. Dropping these
 // annotations loses no constraint, so they follow the specification.
@@ -156,45 +157,51 @@ function lowerSchema(
 export function normalizeOpenApi30(
   document: unknown,
   warn?: WarnSchema,
+  root?: OpenApiRoot,
 ): unknown {
-  return mapOpenApi(document, (value, context, location) => {
-    if (referenceContexts.has(context) && Object.hasOwn(value, '$ref')) {
-      // In 3.0 this is a Reference Object, even at a schema location. Nullable
-      // flags warn without modifying the target; other constraint siblings keep
-      // their explicit unsupported diagnostic.
-      keys(
-        value,
-        [
-          '$ref',
-          ...ignoredReferenceSiblings,
-          ...(context === 'schema' ? ['nullable'] : []),
-        ],
-        location,
-      );
-      if (Object.hasOwn(value, 'nullable')) {
-        if (typeof value.nullable !== 'boolean')
-          fail(`${location}.nullable`, 'expected a boolean');
-        if (value.nullable)
-          warn?.(
-            `${location}.nullable`,
-            'nullable: true has no effect beside an OpenAPI 3.0 $ref; reference siblings do not add null to the referenced type',
-          );
+  return mapOpenApi(
+    document,
+    (value, context, location) => {
+      if (referenceContexts.has(context) && Object.hasOwn(value, '$ref')) {
+        // In 3.0 this is a Reference Object, even at a schema location. Nullable
+        // flags warn without modifying the target; other constraint siblings keep
+        // their explicit unsupported diagnostic.
+        keys(
+          value,
+          [
+            '$ref',
+            ...ignoredReferenceSiblings,
+            ...(context === 'schema' ? ['nullable'] : []),
+          ],
+          location,
+        );
+        if (Object.hasOwn(value, 'nullable')) {
+          if (typeof value.nullable !== 'boolean')
+            fail(`${location}.nullable`, 'expected a boolean');
+          if (value.nullable)
+            warn?.(
+              `${location}.nullable`,
+              'nullable: true has no effect beside an OpenAPI 3.0 $ref; reference siblings do not add null to the referenced type',
+            );
+        }
+        return { $ref: value.$ref };
       }
-      return { $ref: value.$ref };
-    }
-    if (context === 'schema') return lowerSchema(value, location, warn);
-    if (context === 'info') {
-      if (Object.hasOwn(value, 'summary'))
-        fail(`${location}.summary`, 'unsupported OpenAPI 3.0 keyword');
-      if (Object.hasOwn(value, 'license')) {
-        const license = record(value.license, `${location}.license`);
-        if (Object.hasOwn(license, 'identifier'))
-          fail(
-            `${location}.license.identifier`,
-            'unsupported OpenAPI 3.0 keyword',
-          );
+      if (context === 'schema') return lowerSchema(value, location, warn);
+      if (context === 'info') {
+        if (Object.hasOwn(value, 'summary'))
+          fail(`${location}.summary`, 'unsupported OpenAPI 3.0 keyword');
+        if (Object.hasOwn(value, 'license')) {
+          const license = record(value.license, `${location}.license`);
+          if (Object.hasOwn(license, 'identifier'))
+            fail(
+              `${location}.license.identifier`,
+              'unsupported OpenAPI 3.0 keyword',
+            );
+        }
       }
-    }
-    return value;
-  });
+      return value;
+    },
+    true,
+    root,
+  );
 }

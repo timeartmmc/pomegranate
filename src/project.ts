@@ -8,7 +8,6 @@ import { buildDescriptor, openApiDocument } from './descriptor.js';
 import { fail, keys, record, schemaWarnings, text } from './diagnostics.js';
 import type { CompileWarning, WarnSchema } from './diagnostics.js';
 import { render } from './emit.js';
-import { ignoreExtensions } from './extensions.js';
 import { excludeOperations } from './exclusions.js';
 import { parseJson } from './json.js';
 import { synchronizeOutputs } from './outputs.js';
@@ -94,22 +93,18 @@ function describeInput(
     selection.standalone,
     selection.pruneUnusedComponents,
   );
-  const descriptor = buildDescriptor(
-    ignoreExtensions(
-      filtered.document,
-      parseIgnoredExtensions(selection.ignoreExtensions),
-    ),
-    {
-      warn,
-      excludedOperations: filtered.excluded,
-      ...(Object.hasOwn(selection, 'surfaces')
-        ? { surfaces: selection.surfaces }
-        : {}),
-      ...(Object.hasOwn(selection, 'formats')
-        ? { formats: selection.formats }
-        : {}),
-    },
-  );
+  const descriptor = buildDescriptor(filtered.document, {
+    warn,
+    schemaSources: filtered.schemaSources,
+    ignoreExtensions: parseIgnoredExtensions(selection.ignoreExtensions),
+    excludedOperations: filtered.excluded,
+    ...(Object.hasOwn(selection, 'surfaces')
+      ? { surfaces: selection.surfaces }
+      : {}),
+    ...(Object.hasOwn(selection, 'formats')
+      ? { formats: selection.formats }
+      : {}),
+  });
   return {
     descriptor,
     metadata: {

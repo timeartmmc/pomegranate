@@ -19,6 +19,35 @@ export class ContractErrors extends Error {
   }
 }
 
+// Display locations are intentionally readable, but dots and brackets in source
+// names make them unsuitable as identities. Keep exact source tokens private so
+// audit ownership never depends on parsing that display format.
+const sources = new WeakMap<ContractError, readonly string[]>();
+
+export function errorSource(
+  error: ContractError,
+): readonly string[] | undefined {
+  return sources.get(error);
+}
+
+export function atSource<T>(source: readonly string[], action: () => T): T {
+  try {
+    return action();
+  } catch (error) {
+    const errors =
+      error instanceof ContractErrors
+        ? error.errors
+        : error instanceof ContractError
+          ? [error]
+          : [];
+    // The closest canonical boundary owns the error. Outer paths/components
+    // must not replace a more precise origin supplied by an inner traversal.
+    for (const diagnostic of errors)
+      if (!sources.has(diagnostic)) sources.set(diagnostic, source);
+    throw error;
+  }
+}
+
 export function fail(location: string, detail: string): never {
   throw new ContractError(location, detail);
 }
@@ -103,9 +132,11 @@ export function mapKeywordError(
 ): unknown {
   if (!(error instanceof KeywordError)) return error;
   const allowed = mapper(error.allowed, error.context);
-  return allowed === error.allowed
-    ? error
-    : new ContractError(error.location, keywordDetail(allowed));
+  if (allowed === error.allowed) return error;
+  const mapped = new ContractError(error.location, keywordDetail(allowed));
+  const source = sources.get(error);
+  if (source !== undefined) sources.set(mapped, source);
+  return mapped;
 }
 
 // Compiler inputs are plain data: every own string key of a source object is a
@@ -159,10 +190,14 @@ export function keys(
   allowed: readonly string[],
   location: string,
   context?: KeywordContext,
+  source?: readonly string[],
 ): void {
   for (const key of Object.keys(value)) {
-    if (!allowed.includes(key))
-      throw new KeywordError(`${location}.${key}`, allowed, context);
+    if (!allowed.includes(key)) {
+      const error = new KeywordError(`${location}.${key}`, allowed, context);
+      if (source !== undefined) sources.set(error, [...source, key]);
+      throw error;
+    }
   }
 }
 

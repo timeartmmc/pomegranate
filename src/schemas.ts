@@ -12,7 +12,11 @@ import {
   validComponentName,
 } from './diagnostics.js';
 import type { WarnSchema } from './diagnostics.js';
-import { localComponentReference } from './component-references.js';
+import {
+  isSchemaFragment,
+  schemaReference,
+  schemaReferenceName as referenceName,
+} from './schema-pointers.js';
 import {
   jsonAnnotation,
   schemaAnnotations,
@@ -132,14 +136,6 @@ export function componentName(name: string, location: string): string {
   if (!validComponentName(name))
     fail(location, 'component schema names must match [A-Za-z0-9._-]+');
   return safeKey(name, location);
-}
-
-function referenceName(input: unknown, location: string): string {
-  const ref = text(input, location);
-  return componentName(
-    localComponentReference(ref, 'schemas', location),
-    location,
-  );
 }
 
 const annotationKeys = [...schemaAnnotationKeys, 'readOnly', 'writeOnly'];
@@ -386,7 +382,7 @@ function schemaNormalizer(
         // schema. Comparable bounds merge; distinct patterns and multipleOf
         // assertions stay independent because a reference holds only one of each.
         const constrained = normalizeIntersectionMember(
-          { ...siblings, $ref: `#/components/schemas/${only.name}` },
+          { ...siblings, $ref: schemaReference(only.name) },
           location,
           nesting + 1,
         );
@@ -546,6 +542,11 @@ function schemaNormalizer(
     const mapped = new Set(mapping.values());
     for (const [name, index] of positions) {
       if (mapped.has(index)) continue;
+      if (isSchemaFragment(name))
+        fail(
+          `${location}.discriminator.mapping`,
+          'fragment oneOf branches require an explicit discriminator mapping',
+        );
       if (mapping.has(name))
         fail(
           `${location}.discriminator.mapping.${name}`,

@@ -1,5 +1,6 @@
 import {
   createOwnRecord,
+  atSource,
   fail,
   ownDescriptors,
   ownRecord,
@@ -183,11 +184,79 @@ function shape(context: Context): Shape {
   };
 }
 
+// Pointer resolution and traversal share this grammar: annotation payloads and
+// dictionary keys never acquire schema meaning merely because they look like it.
+function extensionKey(grammar: Shape, context: Context, key: string): boolean {
+  // x-* dictionary names remain data. A concrete media name can itself start
+  // with x-; its slash distinguishes that declaration from opaque metadata.
+  return (
+    grammar.keywords &&
+    key.startsWith('x-') &&
+    (context !== 'content' || !key.includes('/'))
+  );
+}
+
+function childContext(
+  grammar: Shape,
+  context: Context,
+  key: string,
+): Context | undefined {
+  if (extensionKey(grammar, context, key)) return undefined;
+  if (grammar.list && !/^(?:0|[1-9][0-9]*)$/.test(key)) return undefined;
+  return grammar.fields && Object.hasOwn(grammar.fields, key)
+    ? grammar.fields[key]
+    : grammar.entries;
+}
+
+export function openApiContext(path: readonly string[]): string | undefined {
+  let context: Context | undefined = 'document';
+  for (const key of path) {
+    if (context === undefined) return undefined;
+    context = childContext(shape(context), context, key);
+  }
+  return context;
+}
+
+export function openApiLocation(path: readonly string[]): string {
+  let context: Context | undefined = 'document';
+  let location = 'OpenAPI';
+  for (const key of path) {
+    const grammar: Shape | undefined =
+      context === undefined ? undefined : shape(context);
+    location = grammar?.list
+      ? `${location}[${key}]`
+      : context === 'document' && key !== 'externalDocs'
+        ? key
+        : `${location}.${key}`;
+    context =
+      grammar && context !== undefined
+        ? childContext(grammar, context, key)
+        : undefined;
+  }
+  return location;
+}
+
+export type OpenApiRoot = Readonly<{
+  context: 'document' | 'schema';
+  path: readonly string[];
+  openApi30?: boolean;
+}>;
+
+function sourceOwner(path: readonly string[]): readonly string[] {
+  if (path[0] === 'components' && path.length >= 3) return path.slice(0, 3);
+  if (path[0] !== 'paths' || path.length < 2) return [];
+  return path.slice(
+    0,
+    openApiMethods.some((method) => method === path[2]) ? 3 : 2,
+  );
+}
+
 export function ignoreExtensions(
   document: unknown,
   names: ReadonlySet<string>,
+  root?: OpenApiRoot,
 ): unknown {
-  return walkDocument(document, undefined, names);
+  return walkDocument(document, undefined, names, true, root);
 }
 
 // Share the object grammar with dialect lowering. Map keys and opaque annotation
@@ -198,10 +267,12 @@ export function mapOpenApi(
     value: Record<string, unknown>,
     context: string,
     location: string,
+    original: object,
   ) => Record<string, unknown>,
   readAccessors = true,
+  root?: OpenApiRoot,
 ): unknown {
-  return walkDocument(document, transform, undefined, readAccessors);
+  return walkDocument(document, transform, undefined, readAccessors, root);
 }
 
 function walkDocument(
@@ -210,9 +281,11 @@ function walkDocument(
     value: Record<string, unknown>,
     context: string,
     location: string,
+    original: object,
   ) => Record<string, unknown>,
   names?: ReadonlySet<string>,
   readAccessors = true,
+  root: OpenApiRoot = { context: 'document', path: [] },
 ): unknown {
   const seen = new WeakMap<object, Map<Context, object>>();
   const pending: {
@@ -221,8 +294,18 @@ function walkDocument(
     context: Context;
     shape: Shape;
     location: string;
+    path: readonly string[];
+    depth: number;
+    owner: readonly string[];
   }[] = [];
-  function visit(input: unknown, context: Context, location: string): unknown {
+  function visit(
+    input: unknown,
+    context: Context,
+    location: string,
+    path: readonly string[],
+    depth: number,
+    owner: readonly string[],
+  ): unknown {
     if (input === null || typeof input !== 'object') return input;
     const grammar = shape(context);
     const prototype = Object.getPrototypeOf(input) as object | null;
@@ -246,109 +329,143 @@ function walkDocument(
         // view expected by record() so later passes do not copy descriptors again.
         createOwnRecord();
     contexts.set(context, target);
-    pending.push({ source: input, target, context, shape: grammar, location });
+    pending.push({
+      source: input,
+      target,
+      context,
+      shape: grammar,
+      location,
+      path,
+      depth,
+      owner,
+    });
     return target;
   }
-  const result = visit(document, 'document', 'OpenAPI');
-  let openApi30 = false;
+  const result = visit(
+    document,
+    root.context,
+    openApiLocation(root.path),
+    root.path.slice(0, 3),
+    root.path.length,
+    root.context === 'schema' ? root.path : sourceOwner(root.path),
+  );
+  let openApi30 = root.openApi30 === true;
   // Iteration and context-specific identity caching bound shared/cyclic input
   // graphs without a new recursion limit. The owning parsers still diagnose
   // malformed containers and unsupported schema structure.
   while (pending.length > 0) {
     const frame = pending.pop()!;
-    const source =
-      transform && frame.shape.fields
-        ? transform(
-            ownRecord(frame.source as Record<string, unknown>),
-            frame.context,
-            frame.location,
-          )
-        : frame.source;
-    // A list keeps its array descriptors. Every other node is a record, whose
-    // own string keys are all declarations whatever their enumerability.
-    const descriptors: PropertyDescriptorMap = frame.shape.list
-      ? Object.getOwnPropertyDescriptors(source)
-      : ownDescriptors(source);
-    if (names !== undefined && frame.context === 'document') {
-      const version: unknown = Object.hasOwn(source, 'openapi')
-        ? Reflect.get(source, 'openapi')
-        : undefined;
-      openApi30 = typeof version === 'string' && version.startsWith('3.0.');
-    }
-    const reference = Object.hasOwn(frame.source, '$ref');
-    for (const key of Object.keys(descriptors)) {
-      const descriptor = descriptors[key]!;
-      const location = frame.shape.list
-        ? `${frame.location}[${key}]`
-        : `${frame.location}.${key}`;
-      if (
-        frame.shape.keywords &&
-        key.startsWith('x-') &&
-        // A concrete media type can itself start with x-. The slash makes it
-        // a content declaration rather than an extension keyword.
-        (frame.context !== 'content' || !key.includes('/')) &&
-        key !== 'x-pom' &&
-        key !== 'x-pom-policy'
-      ) {
-        // Extension payloads are opaque to dependency and dialect walks.
-        // Filtering still owns whether an extension may be removed.
-        if (names === undefined) continue;
-        // This flag declares path semantics, not documentation. Keep it visible
-        // as an unsupported contract until multi-segment handling is defined.
-        if (key === 'x-multi-segment')
-          fail(
-            location,
-            'unsupported semantic extension; x-multi-segment affects path parameters and cannot be ignored with ignoreExtensions',
-          );
-        if (!names.has(key))
-          fail(
-            location,
-            'unsupported keyword; list documentation-only extensions in ignoreExtensions to ignore them',
-          );
-        delete descriptors[key];
-        continue;
+    atSource(frame.owner, () => {
+      const source =
+        transform && frame.shape.fields
+          ? transform(
+              ownRecord(frame.source as Record<string, unknown>),
+              frame.context,
+              frame.location,
+              frame.source,
+            )
+          : frame.source;
+      // A list keeps its array descriptors. Every other node is a record, whose
+      // own string keys are all declarations whatever their enumerability.
+      const descriptors: PropertyDescriptorMap = frame.shape.list
+        ? Object.getOwnPropertyDescriptors(source)
+        : ownDescriptors(source);
+      if (names !== undefined && frame.context === 'document') {
+        const version: unknown = Object.hasOwn(source, 'openapi')
+          ? Reflect.get(source, 'openapi')
+          : undefined;
+        openApi30 = typeof version === 'string' && version.startsWith('3.0.');
       }
-      let context: Context | undefined = frame.shape.entries;
-      if (frame.shape.list && !/^(?:0|[1-9][0-9]*)$/.test(key)) continue;
-      if (frame.shape.fields && Object.hasOwn(frame.shape.fields, key))
-        context = frame.shape.fields[key];
-      if (!context) continue;
-      if (!readAccessors && !Object.hasOwn(descriptor, 'value')) continue;
-      // Semantic siblings of Reference Objects remain the owning parser's
-      // error. Schema refs in 3.1 also admit allOf, whose branches still need
-      // extension filtering. In 3.0, annotation siblings such as externalDocs
-      // are discarded before annotation validation, including their extensions.
-      if (
-        reference &&
-        (frame.context === 'parameter' ||
-          frame.context === 'response' ||
-          frame.context === 'requestBody' ||
-          frame.context === 'header' ||
-          frame.context === 'callback')
-      )
-        continue;
-      if (
-        reference &&
-        frame.context === 'schema' &&
-        ((key !== 'externalDocs' && key !== 'xml' && key !== 'allOf') ||
-          openApi30)
-      )
-        continue;
-      const value: unknown =
-        'value' in descriptor ? descriptor.value : Reflect.get(source, key);
-      const child = visit(
-        value,
-        context,
-        frame.context === 'document' && key !== 'externalDocs' ? key : location,
-      );
-      descriptors[key] = {
-        value: child,
-        enumerable: descriptor.enumerable ?? false,
-        configurable: descriptor.configurable ?? false,
-        writable: 'writable' in descriptor ? descriptor.writable : true,
-      };
-    }
-    Object.defineProperties(frame.target, descriptors);
+      const reference = Object.hasOwn(frame.source, '$ref');
+      for (const key of Object.keys(descriptors)) {
+        const descriptor = descriptors[key]!;
+        const location = frame.shape.list
+          ? `${frame.location}[${key}]`
+          : `${frame.location}.${key}`;
+        if (
+          extensionKey(frame.shape, frame.context, key) &&
+          key !== 'x-pom' &&
+          key !== 'x-pom-policy'
+        ) {
+          // Extension payloads are opaque to dependency and dialect walks.
+          // Filtering still owns whether an extension may be removed.
+          if (names === undefined) continue;
+          // This flag declares path semantics, not documentation. Keep it visible
+          // as an unsupported contract until multi-segment handling is defined.
+          if (key === 'x-multi-segment')
+            fail(
+              location,
+              'unsupported semantic extension; x-multi-segment affects path parameters and cannot be ignored with ignoreExtensions',
+            );
+          if (!names.has(key))
+            fail(
+              location,
+              'unsupported keyword; list documentation-only extensions in ignoreExtensions to ignore them',
+            );
+          delete descriptors[key];
+          continue;
+        }
+        // Array metadata can have numeric-looking own keys that are not array
+        // indices (for example 4294967295). It is not another schema member.
+        if (
+          frame.shape.list &&
+          Number(key) >= (frame.source as readonly unknown[]).length
+        )
+          continue;
+        const context = childContext(frame.shape, frame.context, key);
+        if (!context) continue;
+        if (!readAccessors && !Object.hasOwn(descriptor, 'value')) continue;
+        // Semantic siblings of Reference Objects remain the owning parser's
+        // error. Schema refs in 3.1 also admit allOf, whose branches still need
+        // extension filtering. In 3.0, annotation siblings such as externalDocs
+        // are discarded before annotation validation, including their extensions.
+        if (
+          reference &&
+          (frame.context === 'parameter' ||
+            frame.context === 'response' ||
+            frame.context === 'requestBody' ||
+            frame.context === 'header' ||
+            frame.context === 'callback')
+        )
+          continue;
+        if (
+          reference &&
+          frame.context === 'schema' &&
+          ((key !== 'externalDocs' && key !== 'xml' && key !== 'allOf') ||
+            openApi30)
+        )
+          continue;
+        const value: unknown =
+          'value' in descriptor ? descriptor.value : Reflect.get(source, key);
+        // Ordinary diagnostics need only the component or operation owner.
+        // Deeper nodes share that bounded prefix; detached schema roots already
+        // carry their full original target path as the fixed owner.
+        const depth = frame.depth + 1;
+        const childPath =
+          root.context === 'document' && depth <= 3
+            ? [...frame.path, key]
+            : frame.path;
+        const child = visit(
+          value,
+          context,
+          frame.context === 'document' && key !== 'externalDocs'
+            ? key
+            : location,
+          childPath,
+          depth,
+          root.context === 'document' && depth <= 3
+            ? sourceOwner(childPath)
+            : frame.owner,
+        );
+        descriptors[key] = {
+          value: child,
+          enumerable: descriptor.enumerable ?? false,
+          configurable: descriptor.configurable ?? false,
+          writable: 'writable' in descriptor ? descriptor.writable : true,
+        };
+      }
+      Object.defineProperties(frame.target, descriptors);
+    });
   }
   return result;
 }

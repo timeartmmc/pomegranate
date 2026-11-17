@@ -1,5 +1,6 @@
 import { componentSections } from './component-references.js';
 import {
+  atSource,
   createOwnRecord,
   fail,
   ownDescriptors,
@@ -9,6 +10,12 @@ import {
   text,
 } from './diagnostics.js';
 import { mapOpenApi, referenceContexts } from './extensions.js';
+import type { OpenApiRoot } from './extensions.js';
+import {
+  createSchemaPointerRegistry,
+  schemaPointer,
+} from './schema-pointers.js';
+import type { SchemaSource, SchemaSources } from './schema-pointers.js';
 import { openApiMethods, operationIdentifier } from './operations.js';
 import { standaloneSelections } from './selection.js';
 
@@ -49,6 +56,7 @@ export function excludeOperations(
   document: Record<string, unknown>;
   excluded: readonly string[];
   pruned: readonly string[];
+  schemaSources: SchemaSources;
 } {
   if (typeof pruneUnused !== 'boolean')
     fail('pruneUnusedComponents', 'expected a boolean');
@@ -60,6 +68,24 @@ export function excludeOperations(
         `${pruneUnused ? 'component pruning' : 'exclusion processing'} exceeds the supported limit of 1000000 work units; reduce or split the input contract`,
       );
   };
+  const excluded = parseOperationExclusions(input, charge);
+  const pointers = createSchemaPointerRegistry(
+    document,
+    standaloneSelections(standalone),
+    charge,
+  );
+  if (excluded.size === 0 && !pruneUnused && !pointers.hasFragments)
+    return { document, schemaSources: new Map(), excluded: [], pruned: [] };
+  return operationFilter(document, standalone, charge, pointers).select(
+    excluded,
+    pruneUnused,
+  );
+}
+
+export function parseOperationExclusions(
+  input: unknown = [],
+  charge: (amount: number) => void = () => undefined,
+): ReadonlySet<string> {
   if (Array.isArray(input)) charge(input.length);
   if (!stringArray(input))
     fail('excludeOperations', 'expected an array of exact operation IDs');
@@ -71,19 +97,19 @@ export function excludeOperations(
       fail(location, `duplicate operation identifier ${JSON.stringify(id)}`);
     excluded.add(id);
   }
-  if (excluded.size === 0 && !pruneUnused)
-    return { document, excluded: [], pruned: [] };
-  return operationFilter(document, standalone, charge).select(
-    excluded,
-    pruneUnused,
-  );
+  return excluded;
 }
 
 export function operationFilter(
   document: Record<string, unknown>,
   standalone: unknown,
   charge: (amount: number) => void,
+  registry?: ReturnType<typeof createSchemaPointerRegistry>,
 ) {
+  const standaloneSelection = standaloneSelections(standalone);
+  const pointers =
+    registry ??
+    createSchemaPointerRegistry(document, standaloneSelection, charge);
   const paths = record(document.paths, 'paths');
   const operations = new Map<string, { path: string; method: string }>();
   for (const path of Object.keys(paths)) {
@@ -112,57 +138,98 @@ export function operationFilter(
   );
   const declarations = new Map<
     string,
-    { section: string; name: string; value: unknown }
+    {
+      section: string;
+      name: string;
+      value: unknown;
+      source: SchemaSource | undefined;
+    }
   >();
   for (const section of componentSections) {
     if (!Object.hasOwn(components, section)) continue;
     const values = record(components[section], `components.${section}`);
     charge(Object.keys(values).length);
     for (const name of Object.keys(values))
-      declarations.set(`#/components/${section}/${name}`, {
+      declarations.set(schemaPointer(['components', section, name]), {
         section,
         name,
         value: values[name],
+        source: undefined,
       });
   }
+  for (const [id, source] of pointers.sources)
+    declarations.set(id, {
+      section: 'schemas',
+      name: id,
+      value: source.schema,
+      source,
+    });
   const dialect30 =
     typeof document.openapi === 'string' && document.openapi.startsWith('3.0.');
-  const dependencies = (source: unknown): Set<string> => {
+  const dependencies = (
+    source: unknown,
+    root?: OpenApiRoot,
+    ownTarget?: string,
+  ): Set<string> => {
     const references = new Set<string>();
     const add = (value: unknown): void => {
       if (typeof value === 'string' && declarations.has(value))
         references.add(value);
     };
-    mapOpenApi(source, (value, context) => {
-      charge(1);
-      if (referenceContexts.has(context) && Object.hasOwn(value, '$ref'))
-        add(value.$ref);
-      if (context === 'discriminator') {
-        const mapping = plain(value.mapping) ?? {};
-        charge(Object.keys(mapping).length);
-        for (const reference of Object.values(mapping)) add(reference);
-      }
-      if (
-        (context === 'document' || context === 'operation') &&
-        Array.isArray(value.security)
-      )
-        for (const requirement of value.security) {
-          const names = Object.keys(plain(requirement) ?? {});
-          charge(names.length + 1);
-          for (const name of names) add(`#/components/securitySchemes/${name}`);
+    mapOpenApi(
+      source,
+      (value, context, location, original) => {
+        charge(1);
+        if (context === 'schema') {
+          const target = pointers.targetAt(original);
+          if (target !== undefined && target !== ownTarget) {
+            add(target);
+            return { $ref: target };
+          }
         }
-      // 3.0 schema references do not acquire dependencies from siblings.
-      return dialect30 && context === 'schema' && Object.hasOwn(value, '$ref')
-        ? { $ref: value.$ref }
-        : value;
-    });
+        if (referenceContexts.has(context) && Object.hasOwn(value, '$ref'))
+          add(
+            context === 'schema'
+              ? pointers.reference(value.$ref, `${location}.$ref`)
+              : value.$ref,
+          );
+        if (context === 'discriminator') {
+          const mapping = plain(value.mapping) ?? {};
+          charge(Object.keys(mapping).length);
+          for (const [tag, reference] of Object.entries(mapping))
+            add(pointers.reference(reference, `${location}.mapping.${tag}`));
+        }
+        if (
+          (context === 'document' || context === 'operation') &&
+          Array.isArray(value.security)
+        )
+          for (const requirement of value.security) {
+            const names = Object.keys(plain(requirement) ?? {});
+            charge(names.length + 1);
+            for (const name of names)
+              add(`#/components/securitySchemes/${name}`);
+          }
+        // 3.0 schema references do not acquire dependencies from siblings.
+        return dialect30 && context === 'schema' && Object.hasOwn(value, '$ref')
+          ? { $ref: value.$ref }
+          : value;
+      },
+      true,
+      root,
+    );
     return references;
   };
   const edges = new Map<string, ReadonlySet<string>>();
-  for (const [reference, { section, name, value }] of declarations)
+  for (const [reference, { section, name, value, source }] of declarations)
     edges.set(
       reference,
-      dependencies({ components: { [section]: { [name]: value } } }),
+      source === undefined
+        ? dependencies({ components: { [section]: { [name]: value } } })
+        : dependencies(
+            value,
+            { context: 'schema', path: source.path, openApi30: dialect30 },
+            reference,
+          ),
     );
   const closure = (roots: Iterable<string>): Set<string> => {
     const visited = new Set<string>();
@@ -183,19 +250,25 @@ export function operationFilter(
     }
     return visited;
   };
-  const standaloneRoots = standaloneSelections(standalone).map(
-    (root) => root.schema,
-  );
+  const standaloneRoots = standaloneSelection.map((root) => root.schema);
 
-  function select(excluded: ReadonlySet<string>, pruneUnused: boolean) {
-    const removals = new Map<string, Set<string>>();
-    for (const [index, id] of [...excluded].entries()) {
-      const operation = operations.get(id);
-      if (!operation)
+  function validateExclusions(excluded: ReadonlySet<string>): void {
+    for (const [index, id] of [...excluded].entries())
+      if (!operations.has(id))
         fail(
           `excludeOperations[${index}]`,
           `unknown operation identifier ${JSON.stringify(id)}`,
         );
+  }
+  function select(excluded: ReadonlySet<string>, pruneUnused: boolean) {
+    validateExclusions(excluded);
+    for (const root of standaloneSelection)
+      atSource(['standalone', root.name], () =>
+        pointers.reference(root.schema, `standalone.${root.name}.schema`, true),
+      );
+    const removals = new Map<string, Set<string>>();
+    for (const id of excluded) {
+      const operation = operations.get(id)!;
       const methods = removals.get(operation.path) ?? new Set<string>();
       methods.add(operation.method);
       removals.set(operation.path, methods);
@@ -231,8 +304,9 @@ export function operationFilter(
       const removed = closure(
         dependencies({ paths: Object.fromEntries(removedPaths) }),
       );
-      for (const reference of declarations.keys())
-        if (!removed.has(reference)) roots.add(reference);
+      for (const [reference, definition] of declarations)
+        if (definition.source === undefined && !removed.has(reference))
+          roots.add(reference);
       candidates = removed;
     }
     const protectedComponents = closure(roots);
@@ -241,7 +315,8 @@ export function operationFilter(
     for (const reference of candidates) {
       if (pruneUnused) charge(1);
       if (protectedComponents.has(reference)) continue;
-      const { section, name } = declarations.get(reference)!;
+      const { section, name, source } = declarations.get(reference)!;
+      if (source !== undefined) continue;
       const names = pruned.get(section) ?? [];
       names.push(name);
       pruned.set(section, names);
@@ -262,7 +337,8 @@ export function operationFilter(
       });
     }
     return {
-      document: filtered,
+      document: record(pointers.rewrite(filtered), 'OpenAPI'),
+      schemaSources: pointers.selectSources(protectedComponents),
       excluded: [...excluded].sort(),
       pruned: prunedReferences.sort(),
     };
@@ -277,7 +353,10 @@ export function operationFilter(
         protectedRoots: Set<string>;
       }
     | undefined;
-  function affected(location: string): readonly string[] {
+  function affected(
+    location: string,
+    source?: readonly string[],
+  ): readonly string[] {
     const within = (prefix: string, value: string) =>
       value === prefix ||
       value.startsWith(`${prefix}.`) ||
@@ -285,7 +364,36 @@ export function operationFilter(
       // Validation follows aliases in the same value and records that hop in
       // the location. Attribute it to its source, just like an inline child.
       value.startsWith(`${prefix} -> `);
-    if (location.startsWith('paths.')) {
+    const pathOperations = (path: string, method?: string): readonly string[] =>
+      [...operations]
+        .filter(
+          ([, operation]) =>
+            operation.path === path &&
+            (method === undefined || operation.method === method),
+        )
+        .map(([id]) => id);
+    let reference: string | undefined;
+    if (source !== undefined) {
+      reference = pointers.owner(source);
+      // Canonical error boundaries supply raw tokens. A dotted component or
+      // path name is one token, even when its display location looks nested.
+      if (
+        reference === undefined &&
+        source[0] === 'paths' &&
+        source[1] !== undefined
+      ) {
+        const method = source[2];
+        return pathOperations(
+          source[1],
+          openApiMethods.find((name) => name === method),
+        );
+      }
+      if (reference === undefined) {
+        if (source[0] !== 'components' || source.length < 3) return [];
+        const candidate = schemaPointer(source.slice(0, 3));
+        if (declarations.has(candidate)) reference = candidate;
+      }
+    } else if (location.startsWith('paths.')) {
       const rest = location.slice('paths.'.length);
       const candidates = Object.keys(paths).filter((name) =>
         within(name, rest),
@@ -307,26 +415,21 @@ export function operationFilter(
         )
       )
         return [];
-      return [...operations]
-        .filter(
-          ([, operation]) =>
-            operation.path === path &&
-            (method === undefined || operation.method === method),
-        )
-        .map(([id]) => id);
-    }
-    const candidates = [...declarations].filter(([, { section, name }]) =>
-      within(`components.${section}.${name}`, location),
-    );
-    // Location strings cannot distinguish a dotted declaration name from a
-    // child path in another declaration. Never recommend excluding a healthy
-    // operation by guessing the longest textual prefix.
-    if (candidates.length > 1)
-      fail(
-        'audit',
-        `cannot safely attribute ${JSON.stringify(location)}: declared component names make this diagnostic ambiguous; no exclusions were proposed`,
+      return pathOperations(path, method);
+    } else {
+      const candidates = [...declarations].filter(([, { section, name }]) =>
+        within(`components.${section}.${name}`, location),
       );
-    const reference = candidates[0]?.[0];
+      // Location strings cannot distinguish a dotted declaration name from a
+      // child path in another declaration. Never recommend excluding a healthy
+      // operation by guessing the longest textual prefix.
+      if (candidates.length > 1)
+        fail(
+          'audit',
+          `cannot safely attribute ${JSON.stringify(location)}: declared component names make this diagnostic ambiguous; no exclusions were proposed`,
+        );
+      reference = candidates[0]?.[0];
+    }
     if (reference === undefined) return [];
     if (ownership === undefined) {
       const owners = new Map<string, Set<string>>();
@@ -382,6 +485,7 @@ export function operationFilter(
       { path: string; method: string }
     >,
     select,
+    validateExclusions,
     affected,
   };
 }

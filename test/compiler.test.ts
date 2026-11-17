@@ -372,7 +372,7 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
         Widget: { $ref: './other.json#/Widget' },
       });
     },
-    /only local component/,
+    /only local JSON Pointer schema references/,
   ],
   [
     'missing reference',

@@ -1,6 +1,7 @@
 import {
   arrayValues,
   annotations,
+  atSource,
   fail,
   keys,
   record,
@@ -228,15 +229,17 @@ export function exampleComponents(input: unknown): ReadonlySet<string> {
   const names = new Set(Object.keys(examples).sort());
   const references = new Map<string, string | undefined>();
   for (const name of names) {
-    if (!validComponentName(name))
-      fail(
-        `${location}.${name}`,
-        'component example names must match [A-Za-z0-9._-]+',
+    atSource(['components', 'examples', name], () => {
+      if (!validComponentName(name))
+        fail(
+          `${location}.${name}`,
+          'component example names must match [A-Za-z0-9._-]+',
+        );
+      references.set(
+        name,
+        exampleObject(examples[name], `${location}.${name}`, names),
       );
-    references.set(
-      name,
-      exampleObject(examples[name], `${location}.${name}`, names),
-    );
+    });
   }
   validateComponentAliases(references, 'examples');
   return names;
