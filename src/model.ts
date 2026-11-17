@@ -73,9 +73,9 @@ export type SchemaDraft = {
       // anyOf accepts any matching branch; oneOf requires exactly one. Keep this
       // independent of discriminator dispatch, which selects one tagged branch.
       readonly cardinality?: 'any' | 'one' | undefined;
-      // Diagnostic provenance: these branches came from a nullable type
-      // declaration, rather than an anyOf keyword in the source document.
-      readonly sourceTypeArray?: true | undefined;
+      // The source type keyword distinguishes nullable declarations from anyOf
+      // and keeps diagnostics anchored through reference/union distribution.
+      readonly typeArrayLocation?: string | undefined;
       // Different-type enum groups may narrow an intersection; explicit
       // anyOf/oneOf alternatives must retain their ordinary contradiction checks.
       readonly sourceLiterals?: true | undefined;
@@ -163,7 +163,7 @@ export type Schema = {
       readonly kind: 'union';
       readonly branches: readonly Schema[];
       readonly cardinality: 'any' | 'one';
-      readonly sourceTypeArray: true | undefined;
+      readonly typeArrayLocation: string | undefined;
       readonly sourceLiterals: true | undefined;
       readonly discriminator: Discriminator | undefined;
     }

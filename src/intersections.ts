@@ -304,7 +304,8 @@ export function scalarIntersectionBase(
 type Resolved = Readonly<{ schema: Schema; limits: Constraints } & Access>;
 
 export function createIntersectionNormalizer(
-  schemas: SchemaTable,
+  // Composition replaces table entries as it completes them; see resolve().
+  schemas: Map<string, Schema>,
   warn?: WarnSchema,
 ): (schema: Schema, location: string) => Schema {
   const normalized = new WeakMap<Schema, Schema>();
@@ -413,6 +414,12 @@ export function createIntersectionNormalizer(
         current = referenceTarget(current, schemas);
       } else if (current.kind === 'intersection') {
         const composed = normalize(current, current.location);
+        // Publish a component composed out of name order. Type analysis and
+        // scalar plans read the table too; seeing its raw entry instead would
+        // let component names decide whether a composition succeeds.
+        const owner = path.at(-1);
+        if (owner && schemas.get(owner.name) === current)
+          schemas.set(owner.name, composed);
         if (composed === current) break;
         current = composed;
       } else break;
@@ -543,6 +550,30 @@ export function createIntersectionNormalizer(
   function intersection(
     input: Extract<Schema, { kind: 'intersection' }>,
     location: string,
+    enclosingWarnings?: Set<string>,
+  ): Schema {
+    // Distributed parts share their written composition's warning scope. A
+    // part may reject null while another retains it; only the complete result
+    // can establish that a source nullable type has no effect.
+    const candidates = enclosingWarnings ?? new Set<string>();
+    const result = composeIntersection(input, location, candidates);
+    if (
+      enclosingWarnings === undefined &&
+      candidates.size > 0 &&
+      !jsonTypes(result, location).includes('null')
+    )
+      for (const path of candidates)
+        warn?.(
+          path,
+          'a nullable type has no effect here because another schema in the same composition never accepts null; to accept null, wrap the composition in an outer anyOf with a null-only branch',
+        );
+    return result;
+  }
+
+  function composeIntersection(
+    input: Extract<Schema, { kind: 'intersection' }>,
+    location: string,
+    inactiveNulls: Set<string>,
   ): Schema {
     const pending: { schema: Schema; location: string }[] = [
       { schema: input, location },
@@ -552,6 +583,16 @@ export function createIntersectionNormalizer(
     const seen = new Set<Schema>();
     const references = new Set<string>();
     let access: Access = { readOnly: false, writeOnly: false };
+    // Warn only where the nullable type was written in this composition. A
+    // narrower use of a reference does not make its declaration ineffective.
+    const inactiveNull = (index: number): void => {
+      const written = branches[index]!;
+      if (
+        written.kind === 'union' &&
+        written.typeArrayLocation === `${branchLocations[index]}.type`
+      )
+        inactiveNulls.add(written.typeArrayLocation);
+    };
     // Flatten same-instance composition before checking required-only fragments.
     // Each source branch was normalized already, so deduplication loses no checks.
     while (pending.length > 0) {
@@ -629,15 +670,68 @@ export function createIntersectionNormalizer(
       const branch = branches[0]!;
       return materializeObject({ ...branch, ...access }, location);
     }
-    const targets = branches.map((branch, index) =>
+    let targets = branches.map((branch, index) =>
       resolve(branch, branchLocations[index]!),
     );
     for (const target of targets)
       access = accessFlags(access, target, location);
+    // A conjunct that only restates JSON types every other conjunct already
+    // implies adds no rule, wherever it is written. Dropping it keeps the other
+    // references intact, rather than merging and recursively expanding their
+    // fields just to establish a top-level type.
+    const bareObject = (target: Resolved): boolean =>
+      target.schema.kind === 'map' &&
+      target.schema.values === true &&
+      !target.schema.additionalPropertiesExplicit &&
+      target.schema.required.length === 0 &&
+      target.limits.minProperties === undefined &&
+      target.limits.maxProperties === undefined;
+    const restated = (target: Resolved): readonly string[] | undefined => {
+      if (bareObject(target)) return ['object'];
+      const { schema } = target;
+      return schema.kind === 'union' &&
+        schema.typeArrayLocation &&
+        schema.branches.every((branch) => {
+          const value = resolve(branch, location);
+          return value.schema.kind === 'null' || bareObject(value);
+        })
+        ? ['object', 'null']
+        : undefined;
+    };
+    const kept = targets.map(() => true);
+    for (const [index, target] of targets.entries()) {
+      const types = restated(target);
+      if (!types) continue;
+      const others = branches.filter(
+        (_, position) => position !== index && kept[position],
+      );
+      charge(others.length, location);
+      if (
+        others.length === 0 ||
+        !others.every((other) =>
+          jsonTypes(other, location).every((type) => types.includes(type)),
+        )
+      )
+        continue;
+      kept[index] = false;
+      if (
+        types.includes('null') &&
+        !others.every((other) => jsonTypes(other, location).includes('null'))
+      )
+        inactiveNull(index);
+    }
+    if (kept.includes(false)) {
+      branches = branches.filter((_, index) => kept[index]);
+      branchLocations = branchLocations.filter((_, index) => kept[index]);
+      targets = targets.filter((_, index) => kept[index]);
+      if (branches.length === 1)
+        return materializeObject({ ...branches[0]!, ...access }, location);
+    }
     const finiteValues = (input: Schema): readonly Scalar[] | undefined => {
       const target = resolve(input, location).schema;
       if (target.kind === 'union') {
-        if (!target.sourceLiterals && !target.sourceTypeArray) return undefined;
+        if (!target.sourceLiterals && !target.typeArrayLocation)
+          return undefined;
         const values: Scalar[] = [];
         for (const branch of target.branches) {
           const members = finiteValues(branch);
@@ -675,39 +769,19 @@ export function createIntersectionNormalizer(
         location,
         'allOf cannot intersect multiple discriminated oneOf schemas in this version; use anyOf for a factor whose required, distinct literal tags make its branches disjoint',
       );
+    // Type declarations distribute first: literal candidates then narrow them
+    // the same way whichever member order the author chose.
     const factor =
+      unions.find(({ union }) => union.typeArrayLocation) ??
       unions.find(
         ({ union }) => !union.discriminator && !union.sourceLiterals,
-      ) ?? unions[0];
+      ) ??
+      unions[0];
     if (factor) {
       const { union, position } = factor;
-      const domain = jsonTypes(branches[position]!, location);
-      const otherPositions = branches.flatMap((_, index) => {
-        if (index === position) return [];
-        const target = targets[index]!;
-        // Preserve union references when a bare object assertion is already
-        // implied. Expanding its branches would duplicate parsers and needlessly
-        // unfold recursive objects just to establish their top-level type.
-        if (
-          domain.length === 1 &&
-          domain[0] === 'object' &&
-          target.schema.kind === 'map' &&
-          target.schema.values === true &&
-          !target.schema.additionalPropertiesExplicit &&
-          target.schema.required.length === 0 &&
-          target.limits.minProperties === undefined &&
-          target.limits.maxProperties === undefined
-        )
-          return [];
-        return [index];
-      });
-      // A recursive target can still contain uncomposed branches. Preserve its
-      // reference so final table composition, including required fields, wins.
-      if (otherPositions.length === 0)
-        return { ...branches[position]!, ...access };
-      const others = otherPositions.map((index) => branches[index]!);
-      const otherLocations = otherPositions.map(
-        (index) => branchLocations[index]!,
+      const others = branches.filter((_, index) => index !== position);
+      const otherLocations = branchLocations.filter(
+        (_, index) => index !== position,
       );
       const commonTypes = others.reduce<readonly string[]>(
         (types, branch) =>
@@ -729,7 +803,7 @@ export function createIntersectionNormalizer(
         else if (target.kind === 'union') {
           // Explicit alternatives remain structural: distribution, rather than
           // finite pruning, diagnoses any contradictory explicit branch.
-          if (target.sourceLiterals || target.sourceTypeArray) {
+          if (target.sourceLiterals || target.typeArrayLocation) {
             const alternatives = target.branches.map(acceptsLiteral);
             accepts = (value) => alternatives.some((branch) => branch(value));
           } else accepts = () => true;
@@ -793,7 +867,7 @@ export function createIntersectionNormalizer(
               commonTypes.includes(type),
             ) &&
             (!candidates ||
-              (!union.sourceLiterals && !union.sourceTypeArray) ||
+              (!union.sourceLiterals && !union.typeArrayLocation) ||
               candidates.some(acceptsLiteral(alternative)))
           );
         });
@@ -804,6 +878,13 @@ export function createIntersectionNormalizer(
             ? 'allOf constraints admit no literal value'
             : 'allOf branches admit no value of a common JSON type',
         );
+      const acceptsNull = (alternative: Schema): boolean =>
+        jsonTypes(alternative, location).includes('null');
+      if (
+        union.branches.some(acceptsNull) &&
+        !alternatives.some(({ schema }) => acceptsNull(schema))
+      )
+        inactiveNull(position);
       const composedBranches = alternatives.map(
         ({ schema: alternative, index }) => {
           const source = branches[position]!;
@@ -812,7 +893,7 @@ export function createIntersectionNormalizer(
               ? source.location
               : union.sourceLiterals
                 ? `${branchLocations[position]}.enum`
-                : union.sourceTypeArray
+                : union.typeArrayLocation
                   ? `${branchLocations[position]}.type`
                   : `${branchLocations[position]}.${unionKeyword(union)}[${index}]`;
           const composed = normalize(
@@ -823,6 +904,7 @@ export function createIntersectionNormalizer(
               location: path,
             }),
             path,
+            inactiveNulls,
           );
           // Register the access-neutral alternative as canonical too. A later
           // composition must not rebuild it from conjuncts whose annotations
@@ -844,8 +926,14 @@ export function createIntersectionNormalizer(
       );
       const sourceLiterals =
         union.sourceLiterals ||
-        (union.sourceTypeArray && literalNarrowing ? true : undefined);
-      if (sourceLiterals && composedBranches.length === 1)
+        (union.typeArrayLocation && literalNarrowing ? true : undefined);
+      // One remaining anyOf alternative is that schema. An untagged oneOf
+      // stays a union: its branch keeps source closure during matching.
+      if (
+        composedBranches.length === 1 &&
+        (sourceLiterals ||
+          (union.cardinality === 'any' && !union.discriminator))
+      )
         return { ...composedBranches[0]!, ...access };
       const positions = new Map(
         alternatives.map(({ index }, position) => [index, position]),
@@ -1095,7 +1183,11 @@ export function createIntersectionNormalizer(
     return canonical;
   }
 
-  function normalize(input: Schema, location: string): Schema {
+  function normalize(
+    input: Schema,
+    location: string,
+    enclosingWarnings?: Set<string>,
+  ): Schema {
     const known = normalized.get(input);
     if (known) return known;
     if (processing.has(input)) recursiveExpansion(location);
@@ -1110,7 +1202,7 @@ export function createIntersectionNormalizer(
       let result: Schema;
       switch (input.kind) {
         case 'intersection':
-          result = intersection(input, input.location);
+          result = intersection(input, input.location, enclosingWarnings);
           break;
         case 'object': {
           result = materializeObject(objectChildren(input, location), location);

@@ -335,14 +335,16 @@ function schemaNormalizer(
         readOnly: normalized.readOnly,
         writeOnly: normalized.writeOnly,
       });
+    // A typed map is not inferred from its keyword alone: without a type the
+    // schema also admits every non-object value.
     if (unionKeyword !== undefined)
       fail(
         `${location}.additionalProperties`,
-        `typed additionalProperties beside ${unionKeyword} is unsupported; a dynamic map cannot be shared across the alternatives`,
+        `typed additionalProperties beside ${unionKeyword} requires an explicit type: "object" in the same schema`,
       );
     fail(
       location,
-      'allOf object fragments with dynamic additionalProperties require an explicit type and are unsupported in intersections',
+      'allOf members with typed additionalProperties require an explicit type: "object"',
     );
   }
 
@@ -888,7 +890,7 @@ function schemaNormalizer(
     }
     if (schema.kind === 'union') {
       assertInlineSchemaNesting(nesting + 1, location);
-      return { ...schema, sourceTypeArray: true };
+      return { ...schema, typeArrayLocation: `${location}.type` };
     }
     return schema;
   }
@@ -996,7 +998,7 @@ function schemaNormalizer(
       compositionKeyword !== undefined && kind === undefined
         ? compositionKeyword === 'allOf'
           ? 'allOf members without object keywords require an explicit type; declare the composed type here, for example "type": "string"'
-          : `constraints beside ${compositionKeyword} require an explicit sibling type; alternatively, put type-specific constraints inside the applicable alternatives`
+          : `constraints beside ${compositionKeyword} require an explicit sibling type, which also restricts every alternative to that type; to keep alternatives of other types, put the constraints inside the alternatives they apply to`
         : 'supported types are object, array, string, number, integer, boolean and null; type arrays require one supported non-null type and null; implicit types are unsupported',
     );
   }

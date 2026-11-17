@@ -202,7 +202,11 @@ void test('identical component references can redeclare inherited container and 
       const simplified = {
         ...document({
           ...schemas,
-          Combined: { allOf: [ref('Base'), { type: 'object' }] },
+          // A bare type member would add nothing and keep Base's identity;
+          // this one composes the same object without restating the field.
+          Combined: {
+            allOf: [ref('Base'), { type: 'object', required: ['tags'] }],
+          },
         }),
         openapi,
       };

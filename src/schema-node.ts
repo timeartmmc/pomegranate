@@ -127,7 +127,7 @@ export function schemaNode(
         ...access,
         branches: value.branches,
         cardinality: own(value, 'cardinality') ?? 'any',
-        sourceTypeArray: own(value, 'sourceTypeArray'),
+        typeArrayLocation: own(value, 'typeArrayLocation'),
         sourceLiterals: own(value, 'sourceLiterals'),
         discriminator: own(value, 'discriminator'),
       };
@@ -206,7 +206,7 @@ export function schemaBranchLocation(
   location: string,
   index: number,
 ): string {
-  return schema.sourceTypeArray
+  return schema.typeArrayLocation
     ? location
     : `${location}.${unionKeyword(schema)}[${index}]`;
 }

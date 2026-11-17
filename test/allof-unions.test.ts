@@ -6,7 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
-import { compile, ContractError } from '../dist/index.js';
+import { audit, compile, ContractError } from '../dist/index.js';
 import { parseYaml } from '../dist/yaml.js';
 import {
   generatedTestWorkspace,
@@ -311,7 +311,7 @@ void test('shared union fields diagnose malformed rules, contradictory branches 
       ],
       [
         { ...choice, additionalProperties: { type: 'string' } },
-        /Value\.additionalProperties: typed additionalProperties beside oneOf is unsupported/,
+        /Value\.additionalProperties: typed additionalProperties beside oneOf requires an explicit type: "object"/,
       ],
       [
         {
@@ -731,4 +731,319 @@ void test('allOf distribution keeps unsupported annotations on union alternative
             /readOnly and writeOnly on union branches are not supported/,
           );
         }
+});
+
+void test('nullable composition is independent of member order and component names, and warns when null is removed', async (t) => {
+  const literal = fixed({ value: { type: 'number' } }, ['value']);
+  const expression = { oneOf: [ref('Literal'), ref('Binary')] };
+  const binary = (right: Schema): Schema =>
+    fixed({ left: expression, right }, ['left']);
+  const spellings: readonly [string, Schema, Record<string, Schema>][] = [
+    ['3.1.2', { type: ['object', 'null'], ...expression }, {}],
+    ['3.0.4', { type: 'object', nullable: true, ...expression }, {}],
+    [
+      '3.1.2',
+      { allOf: [{ type: ['object', 'null'] }, ref('Expr')] },
+      { Expr: expression },
+    ],
+    [
+      '3.1.2',
+      { allOf: [ref('Expr'), { type: ['object', 'null'] }] },
+      { Expr: expression },
+    ],
+  ];
+  const samples = [
+    { left: { value: 1 } },
+    { left: { value: 1 }, right: { left: { value: 2 } } },
+    { left: { value: 1 }, right: null },
+    { left: { value: 1 }, right: 5 },
+  ];
+  for (const [openapi, right, extra] of spellings) {
+    const warnings: string[] = [];
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(
+        {
+          ...contract(openapi, {
+            Literal: literal,
+            Binary: binary(right),
+            ...extra,
+          }),
+        },
+        {
+          clients: [],
+          standalone: {
+            value: { schema: ref('Binary').$ref, usage: 'response' },
+          },
+          onWarning: (warning) => warnings.push(warning.message),
+        },
+      ),
+    );
+    const { schema } = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.value.ts',
+    );
+    // Every alternative is an object, so the declared null can never match.
+    assert.deepEqual(
+      samples.map((input) => schema.safeParse(input).success),
+      [true, true, false, false],
+      JSON.stringify(right),
+    );
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /a nullable type has no effect here/);
+  }
+  // A recursive group composes the same way whichever member is named first.
+  for (const [first, second] of [
+    ['A1', 'B1'],
+    ['Q1', 'P1'],
+  ] as const) {
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(
+        contract('3.1.2', {
+          [first]: {
+            allOf: [
+              { type: ['object', 'null'], properties: { b: ref(second) } },
+              { enum: [null] },
+            ],
+          },
+          [second]: { allOf: [ref(first), { type: 'null' }] },
+        }),
+        {
+          clients: [],
+          standalone: {
+            value: { schema: ref(second).$ref, usage: 'response' },
+          },
+        },
+      ),
+    );
+    const { schema } = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.value.ts',
+    );
+    assert.equal(schema.safeParse(null).success, true);
+    assert.equal(schema.safeParse({}).success, false);
+  }
+});
+
+void test('a union narrowed to one anyOf alternative accepts that alternative’s reference constraints', async (t) => {
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(
+      contract('3.1.2', {
+        Tags: {
+          allOf: [
+            { type: ['array', 'null'], items: { type: 'string' } },
+            { type: 'array', items: {} },
+          ],
+        },
+        Limited: { $ref: '#/components/schemas/Tags', maxItems: 2 },
+      }),
+      {
+        clients: [],
+        standalone: {
+          value: { schema: ref('Limited').$ref, usage: 'request' },
+        },
+      },
+    ),
+  );
+  const { schema } = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.value.ts',
+  );
+  assert.deepEqual(schema.parse(['a', 'b']), ['a', 'b']);
+  for (const input of [['a', 'b', 'c'], [1], null])
+    assert.equal(schema.safeParse(input).success, false);
+});
+
+void test('nullable intersections that retain null do not warn, including shared fields and references', async (t) => {
+  for (const openapi of ['3.0.4', '3.1.2']) {
+    const nullable: Schema = openapi.startsWith('3.0.')
+      ? { type: 'integer', nullable: true }
+      : { type: ['integer', 'null'] };
+    for (const sharedField of [false, true])
+      for (const referenced of [false, true]) {
+        const member = sharedField ? fixed({ id: nullable }, ['id']) : nullable;
+        const source = contract(openapi, {
+          Member: member,
+          Value: { allOf: [member, referenced ? ref('Member') : member] },
+        });
+        const options = {
+          clients: [],
+          standalone: {
+            value: { schema: ref('Value').$ref, usage: 'response' as const },
+          },
+        };
+        const warnings: string[] = [];
+        const root = await generatedTestWorkspace(
+          t,
+          await compile(source, {
+            ...options,
+            onWarning: ({ path }) => warnings.push(path),
+          }),
+        );
+        assert.deepEqual(warnings, []);
+        const { schema } = await importGenerated<StandaloneModule>(
+          root,
+          'standalone.value.ts',
+        );
+        for (const value of [null, 1]) {
+          const input = sharedField ? { id: value } : value;
+          assert.deepEqual(schema.parse(input), input);
+        }
+        assert.equal(
+          schema.safeParse(sharedField ? { id: 'bad' } : 'bad').success,
+          false,
+        );
+        const report = await audit(source, options);
+        assert.equal(report.clean, true);
+        assert.deepEqual(report.warnings, []);
+      }
+  }
+});
+
+void test('nullable warnings identify inline declarations without blaming referenced union definitions', async (t) => {
+  for (const referenced of [false, true])
+    for (const nullableIndex of [0, 1, 'both'] as const) {
+      const objectType = (index: number): Schema => ({
+        type:
+          nullableIndex === 'both' || nullableIndex === index
+            ? ['object', 'null']
+            : 'object',
+      });
+      const choice: Schema = {
+        anyOf: [
+          { ...objectType(0), properties: { a: { type: 'string' } } },
+          { ...objectType(1), properties: { b: { type: 'integer' } } },
+        ],
+      };
+      const source = contract('3.1.2', {
+        Choice: choice,
+        Value: {
+          allOf: [referenced ? ref('Choice') : choice, { type: 'object' }],
+        },
+      });
+      const options = {
+        clients: [],
+        standalone: {
+          value: { schema: ref('Value').$ref, usage: 'response' as const },
+        },
+      };
+      const warnings: string[] = [];
+      const root = await generatedTestWorkspace(
+        t,
+        await compile(source, {
+          ...options,
+          onWarning: ({ path }) => warnings.push(path),
+        }),
+      );
+      const first = nullableIndex === 'both' ? 0 : nullableIndex;
+      assert.deepEqual(
+        warnings,
+        referenced
+          ? []
+          : [`components.schemas.Value.allOf[0].anyOf[${first}].type`],
+      );
+      const report = await audit(source, options);
+      assert.equal(report.clean, true);
+      assert.deepEqual(
+        report.warnings.map(({ path }) => path),
+        warnings,
+      );
+      // Identical reasons group without losing the first authored location.
+      if (referenced) assert.deepEqual(report.warnings, []);
+      else if (nullableIndex === 'both')
+        assert.match(report.warnings[0]!.message, /2 occurrences/);
+      else assert.doesNotMatch(report.warnings[0]!.message, /occurrences/);
+      const { schema } = await importGenerated<StandaloneModule>(
+        root,
+        'standalone.value.ts',
+      );
+      assert.equal(schema.safeParse(null).success, false);
+      assert.deepEqual(schema.parse({ a: 'value' }), { a: 'value' });
+    }
+});
+
+void test('narrowing a nullable reference leaves its reusable declaration valid without a warning', async (t) => {
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const sharedField of [false, true]) {
+      const nullable: Schema = openapi.startsWith('3.0.')
+        ? { type: 'integer', nullable: true }
+        : { type: ['integer', 'null'] };
+      const original = sharedField ? fixed({ id: nullable }, ['id']) : nullable;
+      const narrowed = sharedField
+        ? fixed({ id: { type: 'integer' } }, ['id'])
+        : { type: 'integer' };
+      const source = contract(openapi, {
+        Original: original,
+        Value: { allOf: [ref('Original'), narrowed] },
+      });
+      const options = {
+        clients: [],
+        standalone: {
+          original: {
+            schema: ref('Original').$ref,
+            usage: 'response' as const,
+          },
+          value: { schema: ref('Value').$ref, usage: 'response' as const },
+        },
+      };
+      const warnings: string[] = [];
+      const root = await generatedTestWorkspace(
+        t,
+        await compile(source, {
+          ...options,
+          onWarning: ({ path }) => warnings.push(path),
+        }),
+      );
+      assert.deepEqual(warnings, []);
+      const report = await audit(source, options);
+      assert.equal(report.clean, true);
+      assert.deepEqual(report.warnings, []);
+      const reusable = await importGenerated<StandaloneModule>(
+        root,
+        'standalone.original.ts',
+      );
+      const value = await importGenerated<StandaloneModule>(
+        root,
+        'standalone.value.ts',
+      );
+      const nullInput = sharedField ? { id: null } : null;
+      assert.deepEqual(reusable.schema.parse(nullInput), nullInput);
+      assert.equal(value.schema.safeParse(nullInput).success, false);
+      const valid = sharedField ? { id: 1 } : 1;
+      assert.deepEqual(value.schema.parse(valid), valid);
+    }
+});
+
+void test('a real nullable warning inside a union remains when another alternative accepts null', async (t) => {
+  const source = contract('3.1.2', {
+    Value: {
+      anyOf: [
+        { allOf: [{ type: ['integer', 'null'] }, { type: 'integer' }] },
+        { type: 'null' },
+      ],
+    },
+  });
+  const warnings: string[] = [];
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(source, {
+      clients: [],
+      standalone: {
+        value: { schema: ref('Value').$ref, usage: 'response' },
+      },
+      onWarning: ({ path }) => warnings.push(path),
+    }),
+  );
+  assert.deepEqual(warnings, [
+    'components.schemas.Value.anyOf[0].allOf[0].type',
+  ]);
+  const { schema } = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.value.ts',
+  );
+  assert.equal(schema.safeParse(null).success, true);
+  assert.equal(schema.safeParse(1).success, true);
+  assert.equal(schema.safeParse('bad').success, false);
 });

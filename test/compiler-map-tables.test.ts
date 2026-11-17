@@ -112,7 +112,7 @@ void test('normalized fixed slots survive spreading and empty constraint merges 
     pattern: '^never$',
     format: 'binary',
     literals: ['inherited'],
-    sourceTypeArray: true,
+    typeArrayLocation: 'inherited.type',
     discriminator: { propertyName: 'inherited', mapping: new Map() },
     targets: { consumer: 'native' },
     queries: { consumer: ['read'] },
@@ -147,7 +147,7 @@ void test('normalized fixed slots survive spreading and empty constraint merges 
     for (const [node, absent] of [
       [string, ['minLength', 'maxLength', 'pattern', 'format', 'literals']],
       [array, ['minItems', 'maxItems']],
-      [union, ['sourceTypeArray', 'discriminator']],
+      [union, ['typeArrayLocation', 'discriminator']],
     ] as const)
       for (const value of [node, { ...node }]) {
         assert.equal(Object.hasOwn(value, 'readOnly'), true);

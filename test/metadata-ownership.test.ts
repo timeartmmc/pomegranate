@@ -208,7 +208,7 @@ const inheritedSchemaMetadata = [
   ['format', 'binary'],
   ['literals', ['inherited literal']],
   ['forbidden', ['customerId']],
-  ['sourceTypeArray', true],
+  ['typeArrayLocation', 'inherited.type'],
   ['discriminator', { propertyName: 'inheritedTag', mapping: {} }],
 ] as const;
 
