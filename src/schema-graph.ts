@@ -1,6 +1,7 @@
 import { assertNever, atSource, fail } from './diagnostics.js';
 import type { Schema, SchemaTable } from './model.js';
 import { scalarIntersectionBase } from './intersections.js';
+import { schemaLocation } from './schema-pointers.js';
 
 // Inline structural children; named references are separate graph edges.
 export function schemaChildren(schema: Schema): readonly Schema[] {
@@ -187,7 +188,7 @@ function dependencyOrder(
   // than an inline schema. Preserve depth-first order without the JS call stack.
   for (const name of [...schemas.keys()].sort()) {
     atSource(source(name), () => {
-      enter(name, `components.schemas.${name}`);
+      enter(name, schemaLocation(name));
       while (stack.length > 0) {
         const frame = stack[stack.length - 1]!;
         const next = frame.targets.next();
@@ -317,5 +318,5 @@ export function resolveSchema(schema: Schema, schemas: SchemaTable): Schema {
 // Constraint siblings never change a reference's declaration identity. Types
 // and container refinements share the terminal declaration of a whole chain.
 export function terminalName(name: string, schemas: SchemaTable): string {
-  return terminal(name, schemas, `components.schemas.${name}`).name;
+  return terminal(name, schemas, schemaLocation(name)).name;
 }

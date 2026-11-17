@@ -408,12 +408,22 @@ void test('generated types and public schema registries contain only declared co
     {
       Holder: {
         type: 'object',
-        properties: { value: { type: 'string', minLength: 2 } },
+        properties: {
+          value: { type: 'string', minLength: 2 },
+          address: component('Address'),
+        },
       },
+      Address: { type: 'object', properties: { city: { type: 'string' } } },
       Named: ref(pointer),
       _rIy9jb21wb25lbnRz: { type: 'integer' },
     },
     {
+      '/address': {
+        get: {
+          operationId: 'address',
+          ...reply(ref('#/components/schemas/Holder/properties/address')),
+        },
+      },
       '/value': {
         post: {
           operationId: 'save',
@@ -431,7 +441,7 @@ void test('generated types and public schema registries contain only declared co
     t,
     await compile(source, {
       clients: ['consumer'],
-      surfaces: { consumer: ['save', 'number'] },
+      surfaces: { consumer: ['save', 'number', 'address'] },
       standalone: { value: { schema: pointer, usage: 'response' } },
     }),
   );
@@ -447,7 +457,7 @@ const ordinary: ResponseTypes['_rIy9jb21wb25lbnRz'] = 2;
 void ordinary;
 operations.save.build({ body: response });
 // @ts-expect-error fragment identifiers are private dependency identities.
-type Private = ResponseTypes['${pointer}'];
+export type Private = ResponseTypes['${pointer}'];
 // @ts-expect-error the referenced fragment is a string.
 const invalid: Output = 2;
 void invalid;
@@ -462,6 +472,10 @@ void invalid;
         moduleResolution: 'NodeNext',
         strict: true,
         exactOptionalPropertyTypes: true,
+        // Consumers commonly enable these; a fragment alias must not leave an
+        // unused generated declaration behind.
+        noUnusedLocals: true,
+        noUnusedParameters: true,
         noEmit: true,
         allowImportingTsExtensions: true,
         types: [],
@@ -578,7 +592,7 @@ void test('same-value cycles through fragment aliases remain explicit contract e
   );
 });
 
-void test('programmatic shared schema identities normalize once regardless of which inline occurrence is visited first', async (t) => {
+void test('programmatic shared schema identities validate alike regardless of which inline occurrence is visited first', async (t) => {
   for (const order of [
     ['target', 'other'],
     ['other', 'target'],
@@ -623,8 +637,10 @@ void test('programmatic shared schema identities normalize once regardless of wh
           onWarning: (warning) => warnings.push(warning),
         }),
       );
+      // One grouped warning names both source positions of the shared schema;
+      // pointing at them adds no further occurrence.
       assert.equal(warnings.length, 1);
-      assert.doesNotMatch(present(warnings[0]).message, /occurrences/);
+      assert.match(present(warnings[0]).message, /\(2 occurrences/);
       for (const name of ['target', 'other']) {
         const { schema } = await importGenerated<StandaloneModule>(
           root,
@@ -688,4 +704,207 @@ void test('audit follows a targeted descendant through every shared parent alias
       excludeOperations: report.excludeOperations,
     });
   }
+});
+
+void test('a pointer into a component never changes how that component compiles', async () => {
+  const cases: readonly {
+    schemas: Record<string, Schema>;
+    container: string;
+    pointer: string;
+    usable: boolean;
+  }[] = [
+    {
+      // The member relies on its sibling's type: alone it is not a schema.
+      schemas: {
+        Box: {
+          allOf: [
+            { type: 'object', properties: { a: { type: 'string' } } },
+            { required: ['a'] },
+          ],
+        },
+      },
+      container: 'Box',
+      pointer: '#/components/schemas/Box/allOf/1',
+      usable: false,
+    },
+    {
+      // Implicit mapping derives tags from the branches' component names.
+      schemas: {
+        Cat: {
+          type: 'object',
+          properties: { kind: { type: 'string', enum: ['Cat'] } },
+          required: ['kind'],
+        },
+        Dog: {
+          type: 'object',
+          properties: { kind: { type: 'string', enum: ['Dog'] } },
+          required: ['kind'],
+        },
+        Pet: {
+          oneOf: [component('Cat'), component('Dog')],
+          discriminator: { propertyName: 'kind' },
+        },
+      },
+      container: 'Pet',
+      pointer: '#/components/schemas/Pet/oneOf/0',
+      usable: true,
+    },
+    {
+      // Inline {} is arbitrary JSON beside fixed fields; a reference is not.
+      schemas: {
+        Bag: {
+          type: 'object',
+          properties: { a: { type: 'string' } },
+          additionalProperties: {},
+        },
+      },
+      container: 'Bag',
+      pointer: '#/components/schemas/Bag/additionalProperties',
+      usable: true,
+    },
+  ];
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const { schemas, container, pointer, usable } of cases) {
+      const main = {
+        '/main': {
+          get: { operationId: 'main', ...reply(component(container)) },
+        },
+      };
+      const user = {
+        '/user': { get: { operationId: 'user', ...reply(ref(pointer)) } },
+      };
+      const consumer = {
+        clients: ['consumer'],
+        surfaces: { consumer: ['main'] },
+      };
+      const alone = await compile(document(schemas, main, openapi), consumer);
+      const source = document(schemas, { ...main, ...user }, openapi);
+      assert.deepEqual(
+        await compile(source, { ...consumer, excludeOperations: ['user'] }),
+        alone,
+        `${openapi} ${pointer}`,
+      );
+      const report = await audit(source, {
+        clients: ['consumer'],
+        surfaces: { consumer: ['main', 'user'] },
+      });
+      assert.equal(report.complete, true);
+      assert.deepEqual(
+        report.supportedOperations,
+        usable ? ['main', 'user'] : ['main'],
+      );
+      assert.deepEqual(report.failedOperations, usable ? [] : ['user']);
+    }
+});
+
+void test('one audit attempt reports every unusable reference beside a fragment', async () => {
+  const pointer = '#/components/schemas/Holder/properties/value';
+  const paths: Record<string, unknown> = {
+    '/fragment': { get: { operationId: 'fragment', ...reply(ref(pointer)) } },
+    '/healthy': {
+      get: { operationId: 'healthy', ...reply({ type: 'string' }) },
+    },
+  };
+  const external = Array.from(
+    { length: 1600 },
+    (_, index) => `external${index}`,
+  );
+  for (const id of external)
+    paths[`/${id}`] = {
+      get: { operationId: id, ...reply(ref(`common.yaml#/${id}`)) },
+    };
+  const report = await audit(
+    document(
+      {
+        Holder: {
+          type: 'object',
+          properties: { value: { type: 'string' } },
+        },
+      },
+      paths,
+    ),
+    {
+      clients: ['consumer'],
+      surfaces: { consumer: ['fragment', 'healthy', ...external] },
+    },
+  );
+  assert.equal(report.complete, true);
+  assert.deepEqual(report.supportedOperations, ['fragment', 'healthy']);
+  assert.deepEqual(report.failedOperations, [...external].sort());
+});
+
+void test('diagnostics inside a referenced fragment name its source position', async () => {
+  const source = document(
+    {
+      Upload: {
+        type: 'object',
+        properties: { file: { type: 'string', format: 'binary' } },
+      },
+    },
+    {
+      '/file': {
+        get: {
+          operationId: 'file',
+          ...reply(ref('#/components/schemas/Upload/properties/file')),
+        },
+      },
+    },
+  );
+  await assert.rejects(
+    compile(source, {
+      clients: ['consumer'],
+      surfaces: { consumer: ['file'] },
+    }),
+    /-> components\.schemas\.Upload\.properties\.file: binary values/,
+  );
+});
+
+void test('x-prefixed schema accessors retain fragment references in compilation and audit', async (t) => {
+  for (const openapi of ['3.0.4', '3.1.2'])
+    for (const accessor of ['property', 'component']) {
+      const properties = {
+        'x-field': ref('#/components/schemas/Target/properties/value'),
+      };
+      const holder = { type: 'object', properties };
+      const schemas = {
+        'x-Holder': holder,
+        Target: {
+          type: 'object',
+          properties: { value: { type: 'string', minLength: 2 } },
+        },
+      };
+      const source = document(schemas, {}, openapi);
+      const options = {
+        clients: [],
+        standalone: {
+          value: {
+            schema: '#/components/schemas/x-Holder',
+            usage: 'response' as const,
+          },
+        },
+      };
+      const expected = await compile(source, options);
+      const container: Record<string, unknown> =
+        accessor === 'property' ? properties : schemas;
+      const name = accessor === 'property' ? 'x-field' : 'x-Holder';
+      const value = container[name];
+      Object.defineProperty(container, name, {
+        get: () => value,
+        enumerable: false,
+      });
+      const before = Object.getOwnPropertyDescriptors(container);
+      const files = await compile(source, options);
+      assert.deepEqual(files, expected);
+      const report = await audit(source, options);
+      assert.equal(report.clean, true);
+      assert.equal(report.complete, true);
+      assert.deepEqual(Object.getOwnPropertyDescriptors(container), before);
+      const root = await generatedTestWorkspace(t, files);
+      const { schema } = await importGenerated<StandaloneModule>(
+        root,
+        'standalone.value.ts',
+      );
+      assert.deepEqual(schema.parse({ 'x-field': 'ab' }), { 'x-field': 'ab' });
+      assert.equal(schema.safeParse({ 'x-field': 'a' }).success, false);
+    }
 });

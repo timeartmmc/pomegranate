@@ -1,4 +1,6 @@
 import {
+  ContractError,
+  ContractWorkError,
   createOwnRecord,
   atSource,
   fail,
@@ -267,12 +269,21 @@ export function mapOpenApi(
     value: Record<string, unknown>,
     context: string,
     location: string,
-    original: object,
   ) => Record<string, unknown>,
   readAccessors = true,
   root?: OpenApiRoot,
+  // Collect contract errors per declaration instead of stopping at the first.
+  // The returned copy is then incomplete and must be discarded by the caller.
+  onError?: (error: ContractError) => void,
 ): unknown {
-  return walkDocument(document, transform, undefined, readAccessors, root);
+  return walkDocument(
+    document,
+    transform,
+    undefined,
+    readAccessors,
+    root,
+    onError,
+  );
 }
 
 function walkDocument(
@@ -281,11 +292,11 @@ function walkDocument(
     value: Record<string, unknown>,
     context: string,
     location: string,
-    original: object,
   ) => Record<string, unknown>,
   names?: ReadonlySet<string>,
   readAccessors = true,
   root: OpenApiRoot = { context: 'document', path: [] },
+  onError?: (error: ContractError) => void,
 ): unknown {
   const seen = new WeakMap<object, Map<Context, object>>();
   const pending: {
@@ -353,8 +364,7 @@ function walkDocument(
   // Iteration and context-specific identity caching bound shared/cyclic input
   // graphs without a new recursion limit. The owning parsers still diagnose
   // malformed containers and unsupported schema structure.
-  while (pending.length > 0) {
-    const frame = pending.pop()!;
+  const expand = (frame: (typeof pending)[number]): void =>
     atSource(frame.owner, () => {
       const source =
         transform && frame.shape.fields
@@ -362,7 +372,6 @@ function walkDocument(
               ownRecord(frame.source as Record<string, unknown>),
               frame.context,
               frame.location,
-              frame.source,
             )
           : frame.source;
       // A list keeps its array descriptors. Every other node is a record, whose
@@ -466,6 +475,21 @@ function walkDocument(
       }
       Object.defineProperties(frame.target, descriptors);
     });
+  while (pending.length > 0) {
+    const frame = pending.pop()!;
+    if (!onError) expand(frame);
+    else
+      try {
+        expand(frame);
+      } catch (error) {
+        // Work limits end the walk: they do not belong to one declaration.
+        if (
+          !(error instanceof ContractError) ||
+          error instanceof ContractWorkError
+        )
+          throw error;
+        onError(error);
+      }
   }
   return result;
 }

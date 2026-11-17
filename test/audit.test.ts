@@ -443,49 +443,6 @@ void test('failed recursive groups preserve a healthy audit subset without repea
   }
 });
 
-void test('alias-chain locations preserve conservative attribution of dotted component collisions', () => {
-  const input = {
-    openapi: '3.1.2',
-    info: { title: 'Synthetic alias attribution boundaries', version: '1' },
-    components: {
-      schemas: {
-        Alias: ref('Target'),
-        'Alias.Other': ref('Good'),
-        AliasTail: ref('Good'),
-        Target: { type: 'string' },
-        Good: { type: 'string' },
-      },
-    },
-    paths: {
-      '/bad': { get: { operationId: 'bad', ...reply('Alias') } },
-      '/dotted': { get: { operationId: 'dotted', ...reply('Alias.Other') } },
-      '/tail': { get: { operationId: 'tail', ...reply('AliasTail') } },
-    },
-  };
-  const index = operationFilter(input, {}, () => undefined);
-  assert.deepEqual(
-    index.affected('components.schemas.Alias -> components.schemas.Target'),
-    ['bad'],
-  );
-  assert.deepEqual(
-    index.affected('components.schemas.AliasTail -> components.schemas.Good'),
-    ['tail'],
-  );
-  assert.deepEqual(
-    index.affected(
-      'components.schemas.AliasTailUnknown -> components.schemas.Good',
-    ),
-    [],
-  );
-  assert.throws(
-    () =>
-      index.affected(
-        'components.schemas.Alias.Other -> components.schemas.Good',
-      ),
-    /declared component names make this diagnostic ambiguous/,
-  );
-});
-
 void test('exact source ownership distinguishes dotted components and path names', async () => {
   const controls = [
     (ambiguous: boolean) => {
@@ -1018,13 +975,11 @@ void test('an interrupted ownership build cannot leave a partially published ind
     if ((remaining -= amount) < 0)
       throw new ContractWorkError('audit', 'synthetic work exhaustion');
   });
+  const source = ['components', 'schemas', 'Bad'];
   remaining = 0;
-  assert.throws(
-    () => index.affected('components.schemas.Bad.minLength'),
-    ContractWorkError,
-  );
+  assert.throws(() => index.affected(source), ContractWorkError);
   remaining = Infinity;
-  assert.deepEqual(index.affected('components.schemas.Bad.minLength'), ['bad']);
+  assert.deepEqual(index.affected(source), ['bad']);
 });
 
 void test('shared compiler work exhaustion leaves operations unassessed without proposing exclusions', async () => {

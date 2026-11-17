@@ -66,6 +66,9 @@ export type WarnSchema = (
 
 // Reasons contain only supported keyword/type names, never source paths. One
 // exporter template can repeat thousands of times without flooding diagnostics.
+// Each display location counts once across fragment visits and audit retries.
+// Distinct declarations with identical dotted display paths share an occurrence;
+// warning counts deliberately do not require structured source-identity plumbing.
 export function schemaWarnings() {
   const groups = new Map<
     string,
@@ -76,6 +79,7 @@ export function schemaWarnings() {
       count: number;
     }
   >();
+  const located = new Set<string>();
   return {
     warn: (
       path: string,
@@ -83,6 +87,9 @@ export function schemaWarnings() {
       code: CompileWarning['code'] = 'ignored-schema-keyword',
     ): void => {
       const key = `${code}\0${message}`;
+      const occurrence = `${key}\0${path}`;
+      if (located.has(occurrence)) return;
+      located.add(occurrence);
       const previous = groups.get(key);
       if (previous) previous.count++;
       else groups.set(key, { path, message, code, count: 1 });

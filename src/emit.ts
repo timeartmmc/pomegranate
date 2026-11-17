@@ -33,7 +33,7 @@ import { successKey, successResponses } from './response-status.js';
 import { parseSymbol, schemaType, typeSymbol } from './schema-types.js';
 import { sourceBudget } from './source-budget.js';
 import { orderSchemas } from './schema-graph.js';
-import { isSchemaFragment } from './schema-pointers.js';
+import { isSchemaFragment, schemaLocation } from './schema-pointers.js';
 
 // `.d.ts` is a declaration file, and the formatter also treats `.d.` path
 // segments as declarations. `_d` cannot collide with a legal selection name,
@@ -116,9 +116,11 @@ function renderComponents(
         const schema = descriptor.schemas[direction].get(name)!;
         const parse = parseSymbol(name, direction);
         const type = typeSymbol(name, direction);
-        const location = `components.schemas.${name}`;
+        const location = schemaLocation(name);
+        // A plain alias reuses its target's parser. Its type is needed only
+        // by an exported validator, and fragment aliases are never exported.
         if (
-          exportValidators ||
+          (exportValidators && !isSchemaFragment(name)) ||
           schema.kind !== 'ref' ||
           hasConstraints(schema.constraints)
         )
@@ -1136,7 +1138,7 @@ function standaloneParserNames(
     renderer.define(
       descriptor.schemas[selection.direction].get(name)!,
       selection.direction,
-      `components.schemas.${name}`,
+      schemaLocation(name),
       parse,
       parse,
       componentType.component(name, selection.direction),

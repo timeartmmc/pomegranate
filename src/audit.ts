@@ -63,18 +63,9 @@ export function auditContract(
     .sort();
   const failed = new Set<string>();
   const diagnostics: AuditDiagnostic[] = [];
+  // One collector spans every retry: it counts each source location once.
   const warnings = schemaWarnings();
-  const warned = new Set<string>();
-  const warn = (
-    path: string,
-    message: string,
-    code?: CompileWarning['code'],
-  ): void => {
-    const key = `${code}\0${path}\0${message}`;
-    if (warned.has(key)) return;
-    warned.add(key);
-    warnings.warn(path, message, code);
-  };
+  const { warn } = warnings;
   let supported: readonly string[] = [];
   let unassessed: readonly string[] = [];
   let complete = false;
@@ -87,6 +78,7 @@ export function auditContract(
       const filtered = index.select(
         excluded,
         selection.pruneUnusedComponents === true,
+        true,
       );
       const descriptor = buildDescriptor(filtered.document, {
         collectErrors: true,
@@ -125,7 +117,7 @@ export function auditContract(
             // excluded. Report it globally; only same-attempt duplicates skip
             // below when their operations have just joined the failed set.
             affected = index
-              .affected(diagnostic.location, errorSource(diagnostic))
+              .affected(errorSource(diagnostic))
               .filter((id) => !excluded.has(id));
         } catch (attributionError) {
           if (!(attributionError instanceof ContractError))

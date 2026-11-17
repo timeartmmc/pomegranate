@@ -1,6 +1,8 @@
 import { componentSections } from './component-references.js';
 import {
   atSource,
+  ContractError,
+  ContractErrors,
   createOwnRecord,
   fail,
   ownDescriptors,
@@ -18,6 +20,17 @@ import {
 import type { SchemaSource, SchemaSources } from './schema-pointers.js';
 import { openApiMethods, operationIdentifier } from './operations.js';
 import { standaloneSelections } from './selection.js';
+
+// Declarations are keyed like resolved references. A name that cannot be
+// encoded can never be referenced; it stays addressable for its own diagnostic.
+function declarationKey(section: string, name: string): string {
+  try {
+    return schemaPointer(['components', section, name]);
+  } catch (error) {
+    if (!(error instanceof ContractError)) throw error;
+    return `#/components/${section}/${name}`;
+  }
+}
 
 function plain(value: unknown): Record<string, unknown> | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value))
@@ -61,12 +74,19 @@ export function excludeOperations(
   if (typeof pruneUnused !== 'boolean')
     fail('pruneUnusedComponents', 'expected a boolean');
   let remaining = 1_000_000;
+  // Without exclusions or pruning only local schema pointers reach this budget.
+  const excluding = Array.isArray(input) && input.length > 0;
   const charge = (amount: number): void => {
-    if ((remaining -= amount) < 0)
-      fail(
-        pruneUnused ? 'pruneUnusedComponents' : 'excludeOperations',
-        `${pruneUnused ? 'component pruning' : 'exclusion processing'} exceeds the supported limit of 1000000 work units; reduce or split the input contract`,
-      );
+    if ((remaining -= amount) >= 0) return;
+    const [location, activity] = pruneUnused
+      ? ['pruneUnusedComponents', 'component pruning']
+      : excluding
+        ? ['excludeOperations', 'exclusion processing']
+        : ['OpenAPI', 'local schema reference resolution'];
+    fail(
+      location,
+      `${activity} exceeds the supported limit of 1000000 work units; reduce or split the input contract`,
+    );
   };
   const excluded = parseOperationExclusions(input, charge);
   const pointers = createSchemaPointerRegistry(
@@ -150,7 +170,7 @@ export function operationFilter(
     const values = record(components[section], `components.${section}`);
     charge(Object.keys(values).length);
     for (const name of Object.keys(values))
-      declarations.set(schemaPointer(['components', section, name]), {
+      declarations.set(declarationKey(section, name), {
         section,
         name,
         value: values[name],
@@ -166,11 +186,7 @@ export function operationFilter(
     });
   const dialect30 =
     typeof document.openapi === 'string' && document.openapi.startsWith('3.0.');
-  const dependencies = (
-    source: unknown,
-    root?: OpenApiRoot,
-    ownTarget?: string,
-  ): Set<string> => {
+  const dependencies = (source: unknown, root?: OpenApiRoot): Set<string> => {
     const references = new Set<string>();
     const add = (value: unknown): void => {
       if (typeof value === 'string' && declarations.has(value))
@@ -178,15 +194,8 @@ export function operationFilter(
     };
     mapOpenApi(
       source,
-      (value, context, location, original) => {
+      (value, context, location) => {
         charge(1);
-        if (context === 'schema') {
-          const target = pointers.targetAt(original);
-          if (target !== undefined && target !== ownTarget) {
-            add(target);
-            return { $ref: target };
-          }
-        }
         if (referenceContexts.has(context) && Object.hasOwn(value, '$ref'))
           add(
             context === 'schema'
@@ -225,11 +234,11 @@ export function operationFilter(
       reference,
       source === undefined
         ? dependencies({ components: { [section]: { [name]: value } } })
-        : dependencies(
-            value,
-            { context: 'schema', path: source.path, openApi30: dialect30 },
-            reference,
-          ),
+        : dependencies(value, {
+            context: 'schema',
+            path: source.path,
+            openApi30: dialect30,
+          }),
     );
   const closure = (roots: Iterable<string>): Set<string> => {
     const visited = new Set<string>();
@@ -260,7 +269,13 @@ export function operationFilter(
           `unknown operation identifier ${JSON.stringify(id)}`,
         );
   }
-  function select(excluded: ReadonlySet<string>, pruneUnused: boolean) {
+  // An audit collects every unusable reference of one attempt, each under its
+  // own declaration; a compile stops at the first.
+  function select(
+    excluded: ReadonlySet<string>,
+    pruneUnused: boolean,
+    collectErrors = false,
+  ) {
     validateExclusions(excluded);
     for (const root of standaloneSelection)
       atSource(['standalone', root.name], () =>
@@ -336,9 +351,17 @@ export function operationFilter(
         components: copy(components, [], replacements),
       });
     }
+    const errors: ContractError[] | undefined = collectErrors ? [] : undefined;
+    const rewritten = record(
+      pointers.rewrite(filtered, undefined, errors),
+      'OpenAPI',
+    );
+    const schemaSources = pointers.selectSources(protectedComponents, errors);
+    if (errors?.length === 1) throw errors[0]!;
+    if (errors && errors.length > 1) throw new ContractErrors(errors);
     return {
-      document: record(pointers.rewrite(filtered), 'OpenAPI'),
-      schemaSources: pointers.selectSources(protectedComponents),
+      document: rewritten,
+      schemaSources,
       excluded: [...excluded].sort(),
       pruned: prunedReferences.sort(),
     };
@@ -353,82 +376,34 @@ export function operationFilter(
         protectedRoots: Set<string>;
       }
     | undefined;
-  function affected(
-    location: string,
-    source?: readonly string[],
-  ): readonly string[] {
-    const within = (prefix: string, value: string) =>
-      value === prefix ||
-      value.startsWith(`${prefix}.`) ||
-      value.startsWith(`${prefix}[`) ||
-      // Validation follows aliases in the same value and records that hop in
-      // the location. Attribute it to its source, just like an inline child.
-      value.startsWith(`${prefix} -> `);
-    const pathOperations = (path: string, method?: string): readonly string[] =>
-      [...operations]
+  // Attribute a diagnostic by its exact source tokens: a dotted component or
+  // path name is one token, even when its display location looks nested. One
+  // raised outside every declaration has no owner and remains a global blocker.
+  function affected(source: readonly string[] | undefined): readonly string[] {
+    if (source === undefined) return [];
+    let reference = pointers.owner(source);
+    if (
+      reference === undefined &&
+      source[0] === 'paths' &&
+      source[1] !== undefined
+    ) {
+      const path = source[1];
+      const method = openApiMethods.find((name) => name === source[2]);
+      return [...operations]
         .filter(
           ([, operation]) =>
             operation.path === path &&
             (method === undefined || operation.method === method),
         )
         .map(([id]) => id);
-    let reference: string | undefined;
-    if (source !== undefined) {
-      reference = pointers.owner(source);
-      // Canonical error boundaries supply raw tokens. A dotted component or
-      // path name is one token, even when its display location looks nested.
-      if (
-        reference === undefined &&
-        source[0] === 'paths' &&
-        source[1] !== undefined
-      ) {
-        const method = source[2];
-        return pathOperations(
-          source[1],
-          openApiMethods.find((name) => name === method),
-        );
-      }
-      if (reference === undefined) {
-        if (source[0] !== 'components' || source.length < 3) return [];
-        const candidate = schemaPointer(source.slice(0, 3));
-        if (declarations.has(candidate)) reference = candidate;
-      }
-    } else if (location.startsWith('paths.')) {
-      const rest = location.slice('paths.'.length);
-      const candidates = Object.keys(paths).filter((name) =>
-        within(name, rest),
-      );
-      if (candidates.length > 1)
-        fail(
-          'audit',
-          `cannot safely attribute ${JSON.stringify(location)}: declared path names make this diagnostic ambiguous; no exclusions were proposed`,
-        );
-      const path = candidates[0];
-      if (path === undefined) return [];
-      const tail = rest.slice(path.length + 1);
-      const method = openApiMethods.find((name) => within(name, tail));
-      if (
-        method === undefined &&
-        tail &&
-        !['parameters', 'servers', 'summary', 'description'].some((name) =>
-          within(name, tail),
-        )
-      )
-        return [];
-      return pathOperations(path, method);
-    } else {
-      const candidates = [...declarations].filter(([, { section, name }]) =>
-        within(`components.${section}.${name}`, location),
-      );
-      // Location strings cannot distinguish a dotted declaration name from a
-      // child path in another declaration. Never recommend excluding a healthy
-      // operation by guessing the longest textual prefix.
-      if (candidates.length > 1)
-        fail(
-          'audit',
-          `cannot safely attribute ${JSON.stringify(location)}: declared component names make this diagnostic ambiguous; no exclusions were proposed`,
-        );
-      reference = candidates[0]?.[0];
+    }
+    if (
+      reference === undefined &&
+      source[0] === 'components' &&
+      source.length >= 3
+    ) {
+      const candidate = declarationKey(source[1]!, source[2]!);
+      if (declarations.has(candidate)) reference = candidate;
     }
     if (reference === undefined) return [];
     if (ownership === undefined) {

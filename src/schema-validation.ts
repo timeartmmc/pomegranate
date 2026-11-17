@@ -23,6 +23,7 @@ import {
   jsonTypes as allJsonTypes,
 } from './schema-domain.js';
 import { scalarIntersectionBase } from './intersections.js';
+import { schemaLocation } from './schema-pointers.js';
 import {
   schemaGraph,
   recursiveSchemas,
@@ -422,7 +423,7 @@ function validateUsage(
                 `${targetLocation}.${name}`,
                 `constraint is unsupported on referenced ${resolved.kind}`,
               );
-          targetLocation += ` -> components.schemas.${target.name}`;
+          targetLocation += ` -> ${schemaLocation(target.name)}`;
           target = schemas.get(target.name)!;
         }
         validateReferenceConstraints(

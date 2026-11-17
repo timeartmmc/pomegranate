@@ -8,6 +8,7 @@ import type {
   Standalone,
 } from './model.js';
 import { schemaType, typeSymbol } from './schema-types.js';
+import { schemaLocation } from './schema-pointers.js';
 import {
   recursiveSchemas,
   schemaReferences,
@@ -292,7 +293,7 @@ export function renderTypes(
           recursive: cyclic,
           symbol: typeSymbol(name, variant.direction),
           file: undefined,
-          location: `components.schemas.${name}`,
+          location: schemaLocation(name),
         };
         canonical.push(entry);
         shapes.set(signature, entry);
@@ -378,7 +379,7 @@ export function renderTypes(
       descriptor.schemas[variant.direction].get(variant.name)!,
       variant.direction,
       variant.target,
-      `components.schemas.${variant.name}`,
+      schemaLocation(variant.name),
     );
   for (const client of clients)
     for (const direction of ['request', 'response'] as const)
