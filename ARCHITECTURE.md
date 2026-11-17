@@ -36,10 +36,13 @@ validation. Record pruned component references in the output manifest.
 Record exclusions in the output manifest; unknown or ambiguous IDs fail.
 
 Resolve schema-valued local JSON Pointers against the original supported object
-grammar. Give referenced fragments private identities in the existing schema
-graph, with their original source tokens. Retain needed targets independently
-of their containers through exclusions and pruning, normalize each source once,
-and keep private identities out of public component maps. Do not fetch external
+grammar. Give each referenced fragment an additional private declaration in
+the existing schema graph, with its original source tokens. Never rewrite the
+container: inline and referenced forms differ in inference, discriminator
+identity and map rules, so a reference must not change how its container
+compiles. Retain needed targets independently of their containers through
+exclusions and pruning, and keep private identities out of public component
+maps. Do not fetch external
 references or infer schemas from arbitrary annotation objects.
 
 Validate the remaining document before selecting output, including retained unused
@@ -49,10 +52,12 @@ unsupported declarations with a useful error; never silently drop an operation
 or response.
 
 Warn about supported schema keywords that have no effect on an explicitly
-declared type, and ineffective OpenAPI 3.0 nullable flags. Validate their syntax
-before discarding them. Preserve every applicable assertion; an inferred
+declared type, ineffective OpenAPI 3.0 nullable flags, and nullable type
+declarations whose null a complete source composition removes. Validate their
+syntax before discarding them. Preserve every applicable assertion; an inferred
 composition type cannot prove a keyword inactive. Group repeated warning reasons
-at the compiler boundary, keeping generated validation free of diagnostics.
+at the compiler boundary, counting each distinct display location once, and keep
+generated validation free of diagnostics.
 
 Operation audits reuse canonical descriptor and selection validation. Index
 source dependencies once, group a blocker with all affected retained operations,

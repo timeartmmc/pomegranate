@@ -9,7 +9,8 @@ response stripping. Closed branch objects now enforce their source closure
 within `oneOf`, including nested schemas. An open `Basic`/`Full` overlap rejects
 a full value in both directions; closing both branches permits the unique full
 match. Ordinary response objects outside union source matching retain their
-existing stripping behavior.
+existing stripping behavior. Inside any `oneOf`, request property counts also
+use the received object, so an explicit `undefined` field now counts there.
 
 `PreparedRequest` and `Executor` add the `form` body kind. Transports that
 exhaustively inspect body kinds must handle it or reject it explicitly, even
@@ -21,6 +22,8 @@ Schema references and standalone roots accept schema-valued local JSON Pointers,
 including escaped property names and fragments inside reusable HTTP components.
 Referenced fragments survive exclusions and pruning independently of their
 containers, support productive recursion, and keep their source diagnostics.
+A fragment is an additional declaration; its container compiles exactly as it
+would without the reference.
 
 Audits distinguish dotted and overlapping source names using private structured
 ownership, preserving readable diagnostic locations and the public error shape.
@@ -29,11 +32,15 @@ Untagged `oneOf` supports overlapping branches and validates exactly one match,
 including literals, enums, objects and containers. Sibling types and constraints
 use canonical composition. Proven overlap produces compile-time warnings with
 an example and direction; ambiguous payloads still fail exact runtime matching.
+The compile-time work bound counts the second parse of each nested match.
 
 `allOf` composes compatible array items and map values with their container
 bounds, uniqueness and required keys. Nullable intersections remove provably
-disjoint type alternatives while preserving union cardinality. Mixed fixed
-objects/typed maps and contradictory child compositions retain explicit limits.
+disjoint type alternatives while preserving union cardinality; a nullable type
+written in the composition warns only when the complete result rejects null. A member that
+only restates types the other members imply adds nothing, whatever its position.
+Mixed fixed objects/typed maps and contradictory child compositions retain
+explicit limits.
 
 `pom audit --config pom.json` and `audit(document, options)` report failing
 operation IDs, shared blockers, and a suggested exclusion list without writing
@@ -41,7 +48,8 @@ files. Global blockers leave unassessed operations explicit. Audits use existing
 contract validation and configuration; generation and drift checks stay separate.
 
 Inactive type-specific schema keywords and OpenAPI 3.0 `nullable: true` without
-a same-object type compile with grouped warnings. Their syntax is still checked
+a same-object type compile with grouped warnings; each distinct displayed
+location counts once. Their syntax is still checked
 and applicable validation remains unchanged. `compile` accepts `onWarning`;
 project results and CLI checks also report these warnings.
 
@@ -90,10 +98,6 @@ manifests record exclusions, and drift checks remain read-only.
 `oneOf` and `anyOf` support shared object fields and required lists beside the
 alternatives, using the existing `allOf` rules. Branch constraints, directional
 fields, property counts, closure, and union matching remain enforced.
-
-`oneOf` and `anyOf` accept a redundant `type: "object"` when every alternative
-already requires an object. References and supported compositions are checked
-before removing the repeated assertion; other sibling types remain unsupported.
 
 Fixed object schemas accept `additionalProperties: true` or `{}`, including
 through `allOf`. Declared fields remain validated; responses strip unknown

@@ -135,8 +135,9 @@ unsupported operations.
 
 Canonical diagnostics retain source tokens internally, so dotted or overlapping
 component names and paths remain distinct even when their displayed locations
-look alike. If a diagnostic lacks that source identity and its textual location
-is ambiguous, the audit leaves remaining operations unassessed without guessing.
+look alike. A diagnostic raised outside every declaration, such as a selection
+or configuration error, is a global blocker: the audit leaves remaining
+operations unassessed without guessing.
 
 The audit checks contract interpretation and selected compiler features, but
 does not render code, enforce generated-source budgets, or inspect output
@@ -784,9 +785,10 @@ Supported schema composition:
   versions of both branches reject it as ambiguous in both directions. Source
   assertions stay active inside the selected branch's nested schemas, including
   tagged and provably disjoint unions. Excluded directional fields do not
-  distinguish branches. Matching uses the same compile-time alternative bound
-  and recursive runtime budgets as `anyOf`; exhausting a budget cannot establish
-  uniqueness. A discriminator dispatches directly when distinct required tags
+  distinguish branches. Matching uses the compile-time alternative bound and
+  recursive runtime budgets of `anyOf`. When alternatives overlap, each one is
+  tested and the unique match is then parsed again, at every nesting level; the
+  bound counts both passes. Exhausting a budget cannot establish uniqueness. A discriminator dispatches directly when distinct required tags
   are available. TypeScript represents validated results as an ordinary union;
   exact cardinality and numeric/string constraints remain runtime checks.
   Compilation emits `oneof-overlap` warnings when a bounded search proves a
@@ -1094,8 +1096,10 @@ objects and maps. Fixed request objects count validated fields, excluding
 copies them into the snapshot. Fixed response objects count original own
 enumerable string keys, including extra fields and fields later omitted by
 directional parsing, so a parsed response can have fewer keys than the declared
-minimum. Maps check bounds against original own enumerable string keys before
-parsing values; successful parsing retains every map entry. Reference
+minimum. Within `oneOf`, fixed objects also count original own enumerable keys
+in requests, so an explicit `undefined` field counts there. Maps check bounds
+against original own enumerable string keys before parsing values; successful
+parsing retains every map entry. Reference
 constraints intersect with the target's bounds. For multipart inputs, see the
 [file array restriction](#multipart-requests).
 
@@ -1129,7 +1133,9 @@ POM: components.schemas.WidgetId.format: expected a string
 
 `allOf` requires a nonempty array of supported schemas. A single branch may wrap
 any existing supported shape; a wrapper around one local schema reference retains
-that reference's identity. Fixed-object compositions may combine inline schemas,
+that reference's identity. A member that only restates JSON types every other
+member already implies, such as `type: object` beside an object reference,
+adds nothing, so the remaining reference also keeps its identity. Fixed-object compositions may combine inline schemas,
 local references, and nested compositions. Sibling object `properties` and
 `required` declarations participate in the same composition. Repeated references
 to the same component without use-site constraints are idempotent, including
@@ -1242,15 +1248,22 @@ uses the schema.
 
 Nullable intersections accept null only when every conjunct accepts it. They
 can narrow to their non-null type, retain both alternatives, or narrow to null
-alone when their non-null types are disjoint. Type analysis is conservative:
-it does not prove arbitrary patterns, bounds or containers satisfiable.
+alone when their non-null types are disjoint. A nullable type declaration gets
+an `ignored-schema-keyword` warning only when its complete composition removes
+null. Warning paths name the type declaration written in that composition.
+Narrowing a referenced nullable definition does not warn against that reusable
+definition. To accept null, wrap the composition in an outer `anyOf` with a
+null-only branch.
+Type analysis is conservative: it does not prove arbitrary patterns, bounds or
+containers satisfiable.
 
 Binary intersections, mixed fixed objects/typed maps, and child conjunctions
 that require an always-rejecting schema remain unsupported. In particular,
 incompatible array items or map values receive diagnostics even when an empty
 container could satisfy the source schema. Contradictory constraints within a
-type also remain diagnostics, including in nullable alternatives; they are not
-silently pruned. An empty schema `{}` adds no constraints. Unsupported
+type also remain diagnostics. The exception is a nullable type declaration
+composed with `enum` or `const` values: its alternatives that admit none of
+those values are removed, which can leave only `null`. An empty schema `{}` adds no constraints. Unsupported
 compositions fail before selection or writes, including in unused components.
 Recursion through a composed object's properties is supported; recursive object
 merging at the same value is unsupported.
@@ -1266,7 +1279,9 @@ non-schema positions, and unsupported boolean schemas fail explicitly. Anchors
 and external references remain unsupported; POM does not fetch schemas.
 
 A fragment keeps its original source location and its own schema semantics.
-Referencing one `allOf` member does not apply the surrounding conjunction.
+Referencing one `allOf` member does not apply the surrounding conjunction. The
+fragment is an additional declaration: its container compiles exactly as it
+would without the reference, and each gets its own private validator.
 Exclusions and pruning retain referenced fragments even when they remove the
 containing operation or component. Fragment identities remain internal;
 `RequestTypes`, `ResponseTypes`, and exported schema maps use component names.
@@ -1409,7 +1424,8 @@ A fixed object can share one schema across requests and responses:
 The request requires `secret` and `label`; it rejects a supplied `id`, including
 explicit `undefined`, non-enumerable properties and inherited properties before
 `Object.prototype`. Rejection checks presence without reading the excluded
-value. Request types declare excluded read-only fields as optional `never`
+value, except that `uniqueItems` inside `oneOf` matching compares received
+items in full. Request types declare excluded read-only fields as optional `never`
 properties so assignments and spreads cannot supply them. Enable TypeScript's
 `exactOptionalPropertyTypes` to reject explicit `undefined` in those types too.
 The response requires `id` and `label`; it strips `secret` without validating or
@@ -1802,7 +1818,11 @@ schema keywords, or to `runProject` to receive these and output ownership
 warnings before generated files are replaced. The CLI writes warnings to stderr
 without prompting. Code `ignored-schema-keyword` reports a keyword with no
 effect. Identical reasons are grouped into one warning with the first source
-location and occurrence count. The output ownership codes are `modified-output`,
+location and occurrence count; each distinct displayed location counts once.
+Two declarations with the same dotted display path share one occurrence, such
+as a component named `Root.properties.value` and property `value` inside `Root`.
+This affects warning counts only; contract validation and error ownership keep
+their distinct source identities. The output ownership codes are `modified-output`,
 `preserved-stale-output`, `recovered-manifest`, and `recovered-output`. Check mode
 reports the same warnings without changing files; warnings alone do not fail a
 check. Compilation warnings are delivered after the complete output set renders.
