@@ -139,14 +139,34 @@ function jsonTypes(schema: Schema, schemas: SchemaTable) {
 // across nested overlapping alternatives at compile time, so runtime work stays
 // within a fixed multiple of the input size. Recursive regions keep their
 // runtime traversal budget; saturating at the limit keeps this arithmetic small.
+//
+// A value is evaluated in one of two ways. A membership test only decides
+// whether a branch accepts it. An output parse also returns the result: anyOf
+// parses each attempt as output, while an overlapping oneOf tests every branch
+// for membership and then parses the unique winner once more. That second pass
+// repeats at every nesting level, so the two costs are tracked separately.
 const maximumAlternativeVisits = 1024;
-const visitsByTable = new WeakMap<SchemaTable, WeakMap<Schema, number>>();
-function alternativeVisits(schema: Schema, schemas: SchemaTable): number {
+type Visits = Readonly<{ membership: number; output: number }>;
+const single: Visits = { membership: 1, output: 1 };
+const saturate = (count: number): number =>
+  Math.min(maximumAlternativeVisits + 1, count);
+const visitsByTable = new WeakMap<SchemaTable, WeakMap<Schema, Visits>>();
+function alternativeVisits(schema: Schema, schemas: SchemaTable): Visits {
   const cache = tableCache(visitsByTable, schemas);
   const known = cache.get(schema);
   if (known !== undefined) return known;
   const visits = (value: Schema) => alternativeVisits(value, schemas);
-  let count = 1;
+  const greatest = (values: Iterable<Schema>): Visits => {
+    let membership = 1;
+    let output = 1;
+    for (const value of values) {
+      const cost = visits(value);
+      membership = Math.max(membership, cost.membership);
+      output = Math.max(output, cost.output);
+    }
+    return { membership, output };
+  };
+  let count = single;
   switch (schema.kind) {
     case 'ref': {
       // Walk alias chains iteratively; they add no value nesting.
@@ -161,15 +181,15 @@ function alternativeVisits(schema: Schema, schemas: SchemaTable): number {
         aliases.push(target);
         target = schemas.get(target.name)!;
       }
-      count = cache.get(target) ?? (target.kind === 'ref' ? 1 : visits(target));
+      count =
+        cache.get(target) ?? (target.kind === 'ref' ? single : visits(target));
       // Different unions often enter the same long alias suffix. Retain every
       // visited suffix, not only the first reference that requested its cost.
       for (const alias of aliases) cache.set(alias, count);
       break;
     }
     case 'object':
-      for (const value of schema.properties.values())
-        count = Math.max(count, visits(value));
+      count = greatest(schema.properties.values());
       break;
     case 'array':
       count = visits(schema.items);
@@ -178,20 +198,36 @@ function alternativeVisits(schema: Schema, schemas: SchemaTable): number {
       if (schema.values !== true) count = visits(schema.values);
       break;
     case 'union':
-      if (schema.discriminator)
-        for (const branch of schema.branches)
-          count = Math.max(count, visits(branch));
-      else
+      if (schema.discriminator) count = greatest(schema.branches);
+      else {
+        const accepted = schema.branches.map((branch) =>
+          jsonTypes(branch, schemas),
+        );
+        // The emitter scans exactly when two branches share a JSON type.
+        const exact =
+          schema.cardinality === 'one' &&
+          allJsonTypes.some(
+            (type) =>
+              accepted.filter((types) => types.includes(type)).length > 1,
+          );
+        let membership = 1;
+        let output = 1;
         for (const type of allJsonTypes) {
-          let total = 0;
-          for (const branch of schema.branches)
-            if (jsonTypes(branch, schemas).includes(type))
-              total = Math.min(
-                maximumAlternativeVisits + 1,
-                total + visits(branch),
-              );
-          count = Math.max(count, total);
+          let scan = 0;
+          let attempts = 0;
+          let winner = 0;
+          for (const [index, branch] of schema.branches.entries())
+            if (accepted[index]!.includes(type)) {
+              const cost = visits(branch);
+              scan = saturate(scan + cost.membership);
+              attempts = saturate(attempts + cost.output);
+              winner = Math.max(winner, cost.output);
+            }
+          membership = Math.max(membership, scan);
+          output = Math.max(output, exact ? saturate(scan + winner) : attempts);
         }
+        count = { membership, output };
+      }
       break;
     case 'json':
     case 'binary':
@@ -216,13 +252,13 @@ function validateUnion(
   usage: Usage,
 ): void {
   if (!schema.discriminator) {
-    if (alternativeVisits(schema, schemas) > maximumAlternativeVisits)
+    if (alternativeVisits(schema, schemas).output > maximumAlternativeVisits)
       fail(
         location,
         `overlapping union alternatives can validate one value more than ${maximumAlternativeVisits} times; use a discriminator, remove repeated alternatives or reduce nested overlapping alternatives`,
       );
-    // Both cardinalities share these work bounds. Runtime parsing selects the
-    // first anyOf match and checks uniqueness for an untagged oneOf.
+    // Both cardinalities share this bound. Runtime parsing selects the first
+    // anyOf match and checks uniqueness for an untagged oneOf.
     return;
   }
   const { propertyName, mapping } = schema.discriminator;

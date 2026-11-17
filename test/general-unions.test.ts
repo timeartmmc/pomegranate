@@ -621,6 +621,60 @@ void test('overlapping union alternatives are bounded at compile time, including
   );
 });
 
+void test('nested exact oneOf counts its scan and the second parse of its winner within the work bound', async (t) => {
+  // Every level tests each branch for membership and then parses the winner
+  // again, so a chain costs more than the number of branches it declares.
+  const leaf = (value: number): Schema => ({
+    type: 'object',
+    properties: { leaf: { type: 'integer', enum: [value] } },
+    required: ['leaf'],
+  });
+  const chain = (depth: number, width: number) => {
+    const schemas: Record<string, Schema> = {
+      E0: { oneOf: Array.from({ length: width }, (_, index) => leaf(index)) },
+    };
+    for (let level = 1; level <= depth; level++)
+      schemas[`E${level}`] = { oneOf: [ref(`E${level - 1}`), leaf(-level)] };
+    return {
+      openapi: '3.1.2',
+      info: { title: 'Synthetic exact union work', version: '1' },
+      paths: {},
+      components: { schemas },
+    };
+  };
+  const selection = (depth: number) =>
+    ({
+      clients: [],
+      standalone: {
+        root: { schema: ref(`E${depth}`).$ref, usage: 'response' },
+      },
+    }) as const;
+  // 50 declared branches, but 1,037 evaluations at the 36th level.
+  await assert.rejects(compile(chain(40, 10), selection(40)), (error) => {
+    assert.ok(error instanceof ContractError);
+    assert.equal(error.location, 'components.schemas.E36');
+    assert.match(error.message, /more than 1024 times/);
+    return true;
+  });
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(chain(30, 10), selection(30)),
+  );
+  const { schema } = await importGenerated<StandaloneModule>(
+    root,
+    'standalone.root.ts',
+  );
+  let reads = 0;
+  const value = {
+    get leaf() {
+      reads++;
+      return 0;
+    },
+  };
+  assert.deepEqual(schema.parse(value), { leaf: 0 });
+  assert.ok(reads > 30 && reads <= 1024, `${reads} evaluations`);
+});
+
 void test('recursive union failures memoize scalar retries and retain the underlying mismatch', async (t) => {
   const levels = 120;
   const schemas: Record<string, Schema> = {

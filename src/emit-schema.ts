@@ -244,32 +244,6 @@ export function schemaRenderer(
     return name;
   }
 
-  function objectChecks(
-    body: string[],
-    failures: string[],
-    name: string,
-    fields: readonly ObjectField[],
-    forbidden: readonly string[],
-  ): void {
-    if (forbidden.length) {
-      const blocked = constant(`forbidden_${name}`, data(forbidden).source);
-      body.push(
-        `const blocked = ${use('forbiddenKeys').source}(source, ${blocked}, issues);`,
-      );
-      failures.push('blocked');
-    }
-    // Forbidden keys are known declarations: report their presence once, rather
-    // than also classifying them as unknown enumerable fields.
-    const known = [...fields.map((entry) => entry.name), ...forbidden];
-    const keys = known.length
-      ? constant(`keys_${name}`, data(known).source)
-      : use('noKeys').source;
-    body.push(
-      `const extra = ${use('unknownKeys').source}(source, ${keys}, issues);`,
-    );
-    failures.push('extra');
-  }
-
   function objectFields(
     value: Extract<Schema, { kind: 'object' }>,
     direction: Direction,
@@ -360,16 +334,14 @@ export function schemaRenderer(
     limits?: Expression,
     sourceKeys?: readonly string[],
   ): void {
-    const sizeCheck = (body: string[]) => {
-      if (!limits) return;
-      const bounds = constant(`rules_${name}`, limits.source, 'ObjectRules');
-      // Request counts use the normalized value sent as JSON. Response counts
-      // precede stripping.
-      body.push(
-        `if (${use('propertyCount').source}(${strict ? 'output' : 'source'}, issues, ${bounds}${strict ? ', true' : ''})) return invalid;`,
-      );
-    };
-    if (fields.length > 0 || forbidden.length > 0 || sourceKeys !== undefined) {
+    // Requests reject unknown keys, so even an empty request object needs the
+    // shared parser's checks.
+    if (
+      strict ||
+      fields.length > 0 ||
+      forbidden.length > 0 ||
+      sourceKeys !== undefined
+    ) {
       const table = object([
         ...fields.map((entry): readonly [string, Expression] => [
           entry.name,
@@ -389,21 +361,18 @@ export function schemaRenderer(
       );
       return;
     }
+    // A response object with no retained fields strips every member. Its
+    // property counts apply to the received object.
     helpers.add('invalid');
     const body = [
       `const source = ${use('objectValue').source}(input, issues);`,
       'if (source === invalid) return invalid;',
     ];
-    if (!strict) sizeCheck(body);
-    const failures: string[] = [];
-    if (strict) objectChecks(body, failures, name, fields, forbidden);
-    if (failures.length)
-      body.push(`if (${failures.join(' || ')}) return invalid;`);
-    if (strict && limits) {
-      body.push('const output = {};');
-      sizeCheck(body);
-      body.push('return output;');
-    } else body.push('return {};');
+    if (limits)
+      body.push(
+        `if (${use('propertyCount').source}(source, issues, ${constant(`rules_${name}`, limits.source, 'ObjectRules')})) return invalid;`,
+      );
+    body.push('return {};');
     append(
       functionDeclaration(name, type, body, exported),
       `generated parser ${name}`,
