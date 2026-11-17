@@ -266,15 +266,6 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
     /responses\.202\.headers\.x-request-id: duplicate case-insensitive header/,
   ],
   [
-    'two null oneOf branches',
-    (d) => {
-      Object.assign(d.components.schemas, {
-        DuplicateNull: { oneOf: [{ type: 'null' }, { type: 'null' }] },
-      });
-    },
-    /components\.schemas\.DuplicateNull: oneOf alternatives without a discriminator must accept disjoint JSON types/,
-  ],
-  [
     'unknown HTTP method',
     (d) => {
       Object.assign(d.paths, {
@@ -400,17 +391,6 @@ const unsupported: [string, (d: Fixture) => void, RegExp][] = [
       });
     },
     /recursive schemas/,
-  ],
-  [
-    'overlapping oneOf',
-    (d) => {
-      Object.assign(d.components.schemas, {
-        Widget: {
-          oneOf: [{ type: 'string' }, { type: 'string', format: 'uuid' }],
-        },
-      });
-    },
-    /oneOf alternatives without a discriminator must accept disjoint JSON types/,
   ],
   [
     'invalid readOnly annotation',

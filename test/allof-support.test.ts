@@ -295,21 +295,27 @@ void test('reference idempotence preserves constraints and access annotations', 
   for (const branches of [
     [pure, constrained],
     [constrained, pure],
-  ])
-    await assert.rejects(
-      compile(
+  ]) {
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(
         document({
           Tags: { type: 'array', items: { type: 'string' } },
           Combined: { allOf: branches },
         }),
         selection,
       ),
-      (error) => {
-        assert.ok(error instanceof ContractError);
-        assert.match(error.message, /combined arrays/);
-        return true;
-      },
     );
+    for (const usage of ['request', 'response']) {
+      const { schema } = await importGenerated<StandaloneModule>(
+        root,
+        `standalone.${usage}.ts`,
+      );
+      assert.deepEqual(schema.parse(['a', 'b']), ['a', 'b']);
+      for (const invalid of [[], ['a'], ['a', 2], 'ab'])
+        assert.equal(schema.safeParse(invalid).success, false);
+    }
+  }
 });
 
 void test('allOf folds object branches and sibling declarations without losing reference identity or mutating JSON/YAML inputs', async (t) => {
@@ -720,14 +726,14 @@ const invalid: readonly [string, Schema, RegExp][] = [
     /unresolved reference Missing/,
   ],
   [
-    'array intersection',
+    'contradictory array items',
     {
       allOf: [
-        { type: 'array', items: { type: 'string' } },
+        { type: 'array', items: { type: 'integer' } },
         { type: 'array', items: { type: 'string' } },
       ],
     },
-    /allOf.*array|allOf.*fixed.object|allOf.*unsupported/,
+    /incompatible scalar types/,
   ],
   [
     'mixed object and scalar',
@@ -817,14 +823,6 @@ const invalid: readonly [string, Schema, RegExp][] = [
     { allOf: [ref('Combined'), { maxLength: 3 }] },
     /allOf members without object keywords require an explicit type/,
   ],
-  [
-    'nullable type beside object branches',
-    {
-      type: ['object', 'null'],
-      allOf: [{ type: 'object', properties: { id: { type: 'integer' } } }],
-    },
-    /nullable type.*outer anyOf with a null-only branch/,
-  ],
 ];
 for (const [name, schema, message] of invalid) {
   void test(`unsupported allOf ${name} diagnoses before selection`, async () => {
@@ -896,26 +894,13 @@ void test('allOf sibling constraints restrict one referenced value in OpenAPI 3.
         },
       },
     });
-    await assert.rejects(
-      compile(
-        contract({
-          Nullable: {
-            ...(openapi === '3.0.3'
-              ? { type: 'object', nullable: true }
-              : { type: ['object', 'null'] }),
-            allOf: [ref('Fixed')],
-          },
-        }),
-        {
-          clients: [],
-          standalone: {
-            fixed: { schema: ref('Fixed').$ref, usage: 'request' },
-          },
-        },
-      ),
-      /nullable type.*outer anyOf with a null-only branch/,
-    );
     const input = contract({
+      Nullable: {
+        ...(openapi === '3.0.3'
+          ? { type: 'object', nullable: true }
+          : { type: ['object', 'null'] }),
+        allOf: [ref('Fixed')],
+      },
       Short: { allOf: [ref('Code')], maxLength: 2, pattern: 'Z$' },
       Codes: { type: 'array', items: ref('Code') },
       Pair: { allOf: [ref('Codes')], maxItems: 2 },
@@ -927,11 +912,12 @@ void test('allOf sibling constraints restrict one referenced value in OpenAPI 3.
         standalone: {
           short: { schema: ref('Short').$ref, usage: 'request' },
           pair: { schema: ref('Pair').$ref, usage: 'request' },
+          nullable: { schema: ref('Nullable').$ref, usage: 'request' },
         },
       }),
     );
-    const [short, pair] = await Promise.all(
-      ['short', 'pair'].map(
+    const [short, pair, nullable] = await Promise.all(
+      ['short', 'pair', 'nullable'].map(
         async (name) =>
           (
             await importGenerated<StandaloneModule>(
@@ -947,6 +933,11 @@ void test('allOf sibling constraints restrict one referenced value in OpenAPI 3.
     assert.deepEqual(present(pair).parse(['A1', 'A2']), ['A1', 'A2']);
     for (const value of [['A1', 'A2', 'A3'], ['B1']])
       assert.equal(present(pair).safeParse(value).success, false);
+    assert.deepEqual(present(nullable).parse({ id: 1 }), { id: 1 });
+    // The referenced object still excludes null: nullable on another conjunct
+    // cannot widen that assertion.
+    for (const value of [null, { id: '1' }])
+      assert.equal(present(nullable).safeParse(value).success, false);
   }
 });
 
@@ -1463,22 +1454,33 @@ void test('bare object conjuncts remain neutral while pure explicit JSON maps re
   }
 });
 
-void test('schema-valued map composition with additional property bounds remains explicitly unsupported', async () => {
+void test('schema-valued map composition enforces additional property bounds', async (t) => {
   const input = document({
-    Combined: { type: 'string' },
-    UnusedTypedMap: {
+    Combined: {
       allOf: [
         { type: 'object', additionalProperties: { type: 'string' } },
         { minProperties: 1 },
       ],
     },
   });
-  await assert.rejects(compile(input, selection), (error) => {
-    assert.ok(error instanceof ContractError);
-    assert.match(error.location, /^components\.schemas\.UnusedTypedMap/);
-    assert.match(error.message, /typed (?:dynamic )?maps/);
-    return true;
-  });
+  const root = await generatedTestWorkspace(t, await compile(input, selection));
+  for (const usage of ['request', 'response']) {
+    const { schema } = await importGenerated<StandaloneModule>(
+      root,
+      `standalone.${usage}.ts`,
+    );
+    assert.deepEqual(schema.parse({ first: 'one', second: 'two' }), {
+      first: 'one',
+      second: 'two',
+    });
+    for (const invalid of [
+      {},
+      { first: 1 },
+      { first: 'one', second: null },
+      null,
+    ])
+      assert.equal(schema.safeParse(invalid).success, false);
+  }
 });
 
 void test('idempotent recursive references retain inherited constraints and directional fields', async (t) => {

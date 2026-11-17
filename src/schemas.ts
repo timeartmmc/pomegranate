@@ -235,7 +235,7 @@ function schemaNormalizer(
     input: unknown,
     location: string,
     nesting = 1,
-    intersectionMember = false,
+    compositionKeyword?: 'allOf' | 'anyOf' | 'oneOf',
     inferredObject = false,
   ): Schema {
     // Bound schema recursion before entering either JS or the native formatter.
@@ -287,7 +287,7 @@ function schemaNormalizer(
     // Virtual nullable branches stay access-neutral. Source annotations belong
     // to this declaration's outer node, including nullable wrappers.
     const schema = schemaNode(
-      normalizeShape(value, location, nesting, intersectionMember),
+      normalizeShape(value, location, nesting, compositionKeyword),
       {
         readOnly: value.readOnly === true,
         writeOnly: value.writeOnly === true,
@@ -321,7 +321,7 @@ function schemaNormalizer(
       inferred ? { ...branch, type: 'object' } : branch,
       location,
       nesting,
-      true,
+      unionKeyword ?? 'allOf',
       inferred,
     );
     if (!inferred) return normalized;
@@ -438,31 +438,41 @@ function schemaNormalizer(
         keyword,
         'type',
         ...objectSchemaKeys,
+        ...constraintKeys,
+        'items',
+        'enum',
+        'const',
+        'format',
         ...annotationKeys,
         ...(keyword === 'oneOf' ? ['discriminator'] : []),
       ],
       location,
       'schema',
     );
-    if (Object.hasOwn(value, 'type') && value.type !== 'object')
-      fail(
-        `${location}.type`,
-        `unsupported keyword form; only redundant type: object is supported beside ${keyword}`,
-      );
-    const sharedKeys = objectSchemaKeys.filter((key) =>
-      Object.hasOwn(value, key),
+    const sharedKeys = Object.keys(value).filter(
+      (key) =>
+        key !== keyword &&
+        key !== 'discriminator' &&
+        !annotationKeys.includes(key),
     );
     if (sharedKeys.length > 0) {
-      // Sibling object assertions are the same conjunction as an explicit
-      // allOf wrapper. Keep source paths and the original branch positions;
-      // declaration annotations stay on the enclosing node.
+      // A sibling type/constraint is a conjunction, not a promise that union
+      // branches already have that type. Lower through the same allOf path so
+      // narrowing, scalar rules and container composition have one owner.
       const shared = Object.fromEntries(
         sharedKeys.map((key) => [key, value[key]]),
       );
+      // Here type: array is just a type assertion. Its items may be supplied by
+      // the alternatives; an absent items keyword adds no item restriction.
+      if (
+        (shared.type === 'array' ||
+          (Array.isArray(shared.type) && shared.type.includes('array'))) &&
+        !Object.hasOwn(shared, 'items')
+      )
+        shared.items = {};
       const alternative = Object.fromEntries(
         Object.entries(value).filter(
-          ([key]) =>
-            !objectSchemaKeys.includes(key) && !annotationKeys.includes(key),
+          ([key]) => !sharedKeys.includes(key) && !annotationKeys.includes(key),
         ),
       );
       return {
@@ -475,7 +485,6 @@ function schemaNormalizer(
         location,
       };
     }
-    const sourceObjectType = value.type === 'object' ? true : undefined;
     const raw = value[keyword];
     if (!Array.isArray(raw) || raw.length === 0)
       fail(
@@ -487,10 +496,10 @@ function schemaNormalizer(
       normalize(branch, `${location}.${keyword}[${index}]`, nesting + 1),
     );
     if (keyword === 'anyOf')
-      return { kind: 'union', cardinality: 'any', branches, sourceObjectType };
-    // Without a tag, usage validation proves that the branches never overlap.
+      return { kind: 'union', cardinality: 'any', branches };
+    // Untagged oneOf retains exact cardinality for runtime branch matching.
     if (!Object.hasOwn(value, 'discriminator'))
-      return { kind: 'union', cardinality: 'one', branches, sourceObjectType };
+      return { kind: 'union', cardinality: 'one', branches };
     const discriminator = record(
       value.discriminator,
       `${location}.discriminator`,
@@ -548,7 +557,6 @@ function schemaNormalizer(
       kind: 'union',
       cardinality: 'one',
       branches,
-      sourceObjectType,
       discriminator: { propertyName, mapping },
     };
   }
@@ -888,7 +896,7 @@ function schemaNormalizer(
     input: Record<string, unknown>,
     location: string,
     nesting: number,
-    intersectionMember = false,
+    compositionKeyword?: 'allOf' | 'anyOf' | 'oneOf',
   ): SchemaDraft {
     const value = ownRecord(input);
     if (Object.hasOwn(value, 'allOf'))
@@ -984,8 +992,10 @@ function schemaNormalizer(
     fail(
       `${location}.type`,
       // Only object keywords can infer their type from another allOf member.
-      intersectionMember && kind === undefined
-        ? 'allOf members without object keywords require an explicit type; declare the composed type here, for example "type": "string"'
+      compositionKeyword !== undefined && kind === undefined
+        ? compositionKeyword === 'allOf'
+          ? 'allOf members without object keywords require an explicit type; declare the composed type here, for example "type": "string"'
+          : `constraints beside ${compositionKeyword} require an explicit sibling type; alternatively, put type-specific constraints inside the applicable alternatives`
         : 'supported types are object, array, string, number, integer, boolean and null; type arrays require one supported non-null type and null; implicit types are unsupported',
     );
   }

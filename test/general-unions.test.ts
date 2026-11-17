@@ -6,6 +6,7 @@ import test from 'node:test';
 import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import { compile, ContractError } from '../dist/index.js';
 import { present } from './assertions.ts';
 import {
@@ -14,7 +15,7 @@ import {
 } from './generated-workspace.ts';
 import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 import { ref } from './schema-helpers.ts';
-import type { Schema } from './schema-helpers.ts';
+import type { Schema, SchemaCase } from './schema-helpers.ts';
 
 const fixed = (name: string): Schema => ({
   type: 'object',
@@ -217,6 +218,329 @@ void test('oneOf without a discriminator dispatches disjoint JSON types in OpenA
         path: [],
         message: 'recursive validation depth exceeds 128 levels',
       });
+  }
+});
+
+void test('untagged oneOf counts literal and constrained scalar matches in both dialects', async (t) => {
+  for (const version of ['3.0.4', '3.1.2']) {
+    const { root, request, response } = await generated(t, version, {
+      oneOf: [
+        { type: 'string', enum: ['left', 'both'] },
+        { type: 'string', enum: ['right', 'both'] },
+        { type: 'number', minimum: 0 },
+        { type: 'integer', maximum: 0 },
+      ],
+    });
+    for (const schema of [request, response]) {
+      for (const input of ['left', 'right', 1, 1.5, -1])
+        assert.deepEqual(schema.parse(input), input);
+      for (const input of ['both', 'neither', 0, -1.5, null, false])
+        assert.equal(schema.safeParse(input).success, false);
+      const overlap = schema.safeParse('both');
+      assert.equal(overlap.success, false);
+      if (!overlap.success)
+        assert.deepEqual(overlap.error.issues, [
+          {
+            path: [],
+            message:
+              'expected exactly one matching union branch; several branches matched',
+          },
+        ]);
+    }
+    await typecheckConsumer(
+      root,
+      `import type { Input, Output } from './standalone.value-request.ts';
+const values: Input[] = ['left', 'right', -1, 1.5];
+function describe(value: Output): string {
+  return typeof value === 'number' ? value.toFixed(1) : value.toUpperCase();
+}
+// @ts-expect-error Branch types exclude booleans.
+const invalid: Input = false;
+void [values, describe, invalid];
+`,
+    );
+  }
+});
+
+void test('oneOf matches source objects before choosing detached outputs and protocol results', async (t) => {
+  const { request, response, client } = await generated(t, '3.1.2', {
+    oneOf: [ref('Left'), ref('Right')],
+  });
+  assert.deepEqual(request.parse({ left: 1 }), { left: 1 });
+  const input = { right: 2, shared: 's', extra: { stripped: true } };
+  const output = response.parse(input);
+  assert.deepEqual(output, { right: 2, shared: 's' });
+  assert.notEqual(output, input);
+  assert.equal(request.safeParse(input).success, false);
+  // Each branch must see both fields, even though its parsed response drops one.
+  const mixed = { left: 1, right: 2 };
+  const received = response.safeParse(mixed);
+  assert.equal(received.success, false);
+  if (!received.success)
+    assert.match(
+      received.error.issues[0]?.message ?? '',
+      /several branches matched/,
+    );
+  const sent = request.safeParse(mixed);
+  assert.equal(sent.success, false);
+  if (!sent.success)
+    assert.ok(
+      sent.error.issues.some(({ message }) =>
+        /several branches matched/.test(message),
+      ),
+    );
+
+  const operation = present(client.operations.save);
+  assert.throws(
+    () => operation.build({ body: mixed }),
+    client.RequestValidationError,
+  );
+  const prepared = operation.build({ body: { right: 2 } });
+  const parsed = prepared.parseResponse({
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  assert.equal(parsed.kind, 'success');
+  if (parsed.kind === 'success') assert.deepEqual(parsed.data, output);
+  const ambiguous = prepared.parseResponse({
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(mixed),
+  });
+  assert.equal(ambiguous.kind, 'protocol');
+  if (ambiguous.kind === 'protocol')
+    assert.ok(
+      ambiguous.issues.some(({ message }) =>
+        /several branches matched/.test(message),
+      ),
+    );
+
+  const projected = await generated(t, '3.1.2', {
+    oneOf: [
+      {
+        type: 'object',
+        properties: {
+          value: { type: 'string' },
+          secret: { type: 'string', writeOnly: true },
+        },
+        required: ['value', 'secret'],
+      },
+      {
+        type: 'object',
+        properties: { value: { type: 'string' } },
+        required: ['value'],
+      },
+    ],
+  });
+  assert.equal(
+    projected.request.safeParse({ value: 'v', secret: 's' }).success,
+    false,
+  );
+  assert.deepEqual(projected.request.parse({ value: 'v' }), { value: 'v' });
+  // Projection removes the write-only requirement and creates two matches.
+  assert.equal(
+    projected.response.safeParse({
+      value: 'v',
+      get secret(): unknown {
+        throw new Error('excluded field must not be read');
+      },
+    }).success,
+    false,
+  );
+});
+
+void test('untagged oneOf agrees with an independent oracle across nested supported branch forms', async (t) => {
+  const cases: SchemaCase[] = [
+    {
+      name: 'ScalarConstraints',
+      schema: {
+        oneOf: [
+          {
+            allOf: [
+              { type: 'string', minLength: 2 },
+              { type: 'string', pattern: '^a' },
+            ],
+          },
+          { type: 'string', maxLength: 2 },
+        ],
+      },
+      samples: [
+        ['a', true],
+        ['ab', false],
+        ['abc', true],
+        ['b', true],
+        ['bbb', false],
+        [1, false],
+      ],
+    },
+    {
+      name: 'NullAndNullable',
+      schema: {
+        oneOf: [
+          { type: 'null' },
+          { anyOf: [{ type: 'null' }, { type: 'string' }] },
+        ],
+      },
+      samples: [
+        [null, false],
+        ['text', true],
+        [1, false],
+      ],
+    },
+    {
+      name: 'NullAndJson',
+      schema: { oneOf: [{ type: 'null' }, {}] },
+      samples: [
+        [null, false],
+        ['text', true],
+        [false, true],
+        [[], true],
+        [{ value: 1 }, true],
+      ],
+    },
+    {
+      name: 'Arrays',
+      schema: {
+        oneOf: [
+          { type: 'array', items: { type: 'integer' } },
+          { type: 'array', items: { type: 'string' } },
+        ],
+      },
+      samples: [
+        [[], false],
+        [[1], true],
+        [['a'], true],
+        [[1, 'a'], false],
+        [null, false],
+      ],
+    },
+    {
+      name: 'Maps',
+      schema: {
+        oneOf: [
+          { type: 'object', additionalProperties: { type: 'integer' } },
+          { type: 'object', additionalProperties: { type: 'string' } },
+        ],
+      },
+      samples: [
+        [{}, false],
+        [{ value: 1 }, true],
+        [{ value: 'a' }, true],
+        [{ value: false }, false],
+        [[], false],
+      ],
+    },
+    {
+      name: 'Objects',
+      schema: { oneOf: [fixed('left'), fixed('right')] },
+      samples: [
+        [{ left: 1 }, true],
+        [{ right: 1 }, true],
+        [{ left: 1, right: 2 }, false],
+        [{}, false],
+      ],
+    },
+    {
+      name: 'RepeatedLiterals',
+      schema: { oneOf: [{ const: true }, { const: true }, { const: false }] },
+      samples: [
+        [true, false],
+        [false, true],
+        [null, false],
+      ],
+    },
+    {
+      name: 'NestedOneOf',
+      schema: {
+        oneOf: [
+          {
+            oneOf: [
+              { type: 'number', minimum: 0 },
+              { type: 'number', maximum: 0 },
+            ],
+          },
+          { type: 'integer' },
+        ],
+      },
+      samples: [
+        [-1, false],
+        [-1.5, true],
+        [0, true],
+        [1, false],
+        [1.5, true],
+        [null, false],
+      ],
+    },
+    {
+      name: 'DuplicateNull',
+      schema: { oneOf: [{ type: 'null' }, { type: 'null' }] },
+      samples: [
+        [null, false],
+        [0, false],
+      ],
+    },
+  ];
+  const input = contract('3.1.2', { type: 'string' });
+  Object.assign(
+    input.components.schemas,
+    Object.fromEntries(cases.map(({ name, schema }) => [name, schema])),
+  );
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(input, {
+      clients: [],
+      surfaces: { consumer: ['save'] },
+      standalone: Object.fromEntries(
+        cases.flatMap(({ name }) =>
+          (['request', 'response'] as const).map((usage) => [
+            `${name.toLowerCase()}-${usage}`,
+            { schema: ref(name).$ref, usage },
+          ]),
+        ),
+      ),
+    }),
+  );
+  const ajv = new Ajv2020({ strict: false });
+  for (const { name, schema, samples } of cases) {
+    const oracle = ajv.compile(schema);
+    for (const usage of ['request', 'response']) {
+      const { schema: validator } = await importGenerated<StandaloneModule>(
+        root,
+        `standalone.${name.toLowerCase()}-${usage}.ts`,
+      );
+      for (const [value, expected] of samples) {
+        assert.equal(oracle(value), expected, `${name}: oracle`);
+        assert.equal(
+          validator.safeParse(value).success,
+          expected,
+          `${name}: ${usage} ${JSON.stringify(value)}`,
+        );
+      }
+    }
+  }
+});
+
+void test('oneOf preserves repeated references and applies use-site constraints before counting matches', async (t) => {
+  const repeated = await generated(t, '3.1.2', {
+    oneOf: [ref('Left'), ref('Left'), { type: 'integer' }],
+  });
+  for (const schema of [repeated.request, repeated.response]) {
+    assert.equal(schema.safeParse({ left: 1 }).success, false);
+    assert.equal(schema.parse(1), 1);
+  }
+  const constrained = await generated(t, '3.1.2', {
+    oneOf: [
+      { ...ref('Left'), minProperties: 2 },
+      { ...ref('Left'), maxProperties: 1 },
+    ],
+  });
+  for (const schema of [constrained.request, constrained.response]) {
+    assert.deepEqual(schema.parse({ left: 1 }), { left: 1 });
+    assert.deepEqual(schema.parse({ left: 1, shared: 's' }), {
+      left: 1,
+      shared: 's',
+    });
   }
 });
 

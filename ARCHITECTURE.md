@@ -69,6 +69,18 @@ closed-object rule. Scalar plans retain distinct patterns, formats and
 leave a fixed object, rather than turn it into a map. Use the resulting schemas
 for validation, dependency selection, types and protocol bindings.
 
+Compose array items and map values into the canonical container before
+projection; avoid separately parsing and merging container outputs. Narrow
+union factors only when conservative JSON type domains prove an alternative
+impossible. Keep exact `oneOf` cardinality over the retained alternatives.
+Union membership uses the original value and applicable directional source
+assertions. Request field policy and response stripping apply after selecting a
+unique oneOf member; neither may manufacture or remove an overlap. Keep source
+closure through directional projection, and keep membership/output memoization
+separate while sharing traversal limits. A successful match cannot depend on an
+aborted alternative. Bounded overlap diagnostics prove a common value; unknown
+proofs remain runtime checks.
+
 Allow reference cycles that descend through object properties, array items or
 map values. Reject cycles through aliases, unions or composition that revisit
 the same value. Recursive validators must bound depth and work, reject input

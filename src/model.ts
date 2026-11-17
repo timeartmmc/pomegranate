@@ -76,9 +76,6 @@ export type SchemaDraft = {
       // Diagnostic provenance: these branches came from a nullable type
       // declaration, rather than an anyOf keyword in the source document.
       readonly sourceTypeArray?: true | undefined;
-      // Admission checks this assertion before composition can distribute the
-      // alternatives. It may disappear only after every branch is object-only.
-      readonly sourceObjectType?: true | undefined;
       // Different-type enum groups may narrow an intersection; explicit
       // anyOf/oneOf alternatives must retain their ordinary contradiction checks.
       readonly sourceLiterals?: true | undefined;
@@ -100,6 +97,8 @@ export type SchemaDraft = {
       readonly properties: ReadonlyMap<string, Schema>;
       readonly required: readonly string[];
       readonly forbidden?: readonly string[] | undefined;
+      // Projection preserves source closure independently of retained fields.
+      readonly sourceKeys?: readonly string[] | undefined;
       readonly minProperties?: number | undefined;
       readonly maxProperties?: number | undefined;
     }
@@ -165,7 +164,6 @@ export type Schema = {
       readonly branches: readonly Schema[];
       readonly cardinality: 'any' | 'one';
       readonly sourceTypeArray: true | undefined;
-      readonly sourceObjectType: true | undefined;
       readonly sourceLiterals: true | undefined;
       readonly discriminator: Discriminator | undefined;
     }
@@ -178,6 +176,7 @@ export type Schema = {
       readonly properties: ReadonlyMap<string, Schema>;
       readonly required: readonly string[];
       readonly forbidden: readonly string[] | undefined;
+      readonly sourceKeys: readonly string[] | undefined;
     } & Pick<Constraints, 'minProperties' | 'maxProperties'>)
   | ({ readonly kind: 'array'; readonly items: Schema } & Pick<
       Constraints,

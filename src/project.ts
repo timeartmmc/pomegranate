@@ -75,9 +75,10 @@ async function readOpenApi(path: string): Promise<unknown> {
 function renderSelection(
   descriptor: Descriptor,
   selection: Record<string, unknown>,
+  warn: WarnSchema,
 ) {
   const parsed = parseSelection(selection);
-  const standalone = selectStandalone(descriptor, parsed.standalone);
+  const standalone = selectStandalone(descriptor, parsed.standalone, warn);
   const clients = selectClients(descriptor, parsed);
   return render(descriptor, clients, standalone, parsed.recursiveWorkLimit);
 }
@@ -136,7 +137,7 @@ export async function compile(
   const { selection, onWarning } = compilerOptions(options);
   const warnings = schemaWarnings();
   const { descriptor } = describeInput(document, selection, warnings.warn);
-  const files = await renderSelection(descriptor, selection);
+  const files = await renderSelection(descriptor, selection, warnings.warn);
   for (const warning of warnings.values()) onWarning?.(warning);
   return files;
 }
@@ -206,7 +207,7 @@ export async function runProject(
     config,
     warnings.warn,
   );
-  const files = await renderSelection(descriptor, config);
+  const files = await renderSelection(descriptor, config, warnings.warn);
   const compilationWarnings = warnings.values();
   for (const warning of compilationWarnings) onWarning?.(warning);
   const result = await synchronizeOutputs(

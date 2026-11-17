@@ -270,10 +270,10 @@ void test('required map keys are named members of generated types and typed map 
         ],
       },
       Neutral: {
-        type: 'object',
-        additionalProperties: { type: 'integer' },
-        required: ['total', 'a-b'],
-        minProperties: 3,
+        allOf: [
+          { type: 'object', additionalProperties: { type: 'integer' } },
+          { required: ['total', 'a-b'], minProperties: 3 },
+        ],
       },
     });
     const root = await generatedTestWorkspace(
@@ -472,17 +472,6 @@ void test('closed objects and unusable names keep their required diagnostics', a
     },
     '.allOf[1].required',
     /unknown property "extra"$/,
-  );
-  // Typed maps still cannot be intersected with other object assertions.
-  await rejects(
-    {
-      allOf: [
-        { type: 'object', additionalProperties: { type: 'string' } },
-        { required: ['extra'] },
-      ],
-    },
-    '.allOf',
-    /cannot combine objects with scalars, arrays, typed maps or binary schemas$/,
   );
   for (const [name, message] of [
     ['__proto__', /unsupported object key "__proto__"$/],

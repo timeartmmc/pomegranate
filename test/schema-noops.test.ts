@@ -138,7 +138,7 @@ void test('inactive keywords still reject malformed values and preserve unsuppor
     { type: 'object', uniqueItems: true, not: {} },
     // No explicit type excludes arrays in a non-narrowing object fragment.
     { allOf: [{ type: 'object' }, { properties: {}, minItems: 1 }] },
-    { oneOf: [{ type: 'string' }, { type: 'string', minLength: 2 }] },
+    { oneOf: [{ type: 'string' }, { type: 'string', minLength: 'bad' }] },
   ];
   for (const schema of malformed)
     await assert.rejects(

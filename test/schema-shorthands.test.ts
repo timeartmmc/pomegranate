@@ -201,21 +201,32 @@ void test('hidden semantic keywords cannot make an untyped schema annotation-onl
   }
 });
 
-void test('untyped object assertions do not hide oneOf overlap with non-object branches', async () => {
-  for (const branch of [
-    { type: 'null' },
-    { type: 'number' },
-    { type: 'array', items: {} },
-  ])
-    await assert.rejects(
-      compile(
+void test('untyped object assertions retain non-object matches when counting oneOf alternatives', async (t) => {
+  for (const [branch, overlapping, unique] of [
+    [{ type: 'null' }, null, 1],
+    [{ type: 'number' }, 1, null],
+    [{ type: 'array', items: {} }, [], null],
+  ] satisfies [Schema, unknown, unknown][]) {
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(
         document({
           oneOf: [{ properties: { name: { type: 'string' } } }, branch],
         }),
         selection,
       ),
-      /oneOf alternatives.*disjoint JSON types/,
     );
+    for (const usage of ['input', 'output']) {
+      const { schema } = await importGenerated<StandaloneModule>(
+        root,
+        `standalone.${usage}.ts`,
+      );
+      assert.equal(schema.safeParse(overlapping).success, false);
+      assert.deepEqual(schema.parse(unique), unique);
+      assert.deepEqual(schema.parse({ name: 'demo' }), { name: 'demo' });
+      assert.equal(schema.safeParse({ name: 1 }).success, false);
+    }
+  }
 });
 
 void test('single-branch unions retain their branch constraints in requests and responses', async (t) => {
@@ -360,55 +371,54 @@ void test('redundant object types accept nested unions and maps without changing
   }
 });
 
-void test('non-redundant object types fail before selection and allOf distribution', async () => {
+void test('object type siblings narrow alternatives before and after allOf distribution', async (t) => {
   for (const version of ['3.0.4', '3.1.2'])
     for (const keyword of ['anyOf', 'oneOf'])
-      for (const branch of [
-        {},
-        { type: 'string' },
-        { type: 'number' },
-        { type: 'boolean' },
-        { type: 'array', items: {} },
-        { properties: { id: { type: 'string' } } },
-        version === '3.0.4'
-          ? { type: 'object', nullable: true }
-          : { type: ['object', 'null'] },
-      ]) {
+      for (const [branch, acceptsEmpty] of [
+        [{}, true],
+        [{ type: 'string' }, false],
+        [{ type: 'number' }, false],
+        [{ type: 'boolean' }, false],
+        [{ type: 'array', items: {} }, false],
+        [{ properties: { id: { type: 'string' } } }, true],
+        [
+          version === '3.0.4'
+            ? { type: 'object', nullable: true }
+            : { type: ['object', 'null'] },
+          true,
+        ],
+      ] satisfies [Schema, boolean][]) {
         const value = { type: 'object', [keyword]: [ref('Cat'), ref('Other')] };
         for (const wrapped of [value, { allOf: [value, { type: 'object' }] }]) {
-          const source = document({ type: 'string' }, version);
-          Object.assign(source.components.schemas, {
-            Unused: wrapped,
-            Other: branch,
-          });
+          const source = document(wrapped, version);
+          Object.assign(source.components.schemas, { Other: branch });
           const before = structuredClone(source);
-          await assert.rejects(compile(source, selection), (error) => {
-            assert.ok(error instanceof ContractError);
-            assert.match(
-              error.location,
-              /^components\.schemas\.Unused.*\.type$/,
-            );
-            assert.match(
-              error.message,
-              /non-redundant type: object.*every branch must already require an object/,
-            );
-            return true;
-          });
+          const root = await generatedTestWorkspace(
+            t,
+            await compile(source, selection),
+          );
           assert.deepEqual(source, before);
+          for (const usage of ['input', 'output']) {
+            const { schema } = await importGenerated<StandaloneModule>(
+              root,
+              `standalone.${usage}.ts`,
+            );
+            for (const input of [null, [], 'Cat', 1, true])
+              assert.equal(schema.safeParse(input).success, false);
+            assert.equal(schema.safeParse({}).success, acceptsEmpty);
+          }
         }
       }
 });
 
-void test('redundant object types retain overlap, discriminator and sibling-keyword diagnostics', async () => {
+void test('redundant object types retain discriminator and sibling-keyword diagnostics', async () => {
   for (const version of ['3.0.4', '3.1.2']) {
     const base = { type: 'object', oneOf: [ref('Cat'), ref('Dog')] };
     const cases: readonly [Schema, RegExp][] = [
-      [base, /oneOf alternatives.*disjoint JSON types/],
       [{ ...base, discriminator: { propertyName: 'value' } }, /discriminator/],
-      [{ ...base, minLength: 1 }, /oneOf alternatives.*disjoint JSON types/],
       [
-        { type: 'number', anyOf: [{ type: 'integer' }] },
-        /type.*only redundant type: object/,
+        { type: 'number', minimum: 'bad', anyOf: [{ type: 'integer' }] },
+        /minimum.*finite number/,
       ],
       [
         { type: 'object', anyOf: [{ ...tagged('Cat'), readOnly: true }] },

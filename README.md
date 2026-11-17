@@ -100,8 +100,8 @@ compositions](REFERENCE.md#allof-composition). Unrelated extensions require an
 ignore list.
 
 Unsupported features produce an error before files change. These include
-overlapping `oneOf` alternatives without a discriminator, external schema
-references, OpenID Connect and mutual TLS. The
+external schema references, mixed fixed fields and typed dynamic maps,
+OpenID Connect and mutual TLS. The
 [contract reference](REFERENCE.md#supported-vocabulary) defines the complete
 supported vocabulary and limits.
 

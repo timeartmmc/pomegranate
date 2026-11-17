@@ -11,7 +11,8 @@ import type { RootSelection, Selection } from './selection.js';
 import { validatePagination } from './pagination.js';
 import { normalizeSchema } from './schemas.js';
 import { schemaReferences } from './schema-graph.js';
-import { validateSchema } from './schema-validation.js';
+import { validateSchema, schemaValidation } from './schema-validation.js';
+import type { WarnSchema } from './diagnostics.js';
 
 export function operationSchemas(
   operation: Operation,
@@ -176,7 +177,12 @@ export function selectClients(
 export function selectStandalone(
   descriptor: Descriptor,
   selections: readonly RootSelection[],
+  warn?: WarnSchema,
 ): readonly Standalone[] {
+  const validation = {
+    request: schemaValidation(warn),
+    response: schemaValidation(warn),
+  };
   return selections.map((value) => {
     const { name } = value;
     const location = `standalone.${name}`;
@@ -189,6 +195,7 @@ export function selectStandalone(
       descriptor.schemas[value.usage],
       `${location}.schema`,
       value.usage,
+      validation[value.usage],
     );
     return {
       name,

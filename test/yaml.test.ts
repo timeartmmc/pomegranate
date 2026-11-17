@@ -416,7 +416,7 @@ void test('YAML uses the existing semantic diagnostics, including unselected dec
         Unselected: {
           allOf: [
             { type: 'array', items: { type: 'string' } },
-            { type: 'array', items: { type: 'string' } },
+            { type: 'array', items: { type: 'integer' } },
           ],
         },
       });

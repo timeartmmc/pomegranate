@@ -171,7 +171,7 @@ void test('nested single-reference allOf wrappers merge array bounds without los
   }
 });
 
-void test('mixed-type literal assertions narrow allOf while explicit union contradictions remain diagnostic', async (t) => {
+void test('mixed-type literal assertions and explicit unions narrow allOf to their common values', async (t) => {
   const root = await generatedTestWorkspace(
     t,
     await compile(
@@ -226,8 +226,9 @@ export const wrongLiteral: Output = { value: 'other', both: null };
     ),
     /allOf constraints admit no literal value/,
   );
-  await assert.rejects(
-    compile(
+  const narrowed = await generatedTestWorkspace(
+    t,
+    await compile(
       contract({
         Value: {
           allOf: [
@@ -238,8 +239,16 @@ export const wrongLiteral: Output = { value: 'other', both: null };
       }),
       selection('Value'),
     ),
-    /incompatible scalar types/,
   );
+  for (const usage of ['request', 'response']) {
+    const { schema } = await importGenerated<StandaloneModule>(
+      narrowed,
+      `standalone.${usage}.ts`,
+    );
+    assert.equal(schema.parse('active'), 'active');
+    for (const invalid of [null, 1, {}])
+      assert.equal(schema.safeParse(invalid).success, false);
+  }
 });
 
 void test('closed allOf branch diagnostics identify the actual required declaration', async () => {
@@ -382,12 +391,12 @@ void test('composition diagnostics stay within real source declarations after di
       Value: {
         allOf: [
           { type: 'string' },
-          { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          { anyOf: [{ type: 'integer' }, { type: 'null' }] },
         ],
       },
     },
     {
-      Choice: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+      Choice: { anyOf: [{ type: 'integer' }, { type: 'null' }] },
       Value: { allOf: [ref('Choice'), { type: 'string' }] },
     },
     {

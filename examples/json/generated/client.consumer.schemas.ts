@@ -52,6 +52,8 @@ function make_parse_PreparationInput_request(): Parse<type_PreparationInput_requ
       tags: [parse_PreparationInput_request_part0],
     },
     true,
+    undefined,
+    ['acknowledged', 'label', 'tags'],
   );
 }
 export const parse_PreparationInput_request: Parse<type_PreparationInput_request> =

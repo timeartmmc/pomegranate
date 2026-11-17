@@ -549,18 +549,18 @@ export const excluded = response.alias;
     }
 });
 
-void test('allOf union distribution diagnoses contradictions, untagged object oneOf and constrained union references', async () => {
+void test('allOf union distribution diagnoses contradictions and constrained union references', async () => {
   for (const [name, schema, location, message] of [
     [
       'contradictory alternative',
       {
         allOf: [
-          { anyOf: [{ type: 'string' }, { type: 'integer' }] },
+          { anyOf: [{ type: 'string' }, { type: 'string', minLength: 4 }] },
           { type: 'string', maxLength: 3 },
         ],
       },
       'components.schemas.Value.allOf[0].anyOf[1]',
-      /incompatible scalar types/,
+      /minLength exceeds maxLength/,
     ],
     [
       'conflicting tag',
@@ -572,22 +572,6 @@ void test('allOf union distribution diagnoses contradictions, untagged object on
       },
       'components.schemas.Tagged.oneOf[0].$ref',
       /admit no literal value/,
-    ],
-    [
-      'untagged object oneOf',
-      {
-        allOf: [
-          {
-            oneOf: [
-              fixed({ a: { type: 'integer' } }, ['a']),
-              fixed({ b: { type: 'integer' } }, ['b']),
-            ],
-          },
-          fixed({ id: { type: 'string' } }),
-        ],
-      },
-      'components.schemas.Value',
-      /disjoint JSON types; several accept object values/,
     ],
     [
       'constrained union reference',

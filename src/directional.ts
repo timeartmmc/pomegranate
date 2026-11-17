@@ -9,6 +9,17 @@ import type {
 type Access = Readonly<{ readOnly: boolean; writeOnly: boolean }>;
 const accessByTable = new WeakMap<SchemaTable, WeakMap<Schema, Access>>();
 
+export function assertUnionBranchAccess(
+  access: Access,
+  location: string,
+): void {
+  if (access.readOnly || access.writeOnly)
+    fail(
+      location,
+      'readOnly and writeOnly on union branches are not supported in this version; remove the annotation from the branch or its referenced component; use separate request and response schemas when their shapes differ',
+    );
+}
+
 export function schemaAccess(schema: Schema, schemas: SchemaTable): Access {
   let cache = accessByTable.get(schemas);
   if (!cache) {
@@ -74,6 +85,7 @@ export function projectSchemas(raw: SchemaTable): {
         // JSON renormalization would reinterpret an empty declaration as a map.
         projected = {
           ...schema,
+          sourceKeys: schema.closed ? [...schema.properties.keys()] : undefined,
           properties,
           required: schema.required.filter((name) => properties.has(name)),
           ...(forbidden.length ? { forbidden } : {}),

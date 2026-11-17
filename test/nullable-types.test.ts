@@ -215,9 +215,12 @@ const invalidSchemas: [string, unknown, RegExp][] = [
     /type.*unsupported keyword/,
   ],
   [
-    'anyOf sibling type',
-    { type: ['string', 'null'], anyOf: [{ type: 'string' }, { type: 'null' }] },
-    /type.*unsupported keyword/,
+    'nullable type with no matching alternative',
+    {
+      type: ['string', 'null'],
+      anyOf: [{ type: 'boolean' }, { type: 'array', items: {} }],
+    },
+    /common JSON type/,
   ],
 ];
 for (const [name, schema, expected] of invalidSchemas) {

@@ -11,6 +11,50 @@ import type { StandaloneModule } from './runtime-types.ts';
 import { object, ref } from './schema-helpers.ts';
 import type { Schema } from './schema-helpers.ts';
 
+void test('provably disjoint oneOf preserves ordinary union work within recursive batches', async (t) => {
+  for (const keyword of ['anyOf', 'oneOf']) {
+    const root = await generatedTestWorkspace(
+      t,
+      await compile(
+        {
+          openapi: '3.1.2',
+          info: { title: 'Synthetic disjoint matching work', version: '1' },
+          paths: {},
+          components: {
+            schemas: {
+              Node: {
+                [keyword]: [
+                  { type: 'integer' },
+                  { type: 'array', items: ref('Node') },
+                ],
+              },
+            },
+          },
+        },
+        {
+          clients: [],
+          recursiveWorkLimit: 40,
+          standalone: {
+            value: { schema: ref('Node').$ref, usage: 'response' },
+          },
+        },
+      ),
+    );
+    const { schema } = await importGenerated<StandaloneModule>(
+      root,
+      'standalone.value.ts',
+    );
+    const input = Array.from({ length: 10 }, (_, index) => index);
+    const parsed = schema.parse(input);
+    assert.deepEqual(parsed, input);
+    assert.notEqual(parsed, input);
+    assert.equal(
+      schema.safeParse([...input, ...input, ...input]).success,
+      false,
+    );
+  }
+});
+
 async function generated(
   t: TestContext,
   schemas: Record<string, Schema>,
@@ -437,5 +481,105 @@ void test('recursive union cache slots ignore inherited cache-shaped data', asyn
       assert.deepEqual(output, input);
       independent(input, output);
     });
+  }
+});
+
+void test('recursive oneOf preserves uniqueness, occurrence copies and depth checks for shared values', async (t) => {
+  const { response } = await generated(
+    t,
+    {
+      Node: {
+        oneOf: [
+          object({ next: ref('Node'), value: { type: 'integer' } }, ['value']),
+          object({ next: ref('Node'), text: { type: 'string' } }, ['text']),
+        ],
+      },
+      Pair: object({ shallow: ref('Node'), deep: ref('Node') }),
+    },
+    'Pair',
+  );
+  const shared = { value: 1, next: { text: 'leaf' } };
+  const same = { shallow: shared, deep: shared };
+  const parsed = response.parse(same);
+  assert.deepEqual(parsed, same);
+  independent(same, parsed);
+  function chain(length: number): unknown {
+    let current: unknown = shared;
+    for (let i = 0; i < length; i++) current = { value: i, next: current };
+    return current;
+  }
+  const valid = { shallow: shared, deep: chain(125) };
+  const output = response.parse(valid);
+  assert.deepEqual(output, valid);
+  independent(valid, output);
+  const tooDeep = response.safeParse({ shallow: shared, deep: chain(126) });
+  assert.equal(tooDeep.success, false);
+  if (!tooDeep.success)
+    assert.match(tooDeep.error.issues[0]?.message ?? '', /depth exceeds 128/);
+  const overlap = response.safeParse({
+    shallow: shared,
+    deep: { value: 1, text: 'two' },
+  });
+  assert.equal(overlap.success, false);
+  if (!overlap.success)
+    assert.ok(
+      overlap.error.issues.some(
+        ({ path, message }) =>
+          path.join('.') === 'deep' && /several branches matched/.test(message),
+      ),
+    );
+  // Neither failed uniqueness nor depth may spend a later call's allowance.
+  assert.deepEqual(response.parse(same), same);
+});
+
+void test('oneOf propagates a later recursive abort after an earlier branch has matched', async (t) => {
+  const { response } = await generated(
+    t,
+    {
+      Root: { oneOf: [object({ accepted: { type: 'boolean' } }), ref('Node')] },
+      Node: object({ value: { type: 'integer' }, next: ref('Node') }, [
+        'value',
+      ]),
+    },
+    'Root',
+  );
+  let deep: Record<string, unknown> = { value: 1 };
+  for (let i = 0; i < 150; i++) deep = { value: 1, next: deep };
+  const failure = response.safeParse({ accepted: true, value: 1, next: deep });
+  assert.equal(failure.success, false);
+  if (!failure.success)
+    assert.match(failure.error.issues[0]?.message ?? '', /depth exceeds 128/);
+  const cycle: Record<string, unknown> = { accepted: true, value: 1 };
+  cycle.next = cycle;
+  const cyclic = response.safeParse(cycle);
+  assert.equal(cyclic.success, false);
+  if (!cyclic.success)
+    assert.match(cyclic.error.issues[0]?.message ?? '', /cyclic input/);
+  assert.deepEqual(response.parse({ accepted: true }), { accepted: true });
+});
+
+void test('recursive aliases retain oneOf ambiguity without exhausting work on repeated attempts', async (t) => {
+  const levels = 120;
+  const branch = object(
+    { value: { type: 'integer' }, next: ref(`U${levels}`) },
+    ['value'],
+  );
+  const schemas: Record<string, Schema> = { U0: { oneOf: [branch, branch] } };
+  for (let i = 1; i <= levels; i++)
+    schemas[`U${i}`] = { anyOf: [ref(`U${i - 1}`), ref(`U${i - 1}`)] };
+  const { response } = await generated(t, schemas, `U${levels}`);
+  const failure = response.safeParse({ value: 1 });
+  assert.equal(failure.success, false);
+  if (!failure.success) {
+    assert.ok(
+      failure.error.issues.some(({ message }) =>
+        /several branches matched/.test(message),
+      ),
+    );
+    assert.equal(
+      failure.error.issues.some(({ message }) => /work exceeds/.test(message)),
+      false,
+    );
+    assert.ok(failure.error.issues.length <= 101);
   }
 });

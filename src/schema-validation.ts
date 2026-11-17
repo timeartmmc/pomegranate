@@ -1,4 +1,6 @@
 import { assertNever, ContractWorkError, fail } from './diagnostics.js';
+import type { WarnSchema } from './diagnostics.js';
+import { overlapWarnings } from './oneof-overlap.js';
 import type { ConstraintInput, Scalar, Schema, SchemaTable } from './model.js';
 import {
   constraintNames,
@@ -15,7 +17,11 @@ import {
   intersectConstraints,
   literalViolation,
 } from './scalar-rules.js';
-import { schemaAccess } from './directional.js';
+import { assertUnionBranchAccess, schemaAccess } from './directional.js';
+import {
+  createJsonTypeAnalysis,
+  jsonTypes as allJsonTypes,
+} from './schema-domain.js';
 import { scalarIntersectionBase } from './intersections.js';
 import {
   schemaGraph,
@@ -29,10 +35,11 @@ type ReferenceConstraints = {
   limits: ConstraintInput;
   literals: readonly Scalar[] | undefined;
 };
-export function schemaValidation() {
+export function schemaValidation(warn?: WarnSchema) {
   const maximum = 1_000_000;
   let remaining = maximum;
   return {
+    warnOverlap: overlapWarnings(warn),
     depths: new Map<Schema, number>(),
     checked: new Map<Usage, Set<Schema>>(),
     constraints: new Map<Schema, ReferenceConstraints>(),
@@ -99,16 +106,6 @@ function measureSchema(
   return depths.get(schema)!;
 }
 
-type JsonType = 'null' | 'boolean' | 'string' | 'number' | 'array' | 'object';
-const allJsonTypes: readonly JsonType[] = [
-  'null',
-  'boolean',
-  'string',
-  'number',
-  'array',
-  'object',
-];
-
 // Union analyses visit each normalized node once per table, so shared union
 // graphs stay linear in the contract instead of in their expanded paths.
 function tableCache<T>(
@@ -123,69 +120,17 @@ function tableCache<T>(
   return cache;
 }
 
-// The JSON types a schema can accept. Constraints and formats only narrow
-// values within a type, so they never make two alternatives disjoint.
 const jsonTypesByTable = new WeakMap<
   SchemaTable,
-  WeakMap<Schema, readonly JsonType[]>
+  ReturnType<typeof createJsonTypeAnalysis>
 >();
-function jsonTypes(schema: Schema, schemas: SchemaTable): readonly JsonType[] {
-  const resolved = resolveSchema(schema, schemas);
-  const cache = tableCache(jsonTypesByTable, schemas);
-  const known = cache.get(resolved);
-  if (known) return known;
-  // Same-value reference cycles were rejected before validation. Productive
-  // groups can still contain long union paths: cache children before their
-  // union on a heap stack, retaining branch order for overlap diagnostics.
-  const pending = [{ schema: resolved, next: 0 }];
-  while (pending.length > 0) {
-    const frame = pending[pending.length - 1]!;
-    const current = frame.schema;
-    if (current.kind === 'union' && frame.next < current.branches.length) {
-      const child = resolveSchema(current.branches[frame.next++]!, schemas);
-      if (!cache.has(child)) pending.push({ schema: child, next: 0 });
-      continue;
-    }
-    let types: readonly JsonType[];
-    switch (current.kind) {
-      case 'null':
-      case 'boolean':
-      case 'string':
-        types = [current.kind];
-        break;
-      case 'number':
-      case 'integer':
-        types = ['number'];
-        break;
-      case 'array':
-        types = ['array'];
-        break;
-      case 'object':
-      case 'map':
-        types = ['object'];
-        break;
-      case 'union':
-        types = [
-          ...new Set(
-            current.branches.flatMap((branch) =>
-              cache.get(resolveSchema(branch, schemas))!,
-            ),
-          ),
-        ];
-        break;
-      case 'json':
-      case 'binary':
-      case 'intersection':
-      case 'ref':
-        types = allJsonTypes;
-        break;
-      default:
-        return assertNever(current);
-    }
-    cache.set(current, types);
-    pending.pop();
+function jsonTypes(schema: Schema, schemas: SchemaTable) {
+  let analyze = jsonTypesByTable.get(schemas);
+  if (!analyze) {
+    analyze = createJsonTypeAnalysis(schemas);
+    jsonTypesByTable.set(schemas, analyze);
   }
-  return cache.get(resolved)!;
+  return analyze(schema);
 }
 
 // Untagged unions try branches in order, and every branch accepting a value's
@@ -275,20 +220,8 @@ function validateUnion(
         location,
         `overlapping union alternatives can validate one value more than ${maximumAlternativeVisits} times; use a discriminator, remove repeated alternatives or reduce nested overlapping alternatives`,
       );
-    // anyOf returns the first matching branch. oneOf requires exactly one
-    // match; without a tag, POM proves it by admitting only branches whose JSON
-    // types are disjoint, so first-match evaluation cannot hide a second match.
-    if (schema.cardinality === 'any') return;
-    const seen = new Set<JsonType>();
-    for (const branch of schema.branches)
-      for (const type of jsonTypes(branch, schemas)) {
-        if (seen.has(type))
-          fail(
-            location,
-            `oneOf alternatives without a discriminator must accept disjoint JSON types; several accept ${type} values, so use a discriminator for object alternatives or anyOf to accept the first match`,
-          );
-        seen.add(type);
-      }
+    // Both cardinalities share these work bounds. Runtime parsing selects the
+    // first anyOf match and checks uniqueness for an untagged oneOf.
     return;
   }
   const { propertyName, mapping } = schema.discriminator;
@@ -405,10 +338,12 @@ function validateUsage(
   checked: Set<Schema>,
   constraintCache: Map<Schema, ReferenceConstraints>,
   work: WorkCounter,
+  warnOverlap: ReturnType<typeof overlapWarnings>,
 ): void {
   if (checked.has(schema)) return;
-  // Publish visited marks only after the complete usage succeeds. Failed
-  // operations must not discard completed constraint/depth work for other users.
+  // Mark productive cycles locally until the whole usage succeeds. Failed
+  // usages must remain retryable without discarding completed enum/depth work
+  // shared with healthy operations in an audit.
   const visited = new Set<Schema>();
   const known = (value: Schema): boolean =>
     checked.has(value) || visited.has(value);
@@ -429,17 +364,12 @@ function validateUsage(
     const frame = pending.pop()!;
     if (frame.kind === 'union') {
       validateUnion(frame.schema, schemas, frame.location, usage);
+      warnOverlap(frame.schema, schemas, frame.location, usage);
       continue;
     }
     const { schema, location } = frame;
-    if (frame.kind === 'branch') {
-      const access = schemaAccess(schema, schemas);
-      if (access.readOnly || access.writeOnly)
-        fail(
-          location,
-          'readOnly and writeOnly on union branches are not supported in this version; remove the annotation from the branch or its referenced component; use separate request and response schemas when their shapes differ',
-        );
-    }
+    if (frame.kind === 'branch')
+      assertUnionBranchAccess(schemaAccess(schema, schemas), location);
     if (known(schema)) continue;
     visited.add(schema);
     const access = schemaAccess(schema, schemas);
@@ -570,5 +500,6 @@ export function validateSchema(
     checked,
     cache.constraints,
     cache.work,
+    cache.warnOverlap,
   );
 }

@@ -60,11 +60,15 @@ export function auditContract(
   const diagnostics: AuditDiagnostic[] = [];
   const warnings = schemaWarnings();
   const warned = new Set<string>();
-  const warn = (path: string, message: string): void => {
-    const key = `${path}\0${message}`;
+  const warn = (
+    path: string,
+    message: string,
+    code?: CompileWarning['code'],
+  ): void => {
+    const key = `${code}\0${path}\0${message}`;
     if (warned.has(key)) return;
     warned.add(key);
-    warnings.warn(path, message);
+    warnings.warn(path, message, code);
   };
   let supported: readonly string[] = [];
   let unassessed: readonly string[] = [];
@@ -92,7 +96,7 @@ export function auditContract(
         },
       );
       // Check selected compiler features too, without formatting generated code.
-      selectStandalone(descriptor, parsed.standalone);
+      selectStandalone(descriptor, parsed.standalone, warn);
       selectClients(descriptor, parsed);
       supported = pending();
       complete = true;

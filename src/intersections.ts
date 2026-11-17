@@ -23,6 +23,8 @@ import {
   intersectConstraints,
   literalViolation,
 } from './scalar-rules.js';
+import { createJsonTypeAnalysis } from './schema-domain.js';
+import { assertUnionBranchAccess } from './directional.js';
 
 type ScalarKind = 'string' | 'number' | 'integer' | 'boolean' | 'null';
 type Access = Readonly<{ readOnly: boolean; writeOnly: boolean }>;
@@ -208,7 +210,7 @@ export function scalarValidationPlan(
     )
       fail(
         location,
-        'allOf supports object composition, compatible scalar intersections and unions of those forms; combined arrays, maps and binary schemas are unsupported',
+        'allOf branches have incompatible types or unsupported binary schemas; array items and map values must have compatible supported compositions',
       );
     if (kind !== undefined && kind !== current.kind) {
       if (
@@ -311,37 +313,47 @@ export function createIntersectionNormalizer(
   const processing = new Set<Schema>();
   const expandingObjects = new Set<Schema>();
   const charge = compositionBudget();
-  const referenceTypes = new Map<string, string>();
+  const jsonTypes = createJsonTypeAnalysis(schemas, charge);
+  const branchAccess = new WeakMap<Schema, Access>();
 
-  function referenceType(
-    input: Extract<Schema, { kind: 'ref' }>,
-    location: string,
-  ): string | undefined {
-    const path: string[] = [];
-    let current: Schema = input;
-    let type: string | undefined;
-    // The table is still being composed. Cache only a proven JSON type, which
-    // survives composition of its children; do not cache compound/unknown roots.
-    while (current.kind === 'ref') {
-      type = referenceTypes.get(current.name);
-      if (type !== undefined) break;
-      charge(1, location);
-      path.push(current.name);
-      current = referenceTarget(current, schemas);
+  function sourceAccess(input: Schema, location: string): Access {
+    const known = branchAccess.get(normalized.get(input) ?? input);
+    if (known) return known;
+    // Inspect same-value annotations without composing an active ancestor. A
+    // nullable recursive property may reference the allOf currently being built.
+    // Canonical scalar intersections already own their effective flags: their
+    // retained source conjuncts must not restore flags moved to an outer union.
+    const frame = (schema: Schema) => {
+      const current = normalized.get(schema) ?? schema;
+      const children =
+        current.kind === 'ref'
+          ? [referenceTarget(current, schemas)]
+          : current.kind === 'intersection' && !normalized.has(current)
+            ? current.branches
+            : [];
+      charge(children.length + 1, location);
+      return { schema: current, children, next: 0 };
+    };
+    const pending = [frame(input)];
+    while (pending.length > 0) {
+      const current = pending[pending.length - 1]!;
+      const child = current.children[current.next++];
+      if (child) {
+        if (!branchAccess.has(normalized.get(child) ?? child))
+          pending.push(frame(child));
+        continue;
+      }
+      let access: Access = current.schema;
+      for (const child of current.children)
+        access = accessFlags(
+          access,
+          branchAccess.get(normalized.get(child) ?? child)!,
+          location,
+        );
+      branchAccess.set(current.schema, access);
+      pending.pop();
     }
-    type ??=
-      current.kind === 'object' || current.kind === 'map'
-        ? 'object'
-        : current.kind === 'integer'
-          ? 'number'
-          : ['string', 'number', 'boolean', 'null', 'array'].includes(
-                current.kind,
-              )
-            ? current.kind
-            : undefined;
-    if (type !== undefined)
-      for (const name of path) referenceTypes.set(name, type);
-    return type;
+    return branchAccess.get(normalized.get(input) ?? input)!;
   }
 
   function referenceConstraints(
@@ -349,8 +361,9 @@ export function createIntersectionNormalizer(
     location: string,
   ): Schema {
     if (!hasConstraints(input.constraints)) return input;
-    const type = referenceType(input, location);
-    if (type === undefined) return input;
+    const types = jsonTypes(input, location);
+    if (types.length !== 1) return input;
+    const type = types[0]!;
     const ignored = constraintNames(input.constraints).filter((key) => {
       const appliesTo = constraintTypes.get(key);
       return appliesTo !== undefined && appliesTo !== type;
@@ -645,24 +658,12 @@ export function createIntersectionNormalizer(
       ? branches.map(finiteValues)
       : [];
     const literalNarrowing = finite.some((values) => values !== undefined);
-    // A nullable type is a union with null, so every other conjunct would also
-    // need to accept null. Name the supported nullable form instead of the
-    // generic union restriction below.
-    if (
-      targets.some(
-        ({ schema }) =>
-          schema.kind === 'union' && schema.sourceTypeArray === true,
-      ) &&
-      !literalNarrowing
-    )
-      fail(
-        location,
-        'allOf cannot combine a nullable type with other branches; wrap the composition in an outer anyOf with a null-only branch instead',
-      );
     // allOf distributes over a union: A and (B or C) is (A and B) or (A and C).
-    // Alternatives keep their positions, so cardinality and discriminator tags
-    // still describe the composed branches; a contradictory alternative fails
-    // instead of disappearing. Distribute untagged unions first so tagged ones
+    // Keep cardinality when narrowing: impossible type combinations contribute
+    // zero matches to oneOf, while compatible alternatives can still overlap.
+    // Deeper contradictions remain diagnostics, rather than guessing whether a
+    // container with impossible children can still admit an empty value.
+    // Distribute untagged unions first so tagged ones
     // stay inside and can keep dispatching on their own tag.
     const unions = targets.flatMap(({ schema }, position) =>
       schema.kind === 'union' ? [{ union: schema, position }] : [],
@@ -680,9 +681,40 @@ export function createIntersectionNormalizer(
       ) ?? unions[0];
     if (factor) {
       const { union, position } = factor;
-      const others = branches.filter((_, index) => index !== position);
-      const otherLocations = branchLocations.filter(
-        (_, index) => index !== position,
+      const domain = jsonTypes(branches[position]!, location);
+      const otherPositions = branches.flatMap((_, index) => {
+        if (index === position) return [];
+        const target = targets[index]!;
+        // Preserve union references when a bare object assertion is already
+        // implied. Expanding its branches would duplicate parsers and needlessly
+        // unfold recursive objects just to establish their top-level type.
+        if (
+          domain.length === 1 &&
+          domain[0] === 'object' &&
+          target.schema.kind === 'map' &&
+          target.schema.values === true &&
+          !target.schema.additionalPropertiesExplicit &&
+          target.schema.required.length === 0 &&
+          target.limits.minProperties === undefined &&
+          target.limits.maxProperties === undefined
+        )
+          return [];
+        return [index];
+      });
+      // A recursive target can still contain uncomposed branches. Preserve its
+      // reference so final table composition, including required fields, wins.
+      if (otherPositions.length === 0)
+        return { ...branches[position]!, ...access };
+      const others = otherPositions.map((index) => branches[index]!);
+      const otherLocations = otherPositions.map(
+        (index) => branchLocations[index]!,
+      );
+      const commonTypes = others.reduce<readonly string[]>(
+        (types, branch) =>
+          types.filter((type) =>
+            jsonTypes(branch, location).some((own) => own === type),
+          ),
+        jsonTypes(branches[position]!, location),
       );
       // An untyped enum lists permitted scalar values; its different-type
       // groups are assertions to narrow, not explicit alternatives to retain.
@@ -757,13 +789,21 @@ export function createIntersectionNormalizer(
         }))
         .filter(({ schema: alternative }) => {
           return (
-            !candidates ||
-            (!union.sourceLiterals && !union.sourceTypeArray) ||
-            candidates.some(acceptsLiteral(alternative))
+            jsonTypes(alternative, location).some((type) =>
+              commonTypes.includes(type),
+            ) &&
+            (!candidates ||
+              (!union.sourceLiterals && !union.sourceTypeArray) ||
+              candidates.some(acceptsLiteral(alternative)))
           );
         });
       if (alternatives.length === 0)
-        fail(location, 'allOf constraints admit no literal value');
+        fail(
+          location,
+          candidates
+            ? 'allOf constraints admit no literal value'
+            : 'allOf branches admit no value of a common JSON type',
+        );
       const composedBranches = alternatives.map(
         ({ schema: alternative, index }) => {
           const source = branches[position]!;
@@ -807,14 +847,118 @@ export function createIntersectionNormalizer(
         (union.sourceTypeArray && literalNarrowing ? true : undefined);
       if (sourceLiterals && composedBranches.length === 1)
         return { ...composedBranches[0]!, ...access };
+      const positions = new Map(
+        alternatives.map(({ index }, position) => [index, position]),
+      );
       return schemaNode({
         kind: 'union',
         cardinality: union.cardinality,
-        discriminator: union.discriminator,
+        discriminator: union.discriminator && {
+          propertyName: union.discriminator.propertyName,
+          mapping: new Map(
+            [...union.discriminator.mapping].flatMap(([tag, index]) => {
+              const position = positions.get(index);
+              return position === undefined ? [] : [[tag, position] as const];
+            }),
+          ),
+        },
         sourceLiterals,
         branches: composedBranches,
         ...access,
       });
+    }
+    const childComposition = (values: Schema[], locations: string[]): Schema =>
+      values.length === 1
+        ? normalize(values[0]!, locations[0]!)
+        : normalize(
+            schemaNode({
+              kind: 'intersection',
+              branches: values,
+              branchLocations: locations,
+              location: locations[0]!,
+            }),
+            locations[0]!,
+          );
+    const sourceChild = (index: number, suffix: string): string => {
+      const source = branches[index]!;
+      return source.kind === 'ref'
+        ? source.location
+        : childLocation(branchLocations[index]!, suffix);
+    };
+    if (targets.every(({ schema }) => schema.kind === 'array')) {
+      let limits = constraintRecord();
+      const items: Schema[] = [];
+      const locations: string[] = [];
+      for (const [index, target] of targets.entries()) {
+        if (target.schema.kind !== 'array') continue;
+        limits = intersectConstraints(limits, target.limits);
+        items.push(target.schema.items);
+        locations.push(sourceChild(index, 'items'));
+      }
+      // Compose once before projection. Runtime list parsing then observes each
+      // item once, checks all container rules, and copies the combined shape.
+      const result = schemaNode({
+        kind: 'array',
+        items: childComposition(items, locations),
+        minItems: limits.minItems,
+        maxItems: limits.maxItems,
+        uniqueItems: limits.uniqueItems,
+        ...access,
+      });
+      assertScalarRules(
+        'array',
+        schemaConstraints(result),
+        undefined,
+        location,
+      );
+      return result;
+    }
+    if (
+      targets.some(({ schema }) => schema.kind === 'map') &&
+      (targets.every(({ schema }) => schema.kind === 'map') ||
+        targets.some(
+          ({ schema }) =>
+            schema.kind === 'map' && schema.additionalPropertiesExplicit,
+        )) &&
+      targets.every(
+        ({ schema }) =>
+          schema.kind === 'map' ||
+          (schema.kind === 'object' &&
+            !schema.hasDeclaredProperties &&
+            !schema.closed),
+      )
+    ) {
+      let limits = constraintRecord();
+      const values: Schema[] = [];
+      const locations: string[] = [];
+      const required = new Set<string>();
+      let explicit = false;
+      for (const [index, target] of targets.entries()) {
+        const map = target.schema;
+        if (map.kind !== 'map' && map.kind !== 'object') continue;
+        limits = intersectConstraints(limits, target.limits);
+        explicit ||= map.additionalPropertiesExplicit;
+        charge(map.required.length, location);
+        for (const name of map.required) required.add(name);
+        if (map.kind === 'map' && map.values !== true) {
+          values.push(map.values);
+          locations.push(sourceChild(index, 'additionalProperties'));
+        }
+      }
+      // A required-only object contributes keys, not fixed fields. The map's
+      // value conjunction validates every entry, including those required keys.
+      const result = schemaNode({
+        kind: 'map',
+        values:
+          values.length === 0 ? true : childComposition(values, locations),
+        required: [...required].sort(),
+        additionalPropertiesExplicit: explicit,
+        minProperties: limits.minProperties,
+        maxProperties: limits.maxProperties,
+        ...access,
+      });
+      assertScalarRules('map', schemaConstraints(result), undefined, location);
+      return result;
     }
     if (targets.some(({ schema }) => schema.kind === 'object')) {
       if (
@@ -907,20 +1051,7 @@ export function createIntersectionNormalizer(
       for (const name of propertyOrder(fields.keys())) {
         const children = fields.get(name)!;
         const locations = fieldLocations.get(name)!;
-        properties.set(
-          name,
-          children.length === 1
-            ? children[0]!
-            : normalize(
-                schemaNode({
-                  kind: 'intersection',
-                  branches: children,
-                  branchLocations: locations,
-                  location: locations[0]!,
-                }),
-                locations[0]!,
-              ),
-        );
+        properties.set(name, childComposition(children, locations));
       }
       const result = schemaNode({
         kind: 'object',
@@ -942,35 +1073,6 @@ export function createIntersectionNormalizer(
         ...access,
       });
       return materializeObject(result, location);
-    }
-    if (
-      targets.every(
-        ({ schema }) => schema.kind === 'map' && schema.values === true,
-      )
-    ) {
-      let limits = constraintRecord();
-      for (const target of targets)
-        limits = intersectConstraints(limits, target.limits);
-      assertScalarRules('map', limits, undefined, location);
-      const maps = targets.flatMap(({ schema }) =>
-        schema.kind === 'map' ? [schema] : [],
-      );
-      const required = new Set<string>();
-      for (const map of maps) {
-        charge(map.required.length, location);
-        for (const name of map.required) required.add(name);
-      }
-      return schemaNode({
-        kind: 'map',
-        additionalPropertiesExplicit: maps.some(
-          (map) => map.additionalPropertiesExplicit,
-        ),
-        values: true,
-        required: [...required].sort(),
-        minProperties: limits.minProperties,
-        maxProperties: limits.maxProperties,
-        ...access,
-      });
     }
     // Scalar conjunctions keep their branches for emission. Plan them once here
     // to diagnose contradictions before selection, and expose the narrowed
@@ -1029,36 +1131,23 @@ export function createIntersectionNormalizer(
                 : normalize(input.values, `${location}.additionalProperties`),
           };
           break;
-        case 'union':
-          if (input.sourceObjectType) {
-            // Prove redundancy before distributing allOf: later conjuncts may
-            // narrow a branch and hide a non-object alternative in the source.
-            charge(input.branches.length, location);
-            const pending = [...input.branches];
-            const seen = new Set<Schema>();
-            while (pending.length > 0) {
-              const branch = resolve(pending.pop()!, location).schema;
-              if (seen.has(branch)) continue;
-              charge(1, location);
-              seen.add(branch);
-              if (branch.kind === 'union') {
-                charge(branch.branches.length, location);
-                for (const child of branch.branches) pending.push(child);
-              } else if (branch.kind !== 'object' && branch.kind !== 'map')
-                fail(
-                  `${location}.type`,
-                  `non-redundant type: object beside ${unionKeyword(input)} is unsupported; every branch must already require an object; make object types explicit in the branches or use a supported allOf composition`,
-                );
-            }
-          }
+        case 'union': {
+          const branches = input.branches.map((branch, index) =>
+            normalize(branch, `${location}.${unionKeyword(input)}[${index}]`),
+          );
+          // Validate each source union, including nested unions, before another
+          // conjunction can remove a type-disjoint alternative.
+          for (const [index, branch] of branches.entries())
+            assertUnionBranchAccess(
+              sourceAccess(branch, location),
+              `${location}.${unionKeyword(input)}[${index}]`,
+            );
           result = {
             ...input,
-            sourceObjectType: undefined,
-            branches: input.branches.map((branch, index) =>
-              normalize(branch, `${location}.${unionKeyword(input)}[${index}]`),
-            ),
+            branches,
           };
           break;
+        }
         case 'ref':
           result = referenceConstraints(input, location);
           break;

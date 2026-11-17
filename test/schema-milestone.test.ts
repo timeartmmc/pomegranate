@@ -373,24 +373,6 @@ for (const [name, mutate, pattern] of [
     /tag must match/,
   ],
   [
-    'unconstrained oneOf',
-    (d) => {
-      Reflect.deleteProperty(d.components.schemas.Shape, 'discriminator');
-    },
-    /discriminator/,
-  ],
-  [
-    'overlapping oneOf',
-    (d) => {
-      Object.assign(d.components.schemas.Location, {
-        items: {
-          oneOf: [{ type: 'number' }, { type: 'integer' }],
-        },
-      });
-    },
-    /oneOf alternatives without a discriminator must accept disjoint JSON types/,
-  ],
-  [
     'nonproductive schema alias cycle',
     (d) => {
       Object.assign(d.components.schemas, {

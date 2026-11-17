@@ -128,7 +128,6 @@ export function schemaNode(
         branches: value.branches,
         cardinality: own(value, 'cardinality') ?? 'any',
         sourceTypeArray: own(value, 'sourceTypeArray'),
-        sourceObjectType: own(value, 'sourceObjectType'),
         sourceLiterals: own(value, 'sourceLiterals'),
         discriminator: own(value, 'discriminator'),
       };
@@ -145,6 +144,7 @@ export function schemaNode(
         properties: value.properties,
         required: value.required,
         forbidden: own(value, 'forbidden'),
+        sourceKeys: own(value, 'sourceKeys'),
         minProperties: own(value, 'minProperties'),
         maxProperties: own(value, 'maxProperties'),
       };

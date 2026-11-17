@@ -40,6 +40,7 @@ import {
 } from './schema-graph.js';
 import { sourceBudget } from './source-budget.js';
 import { flatParameterShape } from './parameter-shape.js';
+import { createJsonTypeAnalysis } from './schema-domain.js';
 
 // Bounds are data, so sharing them by schema identity does not share emitted
 // constants. Each parser still owns its own constant and directional behavior.
@@ -150,6 +151,10 @@ export function schemaRenderer(
   const recursion = {
     request: recursiveSchemas(schemas.request).reachable,
     response: recursiveSchemas(schemas.response).reachable,
+  };
+  const jsonTypes = {
+    request: createJsonTypeAnalysis(schemas.request),
+    response: createJsonTypeAnalysis(schemas.response),
   };
   const containerBounds: Record<Direction, WeakMap<Schema, Constraints>> = {
     request: new WeakMap(),
@@ -338,6 +343,7 @@ export function schemaRenderer(
       false,
       body.forbidden,
       rules(bounds, objectRules),
+      body.sourceKeys,
     );
     return identifier(scope);
   }
@@ -352,6 +358,7 @@ export function schemaRenderer(
     exported = false,
     forbidden: readonly string[] = [],
     limits?: Expression,
+    sourceKeys?: readonly string[],
   ): void {
     const sizeCheck = (body: string[]) => {
       if (!limits) return;
@@ -362,7 +369,7 @@ export function schemaRenderer(
         `if (${use('propertyCount').source}(${strict ? 'output' : 'source'}, issues, ${bounds}${strict ? ', true' : ''})) return invalid;`,
       );
     };
-    if (fields.length > 0) {
+    if (fields.length > 0 || forbidden.length > 0 || sourceKeys !== undefined) {
       const table = object([
         ...fields.map((entry): readonly [string, Expression] => [
           entry.name,
@@ -376,7 +383,7 @@ export function schemaRenderer(
       parserBinding(
         name,
         type,
-        `${use('fixedObject').source}<${type}>(${table.source}, ${strict}${limits ? `, ${limits.source}` : ''})`,
+        `${use('fixedObject').source}<${type}>(${table.source}, ${strict}${limits ? `, ${limits.source}` : sourceKeys !== undefined ? ', undefined' : ''}${sourceKeys !== undefined ? `, ${data(sourceKeys).source}` : ''})`,
         exported,
         `generated parser ${name}`,
       );
@@ -578,6 +585,9 @@ export function schemaRenderer(
     const scalarPlan = (): void => {
       const plan = scalarValidationPlan(value, schemas[direction]);
       const base = child(plan.base, location);
+      // The base already owns combined bounds and literals. With no remaining
+      // assertions it is the complete conjunction, with the same checked type.
+      if (plan.runtime.length === 0) return binding(base.source);
       const checks = plan.runtime.map((assertion) =>
         child(
           assertion.kind === 'pattern'
@@ -693,15 +703,28 @@ export function schemaRenderer(
           );
           return construct('taggedParser', [jsonSource(propertyName), cases]);
         }
-        // Validation proved any oneOf branches disjoint, so both cardinalities
-        // use first-match parsing. One array argument keeps wide unions from
-        // becoming variadic calls.
+        // Disjoint JSON types prove uniqueness without testing later branches.
+        // Preserve first-match work for those existing contracts; overlapping
+        // types (including number/integer) require the exact runtime scan.
+        const seen = new Set<string>();
+        const exact =
+          value.cardinality === 'one' &&
+          value.branches.some((branch) => {
+            const types = jsonTypes[direction](branch);
+            const overlap = types.some((type) => seen.has(type));
+            for (const type of types) seen.add(type);
+            return overlap;
+          });
+        // One array keeps wide unions from becoming variadic calls.
         return construct('unionParser', [
           array(
             value.branches.map((branch, index) =>
               child(branch, schemaBranchLocation(value, location, index)),
             ),
           ).source,
+          ...(value.cardinality === 'one'
+            ? [jsonSource(exact ? 'one' : 'one-disjoint')]
+            : []),
         ]);
       }
       case 'intersection':
@@ -715,6 +738,7 @@ export function schemaRenderer(
           exported,
           value.forbidden,
           rules(value, objectRules),
+          value.sourceKeys,
         );
       case 'array': {
         const limits = arrayRules(value, direction);

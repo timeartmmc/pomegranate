@@ -756,9 +756,9 @@ explicit [`ignoreExtensions`](#configuration) entry.
 
 Supported schema composition:
 
-- [`allOf`](#allof-composition) supports single-branch wrappers and fixed-object
-  or scalar compositions, including constrained overlapping fields, under the
-  limits below.
+- [`allOf`](#allof-composition) supports single-branch wrappers, fixed-object,
+  scalar, array and map compositions, including nullable intersections and
+  constrained overlapping fields, under the limits below.
 - `anyOf` accepts one or more supported schemas. A value is valid when any
   branch accepts it, and POM returns the first matching branch's parsed value
   in declaration order. Fixed-object branches keep their direction rules:
@@ -769,25 +769,46 @@ Supported schema composition:
   of one value, outside recursive regions, which keep their runtime budgets. A
   `type: "null"` branch requires 3.1; 3.0 nullable schemas use
   `nullable: true` as described above.
-- `oneOf` without a discriminator requires branches that accept disjoint JSON
-  types: null, boolean, string, number (including integer), array, and object.
-  Exactly one branch can then match. Use a discriminator for object
-  alternatives, or `anyOf` when the first matching branch is acceptable.
-- `type: "object"` beside `oneOf` or `anyOf` is accepted when every branch
-  already requires an object, including through local references, nested unions,
-  and supported `allOf` compositions. It does not relax field validation or
-  `oneOf` matching rules. Branches allowing other JSON types, including untyped
-  `properties` schemas, receive a diagnostic. Other sibling types and nullable
-  type declarations remain unsupported.
+- `oneOf` accepts supported branches, including overlapping literals, enums,
+  scalars, objects, arrays and maps. Exactly one branch must accept the original
+  value; zero or multiple matches fail. POM returns the unique branch's parsed
+  value. Branch membership checks the original value against directional source
+  assertions, including branch-local `additionalProperties: false`, property
+  counts and array uniqueness. Request-only unknown/forbidden-field rejection
+  cannot select a branch by eliminating another match. After a unique match,
+  requests enforce those field policies and responses return that branch's
+  stripped output. A closed `Basic` branch with only `a` and a closed `Full`
+  branch with `a` and `b` therefore accept a complete `Full` value uniquely; open
+  versions of both branches reject it as ambiguous in both directions. Source
+  assertions stay active inside the selected branch's nested schemas, including
+  tagged and provably disjoint unions. Excluded directional fields do not
+  distinguish branches. Matching uses the same compile-time alternative bound
+  and recursive runtime budgets as `anyOf`; exhausting a budget cannot establish
+  uniqueness. A discriminator dispatches directly when distinct required tags
+  are available. TypeScript represents validated results as an ordinary union;
+  exact cardinality and numeric/string constraints remain runtime checks.
+  Compilation emits `oneof-overlap` warnings when a bounded search proves a
+  common value for two alternatives. Each warning names the direction and gives
+  an example that exact matching rejects. Intentional overlapping unions still
+  compile and execute. Absence of a warning does not prove exclusivity: complex
+  constraints and exhausted proof budgets remain runtime checks. The compiler
+  never changes `oneOf` to `anyOf`; correct the source declaration when multiple
+  matching branches are intended.
+- Supported `type` declarations and constraints beside `oneOf` or `anyOf`
+  participate in the same conjunction as an explicit `allOf`. This includes
+  primitive types, `type: "object"`, `type: "array"`, and nullable declarations.
+  Alternatives with disjoint JSON types are removed; remaining alternatives
+  retain their matching rules. A sibling array type can omit `items` when the
+  alternatives supply item validation. Other [composition limits](#allof-composition)
+  still apply.
 - Shared `properties` and `required` may appear beside `oneOf` / `anyOf` with
   supported object alternatives. `additionalProperties`, `minProperties`, and
   `maxProperties` follow the same [object composition rules](#allof-composition).
   These declarations mean the same as an `allOf` of the union and its shared
   object rules: every alternative must satisfy both. Overlapping constraints
   accumulate, required names can refer to branch fields, and branch-local closure
-  still applies. Non-object alternatives and typed-map intersections receive
-  diagnostics; `oneOf` still requires a discriminator for multiple object
-  alternatives.
+  still applies. The remaining alternatives must support object composition;
+  mixing fixed fields with typed map values remains unsupported.
 - In 3.1, nullable schemas accept `"type": ["string", "null"]` with any supported
   non-null type and `"null"` in either order. Exactly two distinct type names
   are required. Scalar `enum` and `const` still restrict accepted values,
@@ -1110,8 +1131,8 @@ local references, and nested compositions. Sibling object `properties` and
 `required` declarations participate in the same composition. Repeated references
 to the same component without use-site constraints are idempotent, including
 when an inherited property is redeclared. Constraints on that component or its
-aliases remain active. This does not add general array or map intersection
-support or compare separately written inline schemas for equality. Object
+aliases remain active. Separately written inline schemas are not compared for
+equality. Object
 fragments may omit `type` only when the composition also includes an explicit
 `type: "object"` assertion, directly or through a reference. Without that
 assertion, object keywords alone also admit primitives under OpenAPI; POM
@@ -1184,18 +1205,29 @@ not override another branch's `additionalProperties: false`. Pure maps of
 arbitrary JSON values may combine with property-count bounds and `required`
 names: the result retains every entry and requires those keys. Typed
 extra-value schemas cannot combine with fixed fields.
-Typed maps work alone or in a single-branch wrapper; intersecting them with
-additional assertions is unsupported.
+Typed maps may intersect other typed maps, arbitrary JSON maps, property-count
+bounds and required-only object assertions. Every entry must satisfy all value
+schemas; required keys accumulate. Values compose before directional projection
+and copying. A bare object type with required-only fragments keeps its existing
+fixed-field behavior; an explicit `additionalProperties` declaration establishes
+map intent.
+
+Array intersections compose their item schemas and intersect `minItems` and
+`maxItems`; `uniqueItems: true` from any conjunct remains active. The resulting
+parser validates and copies each item once against the combined schema. Scalar,
+object, union, array and map children use these same composition rules, including
+through constrained aliases.
 
 `allOf` distributes over `anyOf` and `oneOf` branches: composing `A` with
 `oneOf: [B, C]` produces `oneOf: [allOf(A, B), allOf(A, C)]`. Each alternative
-keeps its position, so the union's matching rule and any discriminator tags
-still apply to the composed objects; shared fields therefore reach every mapped
+keeps its matching rule, and any discriminator tags are remapped to retained
+branches; shared fields therefore reach every mapped
 branch. `readOnly` and `writeOnly` from other conjuncts apply to the whole
 union; annotations on the alternatives themselves remain unsupported. An
-alternative that cannot combine with the other branches, such as `integer` with
-a `string` conjunct, fails compilation rather than disappearing. Constraints
-beside a referenced union are unsupported.
+alternative with a provably disjoint JSON type, such as `integer` with a
+`string` conjunct, contributes no matches and is removed. Other contradictions
+remain explicit diagnostics. Constraints beside a referenced union are
+unsupported; use an explicit `allOf` composition instead.
 
 An intersection supports at most one discriminated `oneOf` factor, including
 through aliases and nested compositions. Combining several receives an explicit
@@ -1205,12 +1237,17 @@ disjoint, so `anyOf` and `oneOf` accept the same values. Keep those tags
 required and present after request/response projection in every direction that
 uses the schema.
 
-POM does not support intersections involving typed dynamic maps, multiple array
-schemas, or binary schemas. A nullable type beside or within a multi-branch
-composition is a union with null, and every branch would also need to accept
-null. A finite scalar literal assertion may narrow such a nullable declaration.
-For other conjuncts, wrap the composition in an outer `anyOf` with a null-only
-branch instead. An empty schema `{}` adds no constraints. Unsupported
+Nullable intersections accept null only when every conjunct accepts it. They
+can narrow to their non-null type, retain both alternatives, or narrow to null
+alone when their non-null types are disjoint. Type analysis is conservative:
+it does not prove arbitrary patterns, bounds or containers satisfiable.
+
+Binary intersections, mixed fixed objects/typed maps, and child conjunctions
+that require an always-rejecting schema remain unsupported. In particular,
+incompatible array items or map values receive diagnostics even when an empty
+container could satisfy the source schema. Contradictory constraints within a
+type also remain diagnostics, including in nullable alternatives; they are not
+silently pruned. An empty schema `{}` adds no constraints. Unsupported
 compositions fail before selection or writes, including in unused components.
 Recursion through a composed object's properties is supported; recursive object
 merging at the same value is unsupported.

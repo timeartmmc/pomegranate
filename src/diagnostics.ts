@@ -24,26 +24,43 @@ export function fail(location: string, detail: string): never {
 }
 
 export type CompileWarning = Readonly<{
-  code: 'ignored-schema-keyword';
+  code: 'ignored-schema-keyword' | 'oneof-overlap';
   path: string;
   message: string;
 }>;
 
-export type WarnSchema = (path: string, message: string) => void;
+export type WarnSchema = (
+  path: string,
+  message: string,
+  code?: CompileWarning['code'],
+) => void;
 
 // Reasons contain only supported keyword/type names, never source paths. One
 // exporter template can repeat thousands of times without flooding diagnostics.
 export function schemaWarnings() {
-  const groups = new Map<string, { path: string; count: number }>();
+  const groups = new Map<
+    string,
+    {
+      path: string;
+      message: string;
+      code: CompileWarning['code'];
+      count: number;
+    }
+  >();
   return {
-    warn: (path: string, message: string): void => {
-      const previous = groups.get(message);
+    warn: (
+      path: string,
+      message: string,
+      code: CompileWarning['code'] = 'ignored-schema-keyword',
+    ): void => {
+      const key = `${code}\0${message}`;
+      const previous = groups.get(key);
       if (previous) previous.count++;
-      else groups.set(message, { path, count: 1 });
+      else groups.set(key, { path, message, code, count: 1 });
     },
     values(): CompileWarning[] {
-      return [...groups].map(([message, { path, count }]) => ({
-        code: 'ignored-schema-keyword',
+      return [...groups.values()].map(({ message, code, path, count }) => ({
+        code,
         path,
         message:
           message +

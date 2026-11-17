@@ -1337,8 +1337,8 @@ function prepareSchemas(
     projection: projectSchemas(schemas),
     sourceValidation: validation,
     directionValidation: {
-      request: schemaValidation(),
-      response: schemaValidation(),
+      request: schemaValidation(warn),
+      response: schemaValidation(warn),
     },
   };
   return { context, order: schemaOrder };

@@ -41,6 +41,7 @@ export function allOfFixture() {
             },
             serverOnly: { type: 'string', readOnly: true },
             clientOnly: { type: 'string', writeOnly: true },
+            collections: { $ref: '#/components/schemas/Collections' },
           },
         },
         Composed: {
@@ -64,6 +65,48 @@ export function allOfFixture() {
           ],
         },
         Alias: { allOf: [{ $ref: '#/components/schemas/Composed' }] },
+        Collections: {
+          type: 'object',
+          required: ['numbers', 'scores', 'choice'],
+          properties: {
+            numbers: {
+              allOf: [
+                {
+                  type: ['array', 'null'],
+                  items: { type: 'number', minimum: 0 },
+                  minItems: 1,
+                  uniqueItems: true,
+                },
+                {
+                  type: ['array', 'null'],
+                  items: { type: 'integer', multipleOf: 2 },
+                  maxItems: 3,
+                },
+              ],
+            },
+            scores: {
+              allOf: [
+                {
+                  type: 'object',
+                  additionalProperties: { type: 'number', minimum: 0 },
+                  required: ['primary'],
+                },
+                {
+                  type: 'object',
+                  additionalProperties: { type: 'integer', maximum: 10 },
+                  maxProperties: 2,
+                },
+              ],
+            },
+            choice: {
+              type: 'number',
+              oneOf: [
+                { type: 'integer', minimum: 0, maximum: 2 },
+                { type: 'integer', minimum: 2, maximum: 4 },
+              ],
+            },
+          },
+        },
         Scalar: {
           allOf: [
             { type: 'string', pattern: '^W-' },
@@ -125,6 +168,17 @@ build({body:input});
 export const output: ResponseTypes['Alias'] = {
   id:'W-10', count:6, details:{label:'synthetic',active:true}, tag:'widget',serverOnly:'output',
 };
+const collections: NonNullable<RequestTypes['Alias']['collections']> = {
+  numbers: [0, 2], scores: { primary: 1, other: 2 }, choice: 1,
+};
+build({body:{...input,collections}});
+build({body:{...input,collections:{...collections,numbers:null}}});
+// @ts-expect-error Composed array items remain numeric.
+build({body:{...input,collections:{...collections,numbers:['two']}}});
+// @ts-expect-error Required map keys remain required in consumer declarations.
+build({body:{...input,collections:{...collections,scores:{other:2}}}});
+// @ts-expect-error Overlapping oneOf refines numbers at runtime without widening the type.
+build({body:{...input,collections:{...collections,choice:'one'}}});
 const tag:'widget'=output.tag;
 const label:string=output.details.label;
 const active:boolean=output.details.active;
@@ -169,6 +223,41 @@ export function verifyAllOf(
   assert.deepEqual(request.body, input);
   assert.notEqual(request.body, input);
   assert.notEqual(record(request.body).details, input.details);
+  const collections = {
+    numbers: [0, 2],
+    scores: { primary: 1, other: 2 },
+    choice: 1,
+  };
+  for (const numbers of [collections.numbers, null]) {
+    const body = { ...input, collections: { ...collections, numbers } };
+    const prepared = operation.build({ body });
+    assert.deepEqual(prepared.body, body);
+    assert.notEqual(
+      record(record(prepared.body).collections).scores,
+      collections.scores,
+    );
+    const parsedResponse = operation.parseResponse({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, serverOnly: 'output' }),
+    });
+    assert.equal(parsedResponse.kind, 'success');
+  }
+  for (const changed of [
+    { ...collections, numbers: [] },
+    { ...collections, numbers: [2, 2] },
+    { ...collections, numbers: [1.5] },
+    { ...collections, numbers: [0, 2, 4, 6] },
+    { ...collections, scores: { other: 1 } },
+    { ...collections, scores: { primary: 11 } },
+    { ...collections, scores: { primary: 1, other: 2, extra: 3 } },
+    { ...collections, choice: 2 },
+    { ...collections, choice: 5 },
+  ])
+    assert.equal(
+      inputSchema.schema.safeParse({ ...input, collections: changed }).success,
+      false,
+    );
   const parsed = inputSchema.schema.parse(input);
   assert.deepEqual(parsed, input);
   assert.notEqual(parsed, input);

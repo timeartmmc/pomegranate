@@ -618,15 +618,13 @@ void test('independent schema failures retain dialect diagnostics across normali
     ComposeA: {
       allOf: [
         { type: 'array', items: { type: 'string' } },
-        { type: 'array', items: { type: 'string' }, minItems: 1 },
+        { type: 'array', items: { type: 'integer' }, minItems: 1 },
       ],
     },
     ComposeB: { allOf: [{ type: 'string' }, { type: 'object' }] },
-    ValidateA: {
-      oneOf: [{ type: 'string' }, { type: 'string', minLength: 1 }],
-    },
-    ValidateB: { oneOf: [{ type: 'integer' }, { type: 'number' }] },
-    Good: { type: 'string' },
+    ValidateA: { ...ref('Good'), minLength: 3 },
+    ValidateB: { ...ref('Good'), pattern: '^bad$' },
+    Good: { type: 'string', enum: ['ok'] },
   };
   const ids = Object.keys(schemas);
   for (const openapi of ['3.0.4', '3.1.2']) {

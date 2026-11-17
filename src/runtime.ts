@@ -51,10 +51,12 @@ const maximumErrorMessage = 8_192;
 const issueCapacity: unique symbol = Symbol('pom.issueCapacity');
 const abortCause: unique symbol = Symbol('pom.abortCause');
 const speculativeAttempt: unique symbol = Symbol('pom.speculativeAttempt');
+const sourceMode: unique symbol = Symbol('pom.sourceMode');
 type IssueState = {
   readonly [issueCapacity]?: number;
   [abortCause]?: string;
   [speculativeAttempt]?: true;
+  [sourceMode]?: 'membership' | 'output' | undefined;
 };
 type IssueBuffer<T> = T[] & IssueState;
 export type Issues = IssueBuffer<Problem>;
@@ -251,6 +253,8 @@ function issueBuffer<T>(
   parent?: Issues,
 ): IssueBuffer<T> {
   const issues: IssueBuffer<T> = [];
+  if (parent?.[sourceMode] !== undefined)
+    issues[sourceMode] = parent[sourceMode];
   if (capacity < maximumIssues)
     Object.defineProperty(issues, issueCapacity, { value: capacity });
   const traversal =
@@ -1268,7 +1272,10 @@ export function list<T>(
   const start = issues.length;
   const output: T[] = [];
   const received: unknown[] | undefined =
-    settings?.uniqueItems === 'received' ? [] : undefined;
+    settings?.uniqueItems &&
+    (settings.uniqueItems === 'received' || issues[sourceMode] !== undefined)
+      ? []
+      : undefined;
   for (let index = 0; index < length; index++) {
     if (stopped(issues)) return invalid;
     const before = issues.length;
@@ -1501,7 +1508,7 @@ export function refineObject<T extends object>(
 ): T | Invalid {
   if (
     ((mode === 'map' && plainRecord(input)) ||
-      (mode === 'response' &&
+      ((mode === 'response' || issues[sourceMode] !== undefined) &&
         typeof input === 'object' &&
         input !== null &&
         !Array.isArray(input))) &&
@@ -1511,7 +1518,7 @@ export function refineObject<T extends object>(
   const start = issues.length;
   const value = base(input, issues);
   if (value === invalid || issues.length !== start) return invalid;
-  if (mode !== 'request') return value;
+  if (mode !== 'request' || issues[sourceMode] === 'membership') return value;
   return propertyCount(value, issues, rules, true) ? invalid : value;
 }
 
@@ -1522,71 +1529,135 @@ export function emptyOptions(
   return map<never>(input, issues, neverValue);
 }
 
+const multipleUnionMatches =
+  'expected exactly one matching union branch; several branches matched';
+
+// Membership facts and parsed outputs have different semantics. Private mode
+// identities keep recursive caches separate without giving each traversal a
+// second budget; normal anyOf behavior remains independent of source matching.
+const unionModes = new WeakMap<
+  readonly unknown[],
+  {
+    membership: readonly unknown[];
+    output: readonly unknown[];
+  }
+>();
+function unionCacheKey(
+  branches: readonly unknown[],
+  mode: IssueState[typeof sourceMode],
+): readonly unknown[] {
+  if (mode === undefined) return branches;
+  let keys = unionModes.get(branches);
+  if (!keys) unionModes.set(branches, (keys = { membership: [], output: [] }));
+  return keys[mode];
+}
+
+function sourceOutput<T>(
+  input: unknown,
+  issues: Issues,
+  parse: Parse<T>,
+): T | Invalid {
+  const previous = issues[sourceMode];
+  if (previous === 'membership') return parse(input, issues);
+  issues[sourceMode] = 'output';
+  try {
+    return parse(input, issues);
+  } finally {
+    issues[sourceMode] = previous;
+  }
+}
+
 export function union<T>(
   input: unknown,
   issues: Issues,
   branches: readonly Parse<T>[],
+  cardinality: 'any' | 'one' | 'one-disjoint' = 'any',
 ): T | Invalid {
+  // A type proof establishes uniqueness, but source closure/count assertions
+  // still apply. Parse once in source-aware output mode at the ordinary cost.
+  if (cardinality === 'one-disjoint') {
+    const previous = issues[sourceMode];
+    if (previous !== 'membership') issues[sourceMode] = 'output';
+    try {
+      return union(input, issues, branches);
+    } finally {
+      issues[sourceMode] = previous;
+    }
+  }
   if (stopped(issues)) return invalid;
   const traversal = recursiveTraversals.get(issues);
-  // Generated null branches return null, and cannot match a non-null value.
-  // A sole viable branch is committed: retain its parent's diagnostic mode.
-  const selected =
-    branches.length === 1
-      ? branches[0]
-      : input === null
-        ? branches.find((branch) => branch === nullValue)
-        : branches.length === 2
-          ? branches[0] === nullValue
-            ? branches[1]
-            : branches[1] === nullValue
-              ? branches[0]
-              : undefined
-          : undefined;
+  const mode = issues[sourceMode];
+  const key = unionCacheKey(
+    branches,
+    cardinality === 'one' && mode !== 'membership' ? 'output' : mode,
+  );
+  // anyOf can commit to a direct null branch. oneOf must still test other
+  // alternatives: a nullable union or arbitrary JSON branch may also accept it.
+  // A sole branch is committed and retains its parent's diagnostic mode.
+  let selected: Parse<T> | undefined;
+  if (branches.length === 1) selected = branches[0];
+  else if (cardinality === 'any') {
+    if (input === null)
+      selected = branches.find((branch) => branch === nullValue);
+    else if (branches.length === 2) {
+      if (branches[0] === nullValue) selected = branches[1];
+      else if (branches[1] === nullValue) selected = branches[0];
+    }
+  }
   if (selected) {
     if (traversal && recursiveWork(traversal, issues)) return invalid;
-    return selected(input, issues);
+    return cardinality === 'one'
+      ? sourceOutput(input, issues, selected)
+      : selected(input, issues);
   }
   const subject = typeof input === 'object' && input !== null;
   let chosen: Map<unknown, number> | undefined;
   if (traversal) {
     if (subject) {
       const position = (traversal.position ??= recursivePosition());
-      if (position.outputs?.has(branches))
-        return position.outputs.get(branches) as T;
+      if (position.outputs?.has(key)) return position.outputs.get(key) as T;
     }
     const selections = (traversal.selections ??= new Map<
       readonly unknown[],
       Map<unknown, number>
     >());
-    chosen = selections.get(branches);
+    const selectionKey =
+      cardinality === 'one' ? unionCacheKey(branches, 'membership') : key;
+    chosen = selections.get(selectionKey);
     if (!chosen)
-      selections.set(branches, (chosen = new Map<unknown, number>()));
+      selections.set(selectionKey, (chosen = new Map<unknown, number>()));
     const known = chosen.get(input);
     if (known !== undefined) {
       if (known >= 0) {
         // Re-parse at a new occurrence: depth and active ancestors can differ.
         if (recursiveWork(traversal, issues)) return invalid;
         const before = issues.length;
-        const value = branches[known]!(input, issues);
+        const value =
+          cardinality === 'one'
+            ? sourceOutput(input, issues, branches[known]!)
+            : branches[known]!(input, issues);
         if (subject && value !== invalid && issues.length === before)
-          (traversal.position!.outputs ??= new Map()).set(branches, value);
+          (traversal.position!.outputs ??= new Map()).set(key, value);
         return value;
       }
+      if (known === -2) return report(issues, multipleUnionMatches, false);
       // Cache ordinary failures for scalars too. Committed calls still collect
       // the branch diagnostics; only speculative retries need a short rejection.
       if (issues[speculativeAttempt])
         return report(issues, 'expected a matching union branch', true);
     }
   }
-  // Ordinary rejection is speculative. An aborted attempt cannot prove that
-  // a later branch is the first match, so it must not choose another projection.
+  // Count source matches before applying request rejection or response stripping.
+  // The unique branch then supplies its ordinary detached directional output.
+  // An aborted attempt cannot establish either first-match order or uniqueness.
   const attempts: Issues[] = [];
+  let matched: { index: number; value: T } | undefined;
   for (const [index, branch] of branches.entries()) {
     // Same-value alternatives consume work even when no child is visited.
     if (traversal && recursiveWork(traversal, issues)) return invalid;
     const attempt = issueBuffer<Problem>(remaining(issues), issues);
     attempt[speculativeAttempt] = true;
+    if (cardinality === 'one') attempt[sourceMode] = 'membership';
     const value = branch(input, attempt);
     const cause = attempt[abortCause] ?? traversal?.abort;
     if (cause !== undefined) {
@@ -1595,12 +1666,35 @@ export function union<T>(
       return invalid;
     }
     if (value !== invalid && attempt.length === 0) {
+      if (cardinality === 'one') {
+        if (matched) {
+          chosen?.set(input, -2);
+          return report(issues, multipleUnionMatches, false);
+        }
+        matched = { index, value };
+        continue;
+      }
       chosen?.set(input, index);
       if (subject && traversal)
-        (traversal.position!.outputs ??= new Map()).set(branches, value);
+        (traversal.position!.outputs ??= new Map()).set(key, value);
       return value;
     }
     attempts.push(attempt);
+  }
+  if (matched) {
+    // A positive cache entry means every other branch was rejected. Re-parsing
+    // the winner at a different occurrence still checks its depth and ancestors.
+    chosen?.set(input, matched.index);
+    if (mode !== 'membership' && traversal && recursiveWork(traversal, issues))
+      return invalid;
+    const before = issues.length;
+    const value =
+      mode === 'membership'
+        ? matched.value
+        : sourceOutput(input, issues, branches[matched.index]!);
+    if (subject && traversal && value !== invalid && issues.length === before)
+      (traversal.position!.outputs ??= new Map()).set(key, value);
+    return value;
   }
   chosen?.set(input, -1);
   // Branches that accepted the value's shape but failed a constraint are the
@@ -1642,7 +1736,7 @@ export function taggedUnion<T>(
   const tag: unknown = Reflect.get(input, propertyName);
   if (typeof tag === 'string' && Object.hasOwn(cases, tag)) {
     const parse = cases[tag];
-    if (parse !== undefined) return parse(input, issues);
+    if (parse !== undefined) return sourceOutput(input, issues, parse);
   }
   return report(issues, 'expected a declared discriminator tag', true, [
     propertyName,
@@ -1672,6 +1766,7 @@ export function fixedObject<T extends object>(
   fields: FieldTable<T>,
   strict: boolean,
   rules?: ObjectRules,
+  sourceKeys?: readonly string[],
 ): Parse<T> {
   let slots:
     | readonly { name: string; required: boolean; parse: Parse<unknown> }[]
@@ -1725,7 +1820,18 @@ export function fixedObject<T extends object>(
       speculativeSlots = [...scalars, ...rest];
     }
     if (requiredKeys(source, requiredNames, issues) === invalid) return invalid;
-    if (!strict && rules && propertyCount(source, issues, rules))
+    const mode = issues[sourceMode];
+    if (
+      mode !== undefined &&
+      sourceKeys !== undefined &&
+      unknownKeys(source, sourceKeys, issues)
+    )
+      return invalid;
+    if (
+      (!strict || mode !== undefined) &&
+      rules &&
+      propertyCount(source, issues, rules)
+    )
       return invalid;
     const start = issues.length;
     const output: Record<string, unknown> = template ? { ...template } : {};
@@ -1758,13 +1864,18 @@ export function fixedObject<T extends object>(
         }
       }
     }
-    if (strict) {
+    if (strict && mode !== 'membership') {
       const blocked = forbiddenKeys(source, forbidden, issues);
       const extra = unknownKeys(source, known, issues);
       failed ||= blocked || extra;
     }
     if (failed || issues.length !== start) return invalid;
-    if (strict && rules && propertyCount(output, issues, rules, true))
+    if (
+      strict &&
+      mode !== 'membership' &&
+      rules &&
+      propertyCount(output, issues, rules, true)
+    )
       return invalid;
     return output as T;
   };
@@ -1796,8 +1907,12 @@ export function requiredMapParser<T, K extends string>(
 ): Parse<Record<string, T> & Record<K, T>> {
   return (input, issues) => map(input, issues, value, rules, required);
 }
-export function unionParser<T>(branches: readonly Parse<T>[]): Parse<T> {
-  const parse: Parse<T> = (input, issues) => union(input, issues, branches);
+export function unionParser<T>(
+  branches: readonly Parse<T>[],
+  cardinality: 'any' | 'one' | 'one-disjoint' = 'any',
+): Parse<T> {
+  const parse: Parse<T> = (input, issues) =>
+    union(input, issues, branches, cardinality);
   if (branches.every((branch) => scalarParsers.has(branch)))
     scalarParsers.add(parse);
   return parse;

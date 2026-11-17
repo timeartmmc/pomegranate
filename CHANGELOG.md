@@ -4,11 +4,28 @@
 
 ### Breaking changes
 
+`oneOf` checks directional source membership before request field policy or
+response stripping. Closed branch objects now enforce their source closure
+within `oneOf`, including nested schemas. An open `Basic`/`Full` overlap rejects
+a full value in both directions; closing both branches permits the unique full
+match. Ordinary response objects outside union source matching retain their
+existing stripping behavior.
+
 `PreparedRequest` and `Executor` add the `form` body kind. Transports that
 exhaustively inspect body kinds must handle it or reject it explicitly, even
 when no operation declares a form body.
 
 ### Features
+
+Untagged `oneOf` supports overlapping branches and validates exactly one match,
+including literals, enums, objects and containers. Sibling types and constraints
+use canonical composition. Proven overlap produces compile-time warnings with
+an example and direction; ambiguous payloads still fail exact runtime matching.
+
+`allOf` composes compatible array items and map values with their container
+bounds, uniqueness and required keys. Nullable intersections remove provably
+disjoint type alternatives while preserving union cardinality. Mixed fixed
+objects/typed maps and contradictory child compositions retain explicit limits.
 
 `pom audit --config pom.json` and `audit(document, options)` report failing
 operation IDs, shared blockers, and a suggested exclusion list without writing
