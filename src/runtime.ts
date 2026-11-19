@@ -812,12 +812,11 @@ function authority(value: string): boolean {
   return port === '' || (port[0] === ':' && !/[^0-9]/.test(port.slice(1)));
 }
 
-function uri(value: string): boolean {
+function uri(value: string, allowRelative: boolean): boolean {
   if (/[^\x21-\x7e]/.test(value)) return false;
-  const colon = value.indexOf(':');
-  if (colon <= 0 || !/^[A-Za-z][A-Za-z0-9+.-]*$/.test(value.slice(0, colon)))
-    return false;
-  const rest = value.slice(colon + 1);
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:/.exec(value);
+  if (!scheme && !allowRelative) return false;
+  const rest = scheme ? value.slice(scheme[0].length) : value;
   const fragmentStart = rest.indexOf('#');
   const beforeFragment =
     fragmentStart < 0 ? rest : rest.slice(0, fragmentStart);
@@ -839,6 +838,10 @@ function uri(value: string): boolean {
     if (!authority(slash < 0 ? path.slice(2) : path.slice(2, slash)))
       return false;
     path = slash < 0 ? '' : path.slice(slash);
+  } else if (!scheme && /^[^/]*:/.test(path)) {
+    // RFC 3986 path-noscheme excludes colons from the first segment of a
+    // relative path. Paths starting with a slash have an empty first segment.
+    return false;
   }
   return component(path, subDelimiters + ':@/');
 }
@@ -888,8 +891,12 @@ export const emailFormat: StringFormatRule = {
   message: 'expected an email address',
 };
 export const uriFormat: StringFormatRule = {
-  check: uri,
+  check: (value): boolean => uri(value, false),
   message: 'expected a URI',
+};
+export const uriReferenceFormat: StringFormatRule = {
+  check: (value): boolean => uri(value, true),
+  message: 'expected a URI reference',
 };
 export const ipv4Format: StringFormatRule = {
   // JSON Schema uses RFC 2673 dotted-quad, which allows leading zeroes.
@@ -936,6 +943,7 @@ export const formats = {
   uuid: (value: string): boolean => uuidFormat.check(value),
   email: (value: string): boolean => emailFormat.check(value),
   uri: (value: string): boolean => uriFormat.check(value),
+  'uri-reference': (value: string): boolean => uriReferenceFormat.check(value),
   ipv4: (value: string): boolean => ipv4Format.check(value),
   ipv6: (value: string): boolean => ipv6Format.check(value),
 } as const;

@@ -12,6 +12,7 @@ export const stringFormatHelpers = {
   uuid: 'uuidFormat',
   email: 'emailFormat',
   uri: 'uriFormat',
+  'uri-reference': 'uriReferenceFormat',
   ipv4: 'ipv4Format',
   ipv6: 'ipv6Format',
 } satisfies Record<StringFormat, keyof typeof import('./runtime.js')>;
@@ -47,25 +48,32 @@ export function numericFormatRules(
   return rules.get(name);
 }
 
-export function builtInFormat(name: string): boolean {
-  return (
+type FormatType = 'string' | 'integer' | 'number';
+
+export function builtInFormatTypes(name: string): readonly FormatType[] {
+  const types: FormatType[] = [];
+  if (
     Object.hasOwn(stringFormatHelpers, name) ||
-    numericFormats.integer.has(name) ||
-    numericFormats.number.has(name) ||
     name === 'binary' ||
     name === 'password'
-  );
+  )
+    types.push('string');
+  if (numericFormats.integer.has(name)) types.push('integer');
+  if (numericFormats.number.has(name)) types.push('number');
+  return types;
 }
 
 function alternatives(names: readonly string[]): string {
   return `${names.slice(0, -1).join(', ')} or ${names.at(-1)}`;
 }
 
-export const numericFormatMessages = {
-  number: `unsupported numeric format; number schemas support ${alternatives([...numericFormats.number.keys()])}`,
-  integer: `unsupported integer format; expected ${alternatives([...numericFormats.integer.keys()])}`,
+export const numericFormatNames = {
+  number: alternatives([...numericFormats.number.keys()]),
+  integer: alternatives([...numericFormats.integer.keys()]),
 };
-export const expectedStringFormats = alternatives([
-  ...Object.keys(stringFormatHelpers),
-  'password',
-]);
+
+export function builtInFormatMismatch(name: string, found: string): string {
+  const types = builtInFormatTypes(name).map((type) => JSON.stringify(type));
+  const expected = types.length === 1 ? types[0] : alternatives(types);
+  return `built-in format ${JSON.stringify(name)} requires type ${expected}. Found type ${JSON.stringify(found)}`;
+}

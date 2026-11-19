@@ -247,7 +247,7 @@ void test('compiler IP literals use the runtime predicates and retain nullable/d
     );
     await assert.rejects(
       compile(standaloneDocument({ type: 'integer', format }), roots),
-      /unsupported integer format/,
+      /requires type "string". Found type "integer"/,
     );
     const document = fixture();
     document.components.schemas.Invalid = {

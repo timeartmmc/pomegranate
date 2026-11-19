@@ -9,7 +9,10 @@ import { parseYaml } from '../dist/yaml.js';
 import { generatedWorkspace } from './generated-workspace.ts';
 import type { RuntimeClient, StandaloneModule } from './runtime-types.ts';
 
-const samples: Record<'email' | 'uri' | 'byte', [string, boolean][]> = {
+const samples: Record<
+  'email' | 'uri' | 'uri-reference' | 'byte',
+  [string, boolean][]
+> = {
   email: [
     ['a+tag@example.invalid', true],
     ['~a@example.invalid', true],
@@ -138,9 +141,33 @@ const samples: Record<'email' | 'uri' | 'byte', [string, boolean][]> = {
     ['1x:path', false],
     ['x_y:path', false],
   ],
+  'uri-reference': [
+    ['', true],
+    ['?', true],
+    ['#', true],
+    ['urn:example:synthetic', true],
+    ['//[::1]:443/path', true],
+    ['../items/%FF?x=%2F#Mixed', true],
+    ['?q=x:y', true],
+    ['#a:b', true],
+    ['/:item', true],
+    ['./1:item', true],
+    ['%3Aitem', true],
+    ['assets/icon.svg', true],
+    [':item', false],
+    ['1x:path', false],
+    ['x_y:path', false],
+    ['//host:abc/path', false],
+    ['//[::not-an-address]/path', false],
+    ['/path?x=%2', false],
+    ['/path#one#two', false],
+    ['/path/é', false],
+    ['/path\\item', false],
+    ['/path\n', false],
+  ],
 };
 
-for (const format of ['email', 'uri', 'byte'] as const) {
+for (const format of ['email', 'uri', 'uri-reference', 'byte'] as const) {
   void test(`${format} validates the same syntax in request/response parsers and compiler literals`, async (t) => {
     const document = {
       openapi: '3.1.0',
@@ -309,7 +336,7 @@ void test('format references intersect constraints and defaults remain annotatio
       defaults: { schema: '#/components/schemas/Defaults', usage: 'response' },
     },
   });
-  for (const format of ['idn-email', 'iri', 'uri-reference', 'url']) {
+  for (const format of ['idn-email', 'iri', 'url']) {
     const input = structuredClone(document);
     Object.assign(input.components.schemas.Email, { format });
     await assert.rejects(compile(input, options), /unsupported format/);

@@ -128,9 +128,37 @@ void test('format advice does not suggest string registration for container or b
         {
           name: 'ContractError',
           location: 'components.schemas.Value.format',
-          message: `components.schemas.Value.format: format is not supported on ${schema.type} schemas in this version`,
+          message: `components.schemas.Value.format: format "${format}" is not supported on ${schema.type} schemas`,
         },
       );
+});
+
+void test('unregistered string format diagnostics identify the matching configuration', async () => {
+  const input = document({ type: ['string', 'null'], format: 'month-code' });
+  await assert.rejects(
+    compile(input, selection),
+    /components\.schemas\.Value\.format: unsupported format "month-code" on type "string"\. Register "month-code" in formats with type "string" and a pattern/,
+  );
+  const options = {
+    ...selection,
+    formats: { 'month-code': { type: 'string', pattern: '[0-9]{4}-[0-9]{2}' } },
+  } as const;
+  await compile(input, options);
+  await assert.rejects(
+    compile(document({ type: 'integer', format: 'month-code' }), options),
+    /registered format "month-code" requires type "string"\. Found type "integer"/,
+  );
+});
+
+void test('unregistered format diagnostics reject invalid registration names', async () => {
+  for (const [format, message] of [
+    ['', /\.format: expected a nonempty string/],
+    ['constructor', /\.format: unsupported object key "constructor"/],
+  ] as const)
+    await assert.rejects(
+      compile(document({ type: 'integer', format }), selection),
+      message,
+    );
 });
 
 void test('3.0 nullable allOf warns without changing the referenced type', async () => {

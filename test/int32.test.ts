@@ -176,17 +176,17 @@ const invalid: [string, Schema, RegExp][] = [
   [
     'number type mismatch',
     { type: 'number', format: 'int32' },
-    /unsupported numeric format/,
+    /built-in format "int32" requires type "integer". Found type "number"/,
   ],
   [
     'string type mismatch',
     { type: 'string', format: 'int32' },
-    /unsupported format/,
+    /built-in format "int32" requires type "integer". Found type "string"/,
   ],
   [
     'boolean type mismatch',
     { type: 'boolean', format: 'int32' },
-    /format is not supported on boolean schemas in this version/,
+    /format "int32" is not supported on boolean schemas/,
   ],
   [
     'reference format sibling',
@@ -213,7 +213,11 @@ void test('undeclared numeric formats diagnose', async () => {
     const input = document({ Value: { type: 'number', format } });
     await assert.rejects(
       compile(input, roots),
-      /format: unsupported numeric format; number schemas support float or double/,
+      (error) =>
+        error instanceof ContractError &&
+        error.message.includes(
+          `unsupported format "${format}" on type "number"`,
+        ),
     );
   }
 });

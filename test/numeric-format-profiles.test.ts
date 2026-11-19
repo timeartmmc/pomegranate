@@ -198,15 +198,9 @@ void test('numeric format references preserve string constraints and finite-floa
 void test('unknown numeric formats diagnose built-in and registered alternatives before selection', async () => {
   for (const modern of [true, false])
     for (const nullable of [false, true])
-      for (const [type, detail] of [
-        [
-          'number',
-          'unsupported numeric format; number schemas support float or double, or register a custom number format in formats',
-        ],
-        [
-          'integer',
-          'unsupported integer format; expected int32 or int64, or register a custom integer format in formats',
-        ],
+      for (const [type, builtIns] of [
+        ['number', 'float or double'],
+        ['integer', 'int32 or int64'],
       ] as const) {
         const document = fixture(modern);
         document.components.schemas.Unused = {
@@ -217,7 +211,12 @@ void test('unknown numeric formats diagnose built-in and registered alternatives
         await assert.rejects(compile(document, selection), (error) => {
           assert.ok(error instanceof ContractError);
           assert.equal(error.location, 'components.schemas.Unused.format');
-          assert.equal(error.message, `${error.location}: ${detail}`);
+          assert.ok(error.message.includes(builtIns));
+          assert.ok(
+            error.message.includes(
+              `Register "currency" in formats with type "${type}"`,
+            ),
+          );
           return true;
         });
       }
@@ -240,10 +239,13 @@ void test('numeric profiles reject invalid literals, impossible intervals, wrong
       { $ref: '#/components/schemas/Float', minimum: 1e40 },
       /no finite float32/,
     ],
-    [{ type: 'string', format: 'float' }, /unsupported format/],
-    [{ type: 'string', format: 'double' }, /unsupported format/],
-    [{ type: 'integer', format: 'float' }, /unsupported integer format/],
-    [{ type: 'number', format: 'int64' }, /unsupported numeric format/],
+    [{ type: 'string', format: 'float' }, /"float" requires type "number"/],
+    [{ type: 'string', format: 'double' }, /"double" requires type "number"/],
+    [{ type: 'integer', format: 'float' }, /"float" requires type "number"/],
+    [
+      { type: 'number', format: 'int64' },
+      /"int64" requires type "string" or "integer". Found type "number"/,
+    ],
   ];
   for (const [schema, message] of cases) {
     const document = fixture();

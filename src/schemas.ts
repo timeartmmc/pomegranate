@@ -50,9 +50,9 @@ import {
 } from './schema-constraints.js';
 import type { WorkCounter } from './schema-constraints.js';
 import {
-  builtInFormat,
-  expectedStringFormats,
-  numericFormatMessages,
+  builtInFormatMismatch,
+  builtInFormatTypes,
+  numericFormatNames,
   numericFormatRules,
   stringFormatHelpers,
 } from './formats.js';
@@ -63,15 +63,19 @@ type RegisteredFormat =
   | Readonly<{ name: string; type: 'number' | 'integer'; rules: Constraints }>;
 export type FormatRegistry = ReadonlyMap<string, RegisteredFormat>;
 
+function checkFormatRegistrationName(name: string, location: string): void {
+  safeKey(text(name, location), location);
+}
+
 export function normalizeFormats(input: unknown = {}): FormatRegistry {
   const definitions = record(input, 'formats');
   return new Map(
     Object.keys(definitions)
       .sort()
       .map((name): [string, RegisteredFormat] => {
-        const location = `formats.${name}`;
-        safeKey(text(name, 'formats'), location);
-        if (builtInFormat(name))
+        const location = name === '' ? 'formats' : `formats.${name}`;
+        checkFormatRegistrationName(name, location);
+        if (builtInFormatTypes(name).length > 0)
           fail(location, 'built-in formats cannot be overridden');
         const definition = record(definitions[name], location);
         const kind = definition.type;
@@ -243,8 +247,9 @@ function schemaNormalizer(
       ? source
       : applicableKeywords(source, location, nesting);
     if (Object.hasOwn(value, 'format')) {
-      if (typeof value.format !== 'string')
-        fail(`${location}.format`, 'expected a string');
+      const formatLocation = `${location}.format`;
+      const name = value.format;
+      if (typeof name !== 'string') fail(formatLocation, 'expected a string');
       const type = value.type;
       const kind =
         Array.isArray(type) &&
@@ -260,17 +265,24 @@ function schemaNormalizer(
         kind === 'null'
       )
         fail(
-          `${location}.format`,
-          `format is not supported on ${kind} schemas in this version`,
+          formatLocation,
+          `format ${JSON.stringify(name)} is not supported on ${kind} schemas`,
         );
-      if (!builtInFormat(value.format) && !registered.has(value.format)) {
+      if (builtInFormatTypes(name).length === 0 && !registered.has(name)) {
+        checkFormatRegistrationName(name, formatLocation);
+        const display = JSON.stringify(name);
+        if (kind !== 'string' && kind !== 'number' && kind !== 'integer')
+          fail(
+            formatLocation,
+            `unsupported format ${display}. Declare a string, number, or integer type to use a format`,
+          );
+        const choices =
+          kind === 'string'
+            ? ''
+            : ` Built-in options are ${numericFormatNames[kind]}.`;
         fail(
-          `${location}.format`,
-          kind === 'number' || kind === 'integer'
-            ? `${numericFormatMessages[kind]}, or register a custom ${kind} format in formats`
-            : kind === 'string'
-              ? 'unsupported format; use a built-in format or register a custom string format in formats'
-              : 'unsupported format for this schema; supported formats require a string, number, or integer schema in this version',
+          formatLocation,
+          `unsupported format ${display} on type ${JSON.stringify(kind)}.${choices} Register ${display} in formats with type ${JSON.stringify(kind)} and ${kind === 'string' ? 'a pattern' : 'its constraints'}`,
         );
       }
     }
@@ -698,12 +710,14 @@ function schemaNormalizer(
       Object.hasOwn(value, 'format') &&
       !(kind === 'string' && value.format === 'password')
     ) {
-      if (typeof value.format === 'string' && registered.has(value.format)) {
-        const definition = registered.get(value.format)!;
+      // normalize checks format syntax and registration before lowering scalars.
+      const name = value.format as string;
+      const definition = registered.get(name);
+      if (definition) {
         if (kind !== definition.type)
           fail(
             `${location}.format`,
-            `registered format ${JSON.stringify(value.format)} requires a ${definition.type} schema`,
+            `registered format ${JSON.stringify(name)} requires type ${JSON.stringify(definition.type)}. Found type ${JSON.stringify(kind)}`,
           );
         if (definition.type === 'string') format = definition;
         else {
@@ -718,24 +732,15 @@ function schemaNormalizer(
         }
       } else {
         if (kind === 'number' || kind === 'integer') {
-          const rules =
-            typeof value.format === 'string'
-              ? numericFormatRules(kind, value.format)
-              : undefined;
+          const rules = numericFormatRules(kind, name);
           if (rules === undefined)
-            fail(`${location}.format`, numericFormatMessages[kind]);
+            fail(`${location}.format`, builtInFormatMismatch(name, kind));
           // Lower numeric wire profiles to shared scalar rules for literals,
           // reference intersections and generated parsers.
           limits = intersectConstraints(limits, rules);
-        } else if (
-          typeof value.format !== 'string' ||
-          !Object.hasOwn(stringFormatHelpers, value.format)
-        )
-          fail(
-            `${location}.format`,
-            `unsupported format; expected ${expectedStringFormats}`,
-          );
-        else format = value.format as StringFormat;
+        } else if (!Object.hasOwn(stringFormatHelpers, name))
+          fail(`${location}.format`, builtInFormatMismatch(name, kind));
+        else format = name as StringFormat;
       }
     }
     const nonNull = nullable

@@ -14,7 +14,14 @@ import { ref } from './schema-helpers.ts';
 import type { Schema } from './schema-helpers.ts';
 
 const formats = {
+  uint8: { type: 'integer', minimum: 0, maximum: 255 },
+  uint16: { type: 'integer', minimum: 0, maximum: 65_535 },
   uint32: { type: 'integer', minimum: 0, maximum: 4_294_967_295 },
+  'unix-time': {
+    type: 'integer',
+    minimum: Number.MIN_SAFE_INTEGER,
+    maximum: Number.MAX_SAFE_INTEGER,
+  },
   decimal: { type: 'number' },
   quarter: { type: 'number', multipleOf: 0.25 },
 } as const;
@@ -75,8 +82,15 @@ void test('numeric registrations lower to ordinary constraints in both dialects 
   assert.deepEqual(selection, before);
 });
 
-void test('numeric format constraints survive aliases, composition, nullability and independent multiples', async (t) => {
+void test('numeric format bounds and independent multiples apply through aliases, composition and nullable types', async (t) => {
   for (const [value, valid, invalid] of [
+    [{ type: 'integer', format: 'uint8' }, [0, 255], [-1, 256, 1.5, '255']],
+    [{ type: 'integer', format: 'uint16' }, [0, 65_535], [-1, 65_536]],
+    [
+      { type: 'integer', format: 'unix-time' },
+      [Number.MIN_SAFE_INTEGER, -1, 0, 2_147_483_648, Number.MAX_SAFE_INTEGER],
+      [-(2 ** 53), 2 ** 53, 0.5, '0'],
+    ],
     [{ $ref: ref('Base').$ref, maximum: 5 }, [0, 5], [-1, 6]],
     [
       { allOf: [ref('Base'), { type: 'integer', minimum: 2 }] },
