@@ -21,7 +21,10 @@ void test('multipart diagnostics point to existing schema declarations', async (
     { schema: { type: 'object', required: ['id'] }, at: location },
     { schema: { $ref: '#/components/schemas/RequiredOnly' }, at: location },
     {
-      schema: { type: 'object', properties: { id: { type: 'integer' } } },
+      schema: {
+        type: 'object',
+        properties: { id: { type: ['integer', 'null'] } },
+      },
       at: `${location}.properties.id`,
     },
   ];
@@ -215,10 +218,10 @@ for (const [name, change, pattern] of [
     /multipart fields/,
   ],
   [
-    'number fields',
+    'primitive arrays',
     (d) => {
       Object.assign(d.components.schemas.Upload.properties, {
-        caption: { type: 'number' },
+        caption: { type: 'array', items: { type: 'number' } },
       });
     },
     /multipart fields/,

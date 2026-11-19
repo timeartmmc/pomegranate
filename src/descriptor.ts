@@ -55,9 +55,10 @@ import {
   normalizeSecuritySchemes,
   sendsAuthorization,
 } from './security.js';
-import { mediaDecoder, mediaToken } from './runtime.js';
+import { mediaDecoder, mediaToken, validMediaType } from './runtime.js';
 import { projectSchemas, schemaAccess } from './directional.js';
 import { schemaNode } from './schema-node.js';
+import { createJsonTypeAnalysis } from './schema-domain.js';
 import { normalizeOpenApi30, openApi30Diagnostic } from './openapi30.js';
 import type { WarnSchema } from './diagnostics.js';
 import { isRequired } from './required-index.js';
@@ -65,6 +66,7 @@ import { responseKey, successResponses } from './response-status.js';
 import { createIntersectionNormalizer } from './intersections.js';
 import { linkComponents, responseLinks } from './links.js';
 import { flatParameterShape } from './parameter-shape.js';
+import { bounds } from './schema-constraints.js';
 import { ignoreExtensions, openApiLocation } from './extensions.js';
 import type { SchemaSource, SchemaSources } from './schema-pointers.js';
 import {
@@ -87,9 +89,11 @@ type HeaderDefinition = Omit<ResponseHeader, 'name'>;
 type RequestBodyDefinition = Exclude<Operation['body'], { kind: 'none' }>;
 
 type SchemaContext = Readonly<{
+  dialect: '3.0' | '3.1';
   normalize: ReturnType<typeof createSchemaNormalizer>;
   source: SchemaTable;
   projection: ReturnType<typeof projectSchemas>;
+  requestJsonTypes: ReturnType<typeof createJsonTypeAnalysis>;
   sourceValidation: Validation;
   directionValidation: Readonly<Record<Direction, Validation>>;
 }>;
@@ -108,12 +112,11 @@ type OperationContext = Readonly<{
   memberships: ReadonlyMap<string, readonly string[]> | undefined;
 }>;
 
-function normalizeFor(
+function projectFor(
   input: unknown,
   location: string,
   context: SchemaContext,
   direction: Direction,
-  usage: Direction | 'multipart' = direction,
 ): Schema {
   const source = context.normalize(input, location);
   // Source validation stays complete before projection: an excluded property
@@ -125,7 +128,17 @@ function normalizeFor(
     'component',
     context.sourceValidation,
   );
-  const schema = context.projection.schema(source, direction);
+  return context.projection.schema(source, direction);
+}
+
+function normalizeFor(
+  input: unknown,
+  location: string,
+  context: SchemaContext,
+  direction: Direction,
+  usage: Direction | 'binary-request' = direction,
+): Schema {
+  const schema = projectFor(input, location, context, direction);
   validateSchema(
     schema,
     context.projection.schemas[direction],
@@ -197,13 +210,17 @@ function optionalBoolean(
 }
 
 type ContentDefinition = {
-  kind: 'json' | 'text' | 'form' | 'multipart' | 'observed';
   contentType: string;
   charset: string | undefined;
-  schema: Schema;
-  fields: readonly MultipartField[] | undefined;
-  form: readonly FormField[] | undefined;
-};
+} & (
+  | { kind: 'binary'; maxLength: number | undefined }
+  | {
+      kind: 'json' | 'text' | 'form' | 'multipart' | 'observed';
+      schema: Schema;
+      fields: readonly MultipartField[] | undefined;
+      form: readonly FormField[] | undefined;
+    }
+);
 
 // Only a response media range may use the wildcard, as a whole subtype or as
 // both parts. The runtime applies the same concrete token to observed evidence.
@@ -214,6 +231,47 @@ const concreteMedia = new RegExp(
   'i',
 );
 const mediaRange = new RegExp(`^(?:\\*|${mediaToken})/\\*$`);
+const requestMediaKinds = new Map<string, 'form' | 'multipart' | 'binary'>([
+  ['application/x-www-form-urlencoded', 'form'],
+  ['multipart/form-data', 'multipart'],
+  ['application/octet-stream', 'binary'],
+]);
+
+function binaryBodyMaxLength(
+  input: unknown,
+  location: string,
+  context: SchemaContext,
+): number | undefined {
+  const source = record(input, location);
+  // OpenAPI §4.4.2 measures raw maxLength in octets and takes the media
+  // type from the content map. Neither keyword constrains a JSON schema here.
+  const lengths = bounds(source, 'minLength', 'maxLength', location, true);
+  const declaration = { ...source };
+  delete declaration.maxLength;
+  if (Object.hasOwn(declaration, 'contentMediaType')) {
+    const mediaType = declaration.contentMediaType;
+    if (typeof mediaType !== 'string' || !validMediaType(mediaType))
+      fail(`${location}.contentMediaType`, 'expected a concrete media type');
+    // Keep the existing typed binary spelling so inline and referenced
+    // schemas enter the same normalizer with the same meaning.
+    if (!Object.hasOwn(source, 'type') || source.format === 'binary')
+      delete declaration.contentMediaType;
+  }
+  const schema = normalizeFor(
+    declaration,
+    location,
+    context,
+    'request',
+    'binary-request',
+  );
+  const resolved = resolveSchema(schema, context.projection.schemas.request);
+  if (resolved.kind !== 'binary' && resolved.kind !== 'json')
+    fail(
+      location,
+      'application/octet-stream requires an unconstrained or nonnullable binary schema with optional maxLength',
+    );
+  return Object.hasOwn(lengths, 'maxLength') ? lengths['maxLength'] : undefined;
+}
 
 function contentDefinitions(
   input: unknown,
@@ -252,21 +310,23 @@ function contentDefinitions(
       const kind = range
         ? 'observed'
         : (mediaDecoder(contentType) ??
-          (direction === 'request' && contentType === 'multipart/form-data'
-            ? 'multipart'
-            : direction === 'request' &&
-                contentType === 'application/x-www-form-urlencoded'
-              ? 'form'
-              : undefined));
+          (direction === 'request'
+            ? requestMediaKinds.get(contentType)
+            : undefined));
       if (kind === undefined)
         fail(
           path,
-          'unsupported keyword; supported media types are JSON, documented text types, form-urlencoded/multipart requests and response media ranges',
+          'unsupported keyword; supported media types are JSON, documented text types, form-urlencoded/multipart/octet-stream requests and response media ranges',
         );
       if (kind === 'multipart' && charset !== undefined)
         fail(
           path,
           'multipart media parameters are unsupported; the transport supplies the boundary',
+        );
+      if (kind === 'binary' && charset !== undefined)
+        fail(
+          path,
+          'application/octet-stream request media accepts no parameters',
         );
       // JSON serialization and text/form bodies use UTF-8 on the wire. Preserve
       // only labels consistent with that request contract. Response charsets
@@ -289,6 +349,17 @@ function contentDefinitions(
       );
       exampleAnnotations(media, path, examples);
       const schemaLocation = `${path}.schema`;
+      if (kind === 'binary')
+        return {
+          kind,
+          contentType,
+          charset,
+          maxLength: binaryBodyMaxLength(
+            Object.hasOwn(media, 'schema') ? media.schema : {},
+            schemaLocation,
+            context,
+          ),
+        };
       // A Media Type Object without a schema leaves its payload unconstrained
       // (OAS 3.1.1 §4.8.14): any JSON value, or any string where the body is
       // always text. Multipart parts need their declared fields.
@@ -302,7 +373,7 @@ function contentDefinitions(
         schemaLocation,
         context,
         direction,
-        kind === 'multipart' ? 'multipart' : direction,
+        kind === 'multipart' ? 'binary-request' : direction,
       );
       if (kind === 'text') {
         const schemas = context.projection.schemas[direction];
@@ -364,7 +435,9 @@ function preferredContent(
           ? 2
           : value.kind === 'form'
             ? 3
-            : 4;
+            : value.kind === 'multipart'
+              ? 4
+              : 5;
   return [...candidates].sort(
     (left, right) =>
       rank(left) - rank(right) ||
@@ -435,15 +508,35 @@ function normalizeParameter(
       `${location}.allowReserved`,
       'only false on query parameters is supported',
     );
-  const schema = normalizeFor(
-    value.schema,
-    `${location}.schema`,
-    context,
-    'request',
-  );
+  const schemaLocation = `${location}.schema`;
+  const schema = projectFor(value.schema, schemaLocation, context, 'request');
   const schemas = context.projection.schemas.request;
   const shape = flatParameterShape(schema, schemas);
-  const primitive = shape !== undefined && !shape.array && !shape.nullable;
+  // Path and query serializers use the same spelling rules for each scalar
+  // type. Headers also decode supplied wire values and require one known type.
+  const unionTypes =
+    shape === undefined && position !== 'header'
+      ? context.requestJsonTypes(schema, schemaLocation)
+      : undefined;
+  const scalarUnion =
+    unionTypes !== undefined &&
+    unionTypes.length > 0 &&
+    unionTypes.every(
+      (type) => type === 'string' || type === 'number' || type === 'boolean',
+    );
+  // OpenAPI 3.0 makes access annotations relevant to Schema Object properties.
+  // The supported flat parameter shapes contain no object properties.
+  validateSchema(
+    schema,
+    schemas,
+    schemaLocation,
+    context.dialect === '3.0' && (shape || scalarUnion)
+      ? 'parameter'
+      : 'request',
+    context.directionValidation.request,
+  );
+  const primitive =
+    scalarUnion || (shape !== undefined && !shape.array && !shape.nullable);
   const headerShape = position === 'header' ? shape : undefined;
   const nullableHeader = headerShape?.nullable === true;
   const nullableQuery =
@@ -702,8 +795,12 @@ function multipartFields(
     const multiple =
       resolved.kind === 'array' &&
       resolveSchema(resolved.items, schemas).kind === 'binary';
-    if (resolved.kind !== 'string' && resolved.kind !== 'binary' && !multiple)
-      fieldError('multipart fields require strings, files or arrays of files');
+    const file = resolved.kind === 'binary' || multiple;
+    const scalar = file ? undefined : flatParameterShape(resolved, schemas);
+    if (!file && (!scalar || scalar.array || scalar.nullable))
+      fieldError(
+        'multipart fields require a nonnullable string, number, integer, boolean, file or array of files',
+      );
     // Files have no JSON value equality, so a file-array uniqueness assertion
     // could not be enforced. Reject it here or through a constrained alias.
     if (multiple) {
@@ -733,7 +830,7 @@ function multipartFields(
     }
     return {
       name,
-      kind: resolved.kind === 'string' ? 'text' : 'file',
+      kind: file ? 'file' : 'text',
       multiple,
       required,
     };
@@ -867,6 +964,13 @@ function normalizeRequestBody(
   // also covers them, so narrow it before building the request body.
   if (selected.kind === 'observed')
     fail(`${location}.content`, 'request media ranges are unsupported');
+  if (selected.kind === 'binary')
+    return {
+      kind: 'binary',
+      contentType: selected.contentType,
+      required,
+      maxLength: selected.maxLength,
+    };
   if (selected.kind === 'form')
     return {
       kind: 'form',
@@ -946,15 +1050,15 @@ function normalizeResponse(
       kind: 'content',
       content: new Map(
         representations.map((representation) => {
-          // Response validation above excludes multipart. The shared helper's
-          // return type also covers requests, so narrow it before building content.
+          // The shared helper also describes request-only representations.
           if (
             representation.kind === 'multipart' ||
-            representation.kind === 'form'
+            representation.kind === 'form' ||
+            representation.kind === 'binary'
           )
             fail(
               `${location}.content`,
-              'multipart/form-urlencoded responses are unsupported',
+              'multipart, form-urlencoded, and raw binary responses are unsupported',
             );
           return [
             representation.contentType,
@@ -1098,7 +1202,12 @@ function normalizeOperation(
   // Presence matters: [] and [{}] deliberately clear a document security
   // requirement; absence inherits it. Do not merge these alternatives.
   const security = Object.hasOwn(value, 'security')
-    ? normalizeSecurity(value.security, securitySchemes, `${location}.security`)
+    ? normalizeSecurity(
+        value.security,
+        securitySchemes,
+        `${location}.security`,
+        schemas.dialect,
+      )
     : inheritedSecurity;
   const id = safeKey(
     operationIdentifier(value, method, path),
@@ -1231,6 +1340,7 @@ function validateDocumentMetadata(value: Record<string, unknown>): void {
 function prepareSchemas(
   input: unknown,
   normalize: ReturnType<typeof createSchemaNormalizer>,
+  dialect: SchemaContext['dialect'],
   collectErrors = false,
   warn?: WarnSchema,
   fragments: SchemaSources = new Map(),
@@ -1358,11 +1468,14 @@ function prepareSchemas(
   }
   // No partial schema table or validation cache escapes a failed audit phase.
   finish();
+  const projection = projectSchemas(schemas);
   const context: SchemaContext = {
+    dialect,
     normalize: (input, location) =>
       compose(normalize(input, location), location),
     source: schemas,
-    projection: projectSchemas(schemas),
+    projection,
+    requestJsonTypes: createJsonTypeAnalysis(projection.schemas.request),
     sourceValidation: validation,
     directionValidation: {
       request: schemaValidation(warn),
@@ -1623,18 +1736,20 @@ function describeDocument(
   const links = linkComponents(
     Object.hasOwn(components, 'links') ? components.links : {},
   );
+  const dialect = openApi30 ? '3.0' : '3.1';
   const securitySchemes = normalizeSecuritySchemes(
     Object.hasOwn(components, 'securitySchemes')
       ? components.securitySchemes
       : {},
-    openApi30 ? '3.0' : '3.1',
+    dialect,
   );
   const inheritedSecurity = Object.hasOwn(value, 'security')
-    ? normalizeSecurity(value.security, securitySchemes, 'security')
+    ? normalizeSecurity(value.security, securitySchemes, 'security', dialect)
     : ({ transport: 'none' } as const);
   const { context, order: schemaOrder } = prepareSchemas(
     Object.hasOwn(components, 'schemas') ? components.schemas : {},
     normalize,
+    dialect,
     rawMembership.collectErrors === true,
     rawMembership.warn,
     fragments,

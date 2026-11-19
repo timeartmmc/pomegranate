@@ -467,19 +467,6 @@ for (const [name, security, suffix, message] of [
   ['unknown OAuth scope', [{ OAuth: ['write'] }], '[0].OAuth', /scope/],
   ['non-string scope', [{ OAuth: [42] }], '[0].OAuth', /array/],
   ['sparse scopes', [{ OAuth: sparse }], '[0].OAuth', /array/],
-  [
-    'nonempty API-key roles',
-    [{ QueryKey: ['editor'] }],
-    '[0].QueryKey',
-    /role|scope/,
-  ],
-  ['nonempty basic roles', [{ Basic: ['editor'] }], '[0].Basic', /role|scope/],
-  [
-    'nonempty bearer roles',
-    [{ Session: ['editor'] }],
-    '[0].Session',
-    /role|scope/,
-  ],
 ] as const) {
   void test(`unselected operations reject ${name} rather than hiding invalid security`, async () => {
     const input = document();
@@ -492,6 +479,29 @@ for (const [name, security, suffix, message] of [
     });
   });
 }
+
+void test('role requirements report the source dialect at document and operation scope', async () => {
+  for (const [version, message] of [
+    ['3.0.4', /OpenAPI 3\.0 requires an empty requirement array/],
+    ['3.1.2', /role requirements are unsupported by POM in OpenAPI 3\.1/],
+  ] as const)
+    for (const scheme of ['QueryKey', 'Basic', 'Session']) {
+      const security = [{ [scheme]: ['editor'] }];
+      const root = { ...document(security), openapi: version };
+      const operation = { ...document(), openapi: version };
+      Object.assign(operation.paths['/internal'].get, { security });
+      for (const [input, location] of [
+        [root, 'security'],
+        [operation, 'paths./internal.get.security'],
+      ] as const)
+        await assert.rejects(compile(input, selection), (error) => {
+          assert.ok(error instanceof ContractError);
+          assert.equal(error.location, `${location}[0].${scheme}`);
+          assert.match(error.message, message);
+          return true;
+        });
+    }
+});
 
 void test('OAuth flow extensions require explicit ignore entries while x-prefixed scope identities survive filtering', async () => {
   const input = document([{ OAuth: ['x-records:write'] }]);

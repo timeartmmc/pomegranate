@@ -56,11 +56,16 @@ function operationScope(id: string): string {
 // Source consumers resolve real TypeScript files; JavaScript emission rewrites
 // their extensions instead of requiring bundler-specific resolver aliases.
 function helperImports(helpers: ReadonlySet<string>): string {
-  const shared = [...helpers].filter((name) => name !== 'browserFile').sort();
+  const shared = [...helpers]
+    .filter((name) => name !== 'browserFile' && name !== 'binaryBodyParser')
+    .sort();
   return [
     shared.length ? `import {${shared.join(',')}} from './runtime.ts';` : '',
     helpers.has('browserFile')
       ? "import {browserFile} from './runtime.browser.ts';"
+      : '',
+    helpers.has('binaryBodyParser')
+      ? "import {binaryBodyParser} from './runtime.binary.ts';"
       : '',
   ].join('\n');
 }
@@ -202,29 +207,28 @@ function parameterOptions(
       `${field}${requiredGroup ? '' : '?'}: ${groupType}${requiredGroup ? '' : ' | undefined'};`,
     );
   }
-  if (operation.body.kind !== 'none') {
+  const body = operation.body;
+  if (body.kind !== 'none') {
+    const location = `${operation.id}.requestBody`;
     fields.push({
       name: 'body',
       required: requiredBody,
       parse:
-        operation.body.kind === 'multipart'
-          ? renderer.multipartParser(
-              operation.body.schema,
-              operation.body.fields
-                .filter((field) => field.kind === 'text')
-                .map((field) => field.name),
-              `${operation.id}.requestBody`,
-              `${scope}_body`,
+        body.kind === 'binary'
+          ? call(
+              renderer.use('binaryBodyParser'),
+              body.maxLength === undefined ? [] : [literal(body.maxLength)],
             )
-          : renderer.part(
-              operation.body.schema,
-              'request',
-              `${operation.id}.requestBody`,
-              `${scope}_body`,
-            ),
+          : body.kind === 'multipart'
+            ? renderer.multipartParser(body.schema, location, `${scope}_body`)
+            : renderer.part(body.schema, 'request', location, `${scope}_body`),
     });
+    const type =
+      body.kind === 'binary'
+        ? 'Uint8Array'
+        : renderer.typeOf(body.schema, 'request');
     types.push(
-      `body${requiredBody ? '' : '?'}: ${renderer.typeOf(operation.body.schema, 'request')}${requiredBody ? '' : ' | undefined'};`,
+      `body${requiredBody ? '' : '?'}: ${type}${requiredBody ? '' : ' | undefined'};`,
     );
   }
   const value = fields.length ? `{${types.join('')}}` : 'Record<string, never>';
@@ -1278,6 +1282,15 @@ export async function render(
     addOutput(
       'runtime.browser.ts',
       `${banner}${await readFile(new URL('./templates/runtime.browser.ts', import.meta.url), 'utf8')}`,
+    );
+  if (
+    clients.some((client) =>
+      client.operations.some((operation) => operation.body.kind === 'binary'),
+    )
+  )
+    addOutput(
+      'runtime.binary.ts',
+      `${banner}${await readFile(new URL('./templates/runtime.binary.ts', import.meta.url), 'utf8')}`,
     );
   const componentType = renderTypes(
     descriptor,

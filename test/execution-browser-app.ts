@@ -53,11 +53,18 @@ export async function runExecutionBrowser() {
             ? []
             : [value];
         for (const part of parts) {
-          check(
-            typeof part === 'string' || part instanceof File,
-            'multipart part',
-          );
-          form.append(field.name, part);
+          if (field.kind === 'file') {
+            check(part instanceof File, 'multipart file');
+            form.append(field.name, part);
+          } else {
+            check(
+              typeof part === 'string' ||
+                typeof part === 'number' ||
+                typeof part === 'boolean',
+              'multipart scalar',
+            );
+            form.append(field.name, String(part));
+          }
         }
       }
       body = form;
@@ -140,10 +147,13 @@ export async function runExecutionBrowser() {
         cover: file,
         attachments: [file, file],
         extras: [file],
+        enabled: false,
+        opacity: 0.25,
+        position: 0,
       },
     },
   });
-  check(upload.data.count === 6, 'complete multipart upload');
+  check(upload.data.count === 9, 'complete multipart upload');
   const omittedUpload = await uploads.uploadOptional.call({ context });
   check(omittedUpload.data.count === 1, 'omitted multipart body');
   const optionalUpload = await uploads.uploadOptional.call({

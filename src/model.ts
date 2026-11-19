@@ -301,6 +301,12 @@ export type Operation = {
         readonly fields: readonly FormField[];
       }
     | {
+        readonly kind: 'binary';
+        readonly contentType: string;
+        readonly required: boolean;
+        readonly maxLength: number | undefined;
+      }
+    | {
         readonly kind: 'multipart';
         readonly schema: Schema;
         readonly required: boolean;

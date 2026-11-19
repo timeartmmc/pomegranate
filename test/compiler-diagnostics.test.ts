@@ -466,7 +466,7 @@ void test('nullable diagnostic paths retain original declarations and explicit a
     await assert.rejects(compile(document(schema), selection), {
       name: 'ContractError',
       location: `standalone.value.schema -> components.schemas.Value${suffix}`,
-      message: `standalone.value.schema -> components.schemas.Value${suffix}: binary values are only supported in multipart request fields`,
+      message: `standalone.value.schema -> components.schemas.Value${suffix}: binary values are only supported in multipart request fields or application/octet-stream request bodies`,
     });
   const legacy = document({ ...binary, nullable: true });
   legacy.openapi = '3.0.4';

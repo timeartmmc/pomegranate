@@ -1036,7 +1036,16 @@ export async function verifyExecutableMultipart(
         else assert.notEqual(captured['cover'], reference);
         assert.deepEqual(
           request.multipart.map((field) => field.name),
-          ['attachments', 'caption', 'cover', 'extras', 'note'],
+          [
+            'attachments',
+            'caption',
+            'cover',
+            'enabled',
+            'extras',
+            'note',
+            'opacity',
+            'position',
+          ],
         );
         return json(201, { count: 5 });
       },

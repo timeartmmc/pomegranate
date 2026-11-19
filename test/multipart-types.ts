@@ -14,17 +14,22 @@ export function multipartTypes(file: File) {
       caption: 'Image',
       cover: file,
       attachments: [file],
+      opacity: 0.25,
+      position: 0,
       note: 'a\r\nb',
     },
   });
   const browserFile: File = request.body.cover;
+  const opacity: number | undefined = request.body.opacity;
   const input: RequestTypes['Upload'] = {
     caption: 'Image',
     cover: { uri: 'file:///image' },
     attachments: [{ uri: 'file:///image' }],
+    enabled: false,
   };
   const prepared = native.upload.build({ body: input });
   const uri: string = prepared.body.cover.uri;
+  const enabled: boolean | undefined = prepared.body.enabled;
   const kind: 'multipart' = prepared.bodyKind;
   browser.uploadOptional.build();
   native.uploadOptional.build({ body: undefined });
@@ -43,9 +48,13 @@ export function multipartTypes(file: File) {
   native.uploadInline.build({ body: { file } });
   // @ts-expect-error File arrays retain their item type.
   native.upload.build({ body: { ...input, attachments: ['file:///image'] } });
+  // @ts-expect-error The transport converts validated numbers to text.
+  native.upload.build({ body: { ...input, opacity: '0.25' } });
+  // @ts-expect-error Multipart booleans do not accept text.
+  native.upload.build({ body: { ...input, enabled: 'false' } });
   // @ts-expect-error Required fields remain required.
   browser.upload.build({ body: { cover: file, attachments: [file] } });
-  return { browserFile, uri, kind };
+  return { browserFile, uri, kind, opacity, enabled };
 }
 
 export async function executableMultipartTypes(file: File) {

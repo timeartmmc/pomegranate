@@ -18,11 +18,13 @@ export function operationSchemas(
   operation: Operation,
   direction: 'request' | 'response',
 ): readonly Schema[] {
-  if (direction === 'request')
+  if (direction === 'request') {
+    const body = operation.body;
     return [
       ...operation.parameters.map((parameter) => parameter.schema),
-      ...(operation.body.kind !== 'none' ? [operation.body.schema] : []),
+      ...(body.kind === 'none' || body.kind === 'binary' ? [] : [body.schema]),
     ];
+  }
   return operation.responses.flatMap((response) => [
     ...response.headers.map((header) => header.schema),
     ...(response.body.kind !== 'none'

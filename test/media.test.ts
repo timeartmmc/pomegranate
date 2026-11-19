@@ -513,7 +513,10 @@ void test('nonpreferred representations and unsupported media still validate bef
     ['application/vnd.zeta+json', { type: 'string', minLength: -1 }],
     [
       'multipart/form-data',
-      { type: 'object', properties: { file: { type: 'integer' } } },
+      {
+        type: 'object',
+        properties: { ids: { type: 'array', items: { type: 'integer' } } },
+      },
     ],
     ['multipart/form-data', { $ref: '#/components/schemas/Missing' }],
     ['application/xml', { type: 'string' }],

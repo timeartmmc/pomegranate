@@ -251,7 +251,7 @@ export function overlapWarnings(warn: WarnSchema | undefined) {
         if (example.length > 512) continue;
         warn(
           location,
-          `oneOf alternatives overlap for ${usage === 'multipart' ? 'request' : usage} values; for example ${example} matches multiple alternatives and will fail exact matching. Make the alternatives exclusive, or use anyOf if multiple matches are intended`,
+          `oneOf alternatives overlap for ${usage} values; for example ${example} matches multiple alternatives and will fail exact matching. Make the alternatives exclusive, or use anyOf if multiple matches are intended`,
           'oneof-overlap',
         );
         return;

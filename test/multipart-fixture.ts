@@ -67,18 +67,26 @@ export function multipartFixture() {
           contentMediaType: 'application/octet-stream',
         },
         Files: { type: 'array', items: ref('RawFile'), maxItems: 2 },
+        Opacity: { type: 'number', minimum: 0, maximum: 1, multipleOf: 0.25 },
         Upload: {
           type: 'object',
           properties: {
             caption: { type: 'string', minLength: 1, maxLength: 16 },
             cover: ref('File'),
             attachments: ref('Files'),
+            enabled: { type: 'boolean' },
+            opacity: { oneOf: [ref('Opacity')] },
+            position: { type: 'integer', format: 'int32', minimum: 0 },
             extras: { ...ref('Files'), default: [] },
             note: {
-              type: 'string',
-              const: 'a\r\nb',
-              minLength: 4,
-              maxLength: 4,
+              anyOf: [
+                {
+                  type: 'string',
+                  const: 'a\r\nb',
+                  minLength: 4,
+                  maxLength: 4,
+                },
+              ],
             },
           },
           required: ['caption', 'cover', 'attachments'],
@@ -116,7 +124,14 @@ export async function verifyMultipart(
     [browser, file],
     [native, reference],
   ] satisfies [Browser | Native, File | typeof reference][]) {
-    const body = { caption: 'Sample 🪴', cover: upload, attachments: [upload] };
+    const body = {
+      caption: 'Sample 🪴',
+      cover: upload,
+      attachments: [upload],
+      enabled: false,
+      opacity: 0.25,
+      position: 0,
+    };
     const request = runtimeInput(operations.upload.build, { body });
     assert.equal(request.bodyKind, 'multipart');
     assert.equal(request.url, '/uploads');
@@ -128,8 +143,11 @@ export async function verifyMultipart(
       { name: 'attachments', kind: 'file', multiple: true, required: true },
       { name: 'caption', kind: 'text', multiple: false, required: true },
       { name: 'cover', kind: 'file', multiple: false, required: true },
+      { name: 'enabled', kind: 'text', multiple: false, required: false },
       { name: 'extras', kind: 'file', multiple: true, required: false },
       { name: 'note', kind: 'text', multiple: false, required: false },
+      { name: 'opacity', kind: 'text', multiple: false, required: false },
+      { name: 'position', kind: 'text', multiple: false, required: false },
     ]);
     assert.equal(Object.isFrozen(request.multipart), true);
     assert.equal(Object.isFrozen(request.multipart[0]), true);
@@ -144,6 +162,11 @@ export async function verifyMultipart(
       { ...body, caption: 'x'.repeat(15) + '\n' },
       { ...body, cover: 'file.txt' },
       { ...body, extras: [upload, upload, upload] },
+      { ...body, enabled: 'false' },
+      { ...body, opacity: 0.3 },
+      { ...body, opacity: Infinity },
+      { ...body, position: 0.5 },
+      { ...body, position: 2_147_483_648 },
       { ...body, unknown: 'field' },
     ];
     for (const value of invalid)
@@ -175,9 +198,14 @@ export async function verifyMultipart(
       const form = new FormData();
       for (const field of prepared.multipart)
         if (field.kind === 'text') {
-          const text: unknown = record(prepared.body)[field.name];
-          assert.ok(typeof text === 'string');
-          form.append(field.name, text);
+          const part: unknown = record(prepared.body)[field.name];
+          if (part === undefined) continue;
+          assert.ok(
+            typeof part === 'string' ||
+              typeof part === 'number' ||
+              typeof part === 'boolean',
+          );
+          form.append(field.name, String(part));
         }
       // FormData.get does not expose newline changes made during encoding.
       // Decode the actual multipart bytes before checking the contract again.
@@ -188,6 +216,9 @@ export async function verifyMultipart(
       const decoded = await encoded.formData();
       assert.equal(decoded.get('caption'), normalized);
       assert.equal(decoded.get('note'), 'a\r\nb');
+      assert.equal(decoded.get('enabled'), 'false');
+      assert.equal(decoded.get('opacity'), '0.25');
+      assert.equal(decoded.get('position'), '0');
       assert.doesNotThrow(() =>
         runtimeInput(operations.upload.build, {
           body: {
@@ -230,6 +261,10 @@ export async function verifyMultipart(
     assert.equal(optional.bodyKind, 'multipart');
     if (optional.bodyKind === 'multipart')
       assert.deepEqual(optional.body, body);
+    const withoutPosition = runtimeInput(operations.upload.build, {
+      body: { ...body, position: undefined },
+    });
+    assert.equal(Object.hasOwn(withoutPosition.body, 'position'), false);
     for (const value of [null, {}, { ...body, caption: '' }])
       assert.throws(
         () => runtimeInput(operations.uploadOptional.build, { body: value }),

@@ -2389,7 +2389,7 @@ export type DeclaredResponse<R extends Responses> = [R] extends [
 export type ProtocolResult<R extends Responses> =
   | DeclaredResponse<R>
   | ProtocolFailure;
-type BodyKind = 'none' | 'json' | 'text' | 'form' | 'multipart';
+type BodyKind = 'none' | 'json' | 'text' | 'binary' | 'form' | 'multipart';
 export type FormField = Readonly<{ name: string; explode: boolean }>;
 export type MultipartField = Readonly<{
   name: string;
@@ -2432,15 +2432,21 @@ export type PreparedRequest<
 }> &
   (B extends 'json' | 'text'
     ? Readonly<{ bodyKind: B; body: Body; contentType: string }>
-    : B extends 'form'
-      ? Readonly<{ bodyKind: 'form'; body: string; contentType: string }>
-      : B extends 'multipart'
-        ? Readonly<{
-            bodyKind: 'multipart';
-            body: Body;
-            multipart: readonly MultipartField[];
-          }>
-        : Readonly<{ bodyKind: 'none' }>);
+    : B extends 'binary'
+      ? Readonly<{
+          bodyKind: 'binary';
+          body: Uint8Array<ArrayBuffer>;
+          contentType: string;
+        }>
+      : B extends 'form'
+        ? Readonly<{ bodyKind: 'form'; body: string; contentType: string }>
+        : B extends 'multipart'
+          ? Readonly<{
+              bodyKind: 'multipart';
+              body: Body;
+              multipart: readonly MultipartField[];
+            }>
+          : Readonly<{ bodyKind: 'none' }>);
 
 type RequestBody<O> =
   NonNullable<O> extends { body?: infer Value }
@@ -2557,9 +2563,11 @@ function operationSettings<
       source.contentType ??
       (source.bodyKind === 'text'
         ? 'text/plain'
-        : source.bodyKind === 'form'
-          ? 'application/x-www-form-urlencoded'
-          : 'application/json'),
+        : source.bodyKind === 'binary'
+          ? 'application/octet-stream'
+          : source.bodyKind === 'form'
+            ? 'application/x-www-form-urlencoded'
+            : 'application/json'),
     multipart: source.multipart ?? [],
     form: source.form ?? [],
     parameters: source.parameters.map((input) => {
@@ -2666,6 +2674,11 @@ function trimHeaderWhitespace(value: string): string {
   while (end > start && (value[end - 1] === ' ' || value[end - 1] === '\t'))
     end--;
   return value.slice(start, end);
+}
+
+export function validMediaType(value: string): boolean {
+  const field = trimHeaderWhitespace(value);
+  return validHeaderValue(field) && contentType.exec(field)?.[0] === field;
 }
 
 // Typed header schemas validate decoded values, but HTTP evidence and prepared
@@ -3316,7 +3329,9 @@ export function defineOperation<
       headers: serialized.headers,
       validateHeaders,
       parseResponse,
-      ...((definition.bodyKind === 'json' || definition.bodyKind === 'text') &&
+      ...((definition.bodyKind === 'json' ||
+        definition.bodyKind === 'text' ||
+        definition.bodyKind === 'binary') &&
       body !== undefined
         ? {
             bodyKind: definition.bodyKind,

@@ -31,7 +31,12 @@ import {
 } from './schema-graph.js';
 import type { WorkCounter } from './schema-constraints.js';
 
-type Usage = 'component' | 'request' | 'response' | 'multipart';
+type Usage =
+  | 'component'
+  | 'request'
+  | 'response'
+  | 'binary-request'
+  | 'parameter';
 type ReferenceConstraints = {
   limits: ConstraintInput;
   literals: readonly Scalar[] | undefined;
@@ -40,6 +45,7 @@ export function schemaValidation(warn?: WarnSchema) {
   const maximum = 1_000_000;
   let remaining = maximum;
   return {
+    warn,
     warnOverlap: overlapWarnings(warn),
     depths: new Map<Schema, number>(),
     checked: new Map<Usage, Set<Schema>>(),
@@ -367,17 +373,34 @@ function validateReferenceConstraints(
   }
 }
 
+function warnParameterAccess(
+  schema: Schema,
+  location: string,
+  warn: WarnSchema | undefined,
+): void {
+  if (!warn) return;
+  const keyword = schema.readOnly
+    ? 'readOnly'
+    : schema.writeOnly
+      ? 'writeOnly'
+      : undefined;
+  if (keyword)
+    warn(
+      `${location}.${keyword}`,
+      `${keyword}: true has no effect on an OpenAPI 3.0 parameter schema. The annotation applies only to object properties`,
+    );
+}
+
 function validateUsage(
   schema: Schema,
   schemas: SchemaTable,
   location: string,
   usage: Usage,
   checked: Set<Schema>,
-  constraintCache: Map<Schema, ReferenceConstraints>,
-  work: WorkCounter,
-  warnOverlap: ReturnType<typeof overlapWarnings>,
+  cache: ReturnType<typeof schemaValidation>,
 ): void {
   if (checked.has(schema)) return;
+  const { constraints: constraintCache, work, warnOverlap, warn } = cache;
   // Mark productive cycles locally until the whole usage succeeds. Failed
   // usages must remain retryable without discarding completed enum/depth work
   // shared with healthy operations in an audit.
@@ -401,7 +424,12 @@ function validateUsage(
     const frame = pending.pop()!;
     if (frame.kind === 'union') {
       validateUnion(frame.schema, schemas, frame.location, usage);
-      warnOverlap(frame.schema, schemas, frame.location, usage);
+      warnOverlap(
+        frame.schema,
+        schemas,
+        frame.location,
+        usage === 'parameter' || usage === 'binary-request' ? 'request' : usage,
+      );
       continue;
     }
     const { schema, location } = frame;
@@ -415,7 +443,8 @@ function validateUsage(
         location,
         'readOnly and writeOnly cannot both be true through references',
       );
-    if (usage !== 'component') {
+    if (usage === 'parameter') warnParameterAccess(schema, location, warn);
+    else if (usage !== 'component') {
       const excluded =
         usage === 'response' ? access.writeOnly : access.readOnly;
       if (excluded)
@@ -427,11 +456,11 @@ function validateUsage(
     if (
       schema.kind === 'binary' &&
       usage !== 'component' &&
-      usage !== 'multipart'
+      usage !== 'binary-request'
     )
       fail(
         location,
-        'binary values are only supported in multipart request fields',
+        'binary values are only supported in multipart request fields or application/octet-stream request bodies',
       );
     switch (schema.kind) {
       case 'ref': {
@@ -451,7 +480,11 @@ function validateUsage(
         let target: Schema = schema;
         let targetLocation = location;
         while (target.kind === 'ref') {
-          if (target !== schema && known(target)) break;
+          if (target !== schema) {
+            if (known(target)) break;
+            if (usage === 'parameter')
+              warnParameterAccess(target, targetLocation, warn);
+          }
           visited.add(target);
           for (const name of constraintNames(target.constraints))
             if (!allowed.includes(name))
@@ -529,14 +562,5 @@ export function validateSchema(
     checked = new Set();
     cache.checked.set(usage, checked);
   }
-  validateUsage(
-    schema,
-    schemas,
-    location,
-    usage,
-    checked,
-    cache.constraints,
-    cache.work,
-    cache.warnOverlap,
-  );
+  validateUsage(schema, schemas, location, usage, checked, cache);
 }

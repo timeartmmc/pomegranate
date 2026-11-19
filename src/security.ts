@@ -140,6 +140,7 @@ export function normalizeSecurity(
   input: unknown,
   schemes: ReadonlyMap<string, SecurityScheme>,
   location: string,
+  dialect: '3.0' | '3.1',
 ): Security {
   if (!Array.isArray(input))
     fail(location, 'expected an array of security requirements');
@@ -166,7 +167,9 @@ export function normalizeSecurity(
       if (scopes.length !== 0)
         fail(
           memberLocation,
-          'nonempty security role requirements are unsupported',
+          dialect === '3.0'
+            ? 'OpenAPI 3.0 requires an empty requirement array for HTTP and API key schemes. Correct the exported requirement and keep any role enforcement in the API'
+            : 'nonempty security role requirements are unsupported by POM in OpenAPI 3.1',
         );
       // Keep the declared identity, including aliases. The terminal component
       // describes credentials but does not replace the application's selector.

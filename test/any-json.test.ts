@@ -335,7 +335,7 @@ void test('empty schema support rejects unsupported untyped assertions and retai
   });
   await assert.rejects(
     compile(multipart, { ...anyJsonSelection, targets: { json: 'browser' } }),
-    /multipart fields require strings, files or arrays of files/,
+    /multipart fields require a nonnullable string, number, integer, boolean/,
   );
 });
 

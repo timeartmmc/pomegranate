@@ -97,14 +97,21 @@ void test('one application executor serves real Chromium calls, uploads and moun
         const form = await new Response(new Uint8Array(Buffer.concat(chunks)), {
           headers: { 'Content-Type': request.headers['content-type']! },
         }).formData();
-        assert.deepEqual([...form.keys()].sort(), [
+        const fields = [
           'attachments',
           'attachments',
           'caption',
           'cover',
           'extras',
           'note',
-        ]);
+        ];
+        if (url.pathname === '/uploads') {
+          fields.push('enabled', 'opacity', 'position');
+          assert.equal(form.get('enabled'), 'false');
+          assert.equal(form.get('opacity'), '0.25');
+          assert.equal(form.get('position'), '0');
+        }
+        assert.deepEqual([...form.keys()].sort(), fields.sort());
         assert.equal(form.get('caption'), 'a\r\nb');
         assert.equal(form.get('note'), 'a\r\nb');
         for (const file of [
@@ -116,7 +123,7 @@ void test('one application executor serves real Chromium calls, uploads and moun
           assert.equal(await file.text(), 'synthetic file');
           assert.equal(file.name, 'sample.txt');
         }
-        send(201, { count: 6 });
+        send(201, { count: fields.length });
         return;
       }
       if (url.pathname === '/commands') {

@@ -283,7 +283,7 @@ void test('excluded defaults and binaries do not enter response usage, while ret
     present(projection.schemas.request.get('Payload')),
     projection.schemas.request,
     'upload',
-    'multipart',
+    'binary-request',
   );
   assert.throws(
     () =>

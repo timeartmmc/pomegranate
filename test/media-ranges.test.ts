@@ -452,7 +452,7 @@ void test('ranges stay response-only, whole-subtype declarations with decodable 
       };
     },
     `${content}.image/*.schema`,
-    /binary values are only supported in multipart request fields$/,
+    /binary values are only supported in multipart request fields or application\/octet-stream request bodies$/,
   );
   for (const key of ['*/*', 'application/*', 'text/*']) {
     const document = fixture();

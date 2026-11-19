@@ -12,6 +12,7 @@ for (const name of [
   'endpoint-runtime.ts',
   'policy-types.ts',
   'runtime.browser.ts',
+  'runtime.binary.ts',
   'execution-runtime.ts',
   'call-runtime.ts',
   'query-runtime.ts',

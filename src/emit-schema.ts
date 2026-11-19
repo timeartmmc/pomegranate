@@ -287,14 +287,12 @@ export function schemaRenderer(
   // validators and JSON/text uses of the same schemas unchanged.
   function multipartParser(
     value: Schema,
-    textFields: readonly string[],
     location: string,
     scope: string,
   ): Expression {
     const body = resolveSchema(value, schemas.request);
     if (body.kind !== 'object')
       fail(location, 'multipart requires a fixed object');
-    const text = new Set(textFields);
     const bounds =
       value.kind === 'ref'
         ? containerConstraints(
@@ -307,12 +305,12 @@ export function schemaRenderer(
     objectParser(
       scope,
       typeOf(value, 'request'),
-      objectFields(body, 'request', location, scope).map((field) => ({
-        ...field,
-        parse: text.has(field.name)
-          ? call(use('multipartTextParser'), [field.parse])
-          : field.parse,
-      })),
+      objectFields(body, 'request', location, scope).map((field) => {
+        const schema = body.properties.get(field.name)!;
+        return flatParameterShape(schema, schemas.request)?.kind === 'string'
+          ? { ...field, parse: call(use('multipartTextParser'), [field.parse]) }
+          : field;
+      }),
       true,
       false,
       body.forbidden,

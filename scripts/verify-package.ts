@@ -51,6 +51,11 @@ import {
   multipartFixture,
   multipartSelection,
 } from '../test/multipart-fixture.ts';
+import {
+  rawUploadConsumer,
+  rawUploadFixture,
+  rawUploadSelection,
+} from '../test/raw-upload-fixture.ts';
 import { schemaFixture, standaloneSelection } from '../test/schema-fixture.ts';
 import {
   directionalFixture,
@@ -275,6 +280,7 @@ try {
     'endpoint-runtime',
     'policy-types',
     'runtime.browser',
+    'runtime.binary',
     'execution-runtime',
     'call-runtime',
     'query-runtime',
@@ -724,6 +730,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'schema-generated/*.ts',
     'staff-only/*.ts',
     'multipart-generated/*.ts',
+    'raw-upload-generated/*.ts',
     'deep-generated/*.ts',
     'type-identity-generated/*.ts',
     'type-identity-types.ts',
@@ -1064,6 +1071,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     ['tolerance', toleranceFixture(), toleranceSelection, toleranceConsumer],
     ['any-json', anyJsonFixture(), anyJsonSelection, anyJsonConsumer],
     ['media', mediaFixture(), mediaSelection, mediaConsumer],
+    ['raw-upload', rawUploadFixture(), rawUploadSelection, rawUploadConsumer],
     [
       'response-status',
       responseStatusFixture(),
@@ -1900,6 +1908,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     'generated/policy-types.ts',
     'multipart-generated/runtime.ts',
     'multipart-generated/runtime.browser.ts',
+    'raw-upload-generated/runtime.binary.ts',
     'query-generated/query-runtime.ts',
     'query-generated/execution-runtime.ts',
     'execution-generated/execution-runtime.ts',
@@ -2341,6 +2350,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     import {verifyDeep} from './verification/deep-fixture.ts';
     import {operations as symbols, RequestValidationError as SymbolError} from './symbol-generated/client.symbols.ts';
     import {verifySymbols} from './verification/symbol-fixture.ts';
+    import './raw-upload-generated/consumer.ts';
     assert.equal(operations.checkHealth.build().method, 'HEAD');
     verifySchemas(schemaOperations, SchemaError);
     verifyStandalone(message, input);
@@ -2363,6 +2373,7 @@ ${await readFile(rewritingWorker, 'utf8')}`,
     `
     import assert from 'node:assert/strict';
     import {verifyCompatibility} from './.build/compatibility-consumer.js';
+    import './.build/raw-upload-generated/consumer.js';
     verifyCompatibility();
     import * as extensionClient from './.build/extension-generated/client.consumer.js';
     import {verifyExtensionData} from './verification/extension-fixture.ts';

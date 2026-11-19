@@ -57,7 +57,7 @@ function fixture(openapi = '3.1.2') {
         operationId: 'inline',
         requestBody: {
           content: {
-            'application/octet-stream': {
+            'application/zip': {
               schema: { type: 'string', format: 'binary' },
             },
           },
@@ -471,7 +471,7 @@ void test('exact source ownership distinguishes dotted components and path names
             operationId: 'bad',
             requestBody: {
               content: {
-                'application/octet-stream': {
+                'application/zip': {
                   schema: { type: 'string', format: 'binary' },
                 },
               },

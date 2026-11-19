@@ -95,6 +95,140 @@ void test('referenced path, query and header parameters retain constraints and w
   verifyParameterReferences(client, staff);
 });
 
+void test('OpenAPI 3.0 flat parameters warn about inactive access annotations and retain validation', async (t) => {
+  const id = { $ref: '#/components/schemas/Id' };
+  const recordRef = { $ref: '#/components/schemas/Record' };
+  const document = {
+    openapi: '3.0.4',
+    info: { title: 'Synthetic parameter annotation contexts', version: '1' },
+    components: {
+      schemas: {
+        Id: { type: 'integer', minimum: 1, readOnly: true },
+        IdAlias: id,
+        Record: {
+          type: 'object',
+          properties: { id, label: { type: 'string' } },
+          required: ['id', 'label'],
+        },
+      },
+      parameters: {
+        Id: {
+          name: 'id',
+          in: 'path',
+          required: true,
+          schema: { $ref: '#/components/schemas/IdAlias' },
+        },
+      },
+    },
+    paths: {
+      '/entries/{id}': {
+        post: {
+          operationId: 'save',
+          parameters: [
+            ref('Id'),
+            {
+              name: 'recent',
+              in: 'query',
+              schema: { type: 'array', items: id },
+            },
+            {
+              name: 'X-Mode',
+              in: 'header',
+              schema: { type: 'string', enum: ['save'], writeOnly: true },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: recordRef } },
+          },
+          responses: {
+            200: {
+              description: 'Saved',
+              content: { 'application/json': { schema: recordRef } },
+            },
+          },
+        },
+      },
+    },
+  };
+  const options = { clients: ['reader'], surfaces: { reader: ['save'] } };
+  const warnings: { path: string; message: string }[] = [];
+  const originals = structuredClone(document);
+  const root = await generatedTestWorkspace(
+    t,
+    await compile(document, {
+      ...options,
+      onWarning: (warning) => warnings.push(warning),
+    }),
+  );
+  assert.deepEqual(document, originals);
+  assert.equal(warnings.length, 2);
+  assert.ok(
+    warnings.some(
+      ({ path, message }) =>
+        path.endsWith('components.schemas.Id.readOnly') &&
+        message.includes('readOnly: true has no effect'),
+    ),
+  );
+  assert.ok(
+    warnings.some(
+      ({ path, message }) =>
+        path.endsWith('parameters[2].schema.writeOnly') &&
+        message.includes('writeOnly: true has no effect'),
+    ),
+  );
+  const client = await importGenerated<RuntimeClient>(root, 'client.reader.ts');
+  const operation = present(client.operations['save']);
+  const input = {
+    path: { id: 2 },
+    query: { recent: [3, 4] },
+    headers: { 'X-Mode': 'save' },
+    body: { label: 'Entry' },
+  };
+  const request = operation.build(input);
+  assert.equal(request.url, '/entries/2?recent=3&recent=4');
+  assert.equal(request.headers['X-Mode'], 'save');
+  assert.deepEqual(request.body, input.body);
+  for (const invalid of [
+    { path: { id: 0 } },
+    { query: { recent: [0] } },
+    { headers: { 'X-Mode': 'invalid' } },
+    { body: { ...input.body, id: 2 } },
+  ])
+    assert.throws(
+      () => operation.build({ ...input, ...invalid }),
+      client.RequestValidationError,
+    );
+  assert.equal(
+    operation.parseResponse({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: '{"label":"Entry"}',
+    }).kind,
+    'protocol',
+  );
+  const response = operation.parseResponse({
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+    body: '{"id":2,"label":"Entry"}',
+  });
+  assert.equal(response.kind, 'success');
+  if (response.kind === 'success')
+    assert.deepEqual(response.data, { id: 2, label: 'Entry' });
+  await assert.rejects(
+    compile({ ...document, openapi: '3.1.2' }, options),
+    /readOnly schemas may only be omitted as object properties/,
+  );
+  for (const [flags, message] of [
+    [{ readOnly: 'yes' }, /readOnly.*expected a boolean/],
+    [{ writeOnly: true }, /readOnly and writeOnly cannot both be true/],
+  ] as const) {
+    const invalid = structuredClone(document);
+    Object.assign(invalid.components.schemas.Id, flags);
+    await assert.rejects(compile(invalid, options), message);
+  }
+});
+
 void test('single-branch unions retain scalar validation and wire forms in every parameter position', async (t) => {
   for (const keyword of ['anyOf', 'oneOf']) {
     const document = {
@@ -144,6 +278,108 @@ void test('single-branch unions retain scalar validation and wire forms in every
         client.RequestValidationError,
       );
   }
+});
+
+void test('nonnullable scalar path and query unions retain validation before serialization', async (t) => {
+  const pathId = {
+    anyOf: [
+      { type: 'integer', minimum: 2 },
+      { type: 'string', pattern: '^id/' },
+    ],
+  };
+  const queryValue = {
+    oneOf: [
+      { type: 'string', minLength: 2 },
+      { type: 'string', pattern: '^q-' },
+      { type: 'boolean' },
+    ],
+  };
+  const document = {
+    openapi: '3.1.2',
+    info: { title: 'Synthetic scalar union parameters', version: '1' },
+    components: { schemas: { Id: pathId } },
+    paths: {
+      '/values/{id}': {
+        get: {
+          operationId: 'read',
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { $ref: '#/components/schemas/Id' },
+            },
+            { name: 'q', in: 'query', schema: queryValue },
+          ],
+          responses: { 204: { description: 'Empty' } },
+        },
+      },
+    },
+  };
+  const options = { clients: ['consumer'], surfaces: { consumer: ['read'] } };
+  const files = await compile(document, options);
+  const root = await generatedTestWorkspace(t, files);
+  const client = await importGenerated<RuntimeClient>(
+    root,
+    'client.consumer.ts',
+  );
+  const operation = present(client.operations.read);
+  assert.equal(
+    operation.build({ path: { id: 2 }, query: { q: false } }).url,
+    '/values/2?q=false',
+  );
+  assert.equal(
+    operation.build({ path: { id: 'id/a?b' }, query: { q: 'a& b' } }).url,
+    '/values/id%2Fa%3Fb?q=a%26+b',
+  );
+  for (const input of [
+    { path: { id: 1 } },
+    { path: { id: '2' } },
+    { path: { id: 2 }, query: { q: 'q-both' } },
+    { path: { id: 2 }, query: { q: null } },
+    { path: { id: 2 }, query: { q: [false] } },
+  ])
+    assert.throws(() => operation.build(input), client.RequestValidationError);
+
+  const legacy = structuredClone(document);
+  legacy.openapi = '3.0.4';
+  Object.assign(legacy.components.schemas.Id, { readOnly: true });
+  const warnings: string[] = [];
+  assert.deepEqual(
+    await compile(legacy, {
+      ...options,
+      onWarning: ({ message }) => warnings.push(message),
+    }),
+    files,
+  );
+  assert.ok(
+    warnings.some((message) =>
+      message.includes('readOnly: true has no effect'),
+    ),
+  );
+
+  for (const branch of [
+    { type: 'null' },
+    { type: 'array', items: { type: 'string' } },
+    { type: 'object', properties: { label: { type: 'string' } } },
+  ]) {
+    const rejected = structuredClone(document);
+    Object.assign(rejected.paths['/values/{id}'].get.parameters[1]!.schema, {
+      oneOf: [...queryValue.oneOf, branch],
+    });
+    await assert.rejects(
+      compile(rejected, options),
+      /parameters require primitive schemas/,
+    );
+  }
+  const header = structuredClone(document);
+  Object.assign(header.paths['/values/{id}'].get.parameters[1]!, {
+    in: 'header',
+  });
+  await assert.rejects(
+    compile(header, options),
+    /parameters require primitive schemas/,
+  );
 });
 
 void test('empty operation lists retain referenced inheritance and inline overrides work across references', async (t) => {
