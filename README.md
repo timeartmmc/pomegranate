@@ -90,14 +90,14 @@ Available integrations:
 
 ## Supported contracts
 
-POM supports JSON, [documented text media](REFERENCE.md#content-types), flat form-urlencoded
-and multipart requests;
-exact, range and default response statuses; response media ranges; API keys, HTTP basic/bearer and
-OAuth2; and public, optional or combined security requirements. Schemas include
-arbitrary JSON, `anyOf` and `oneOf` unions, [recursive local
+POM supports JSON, text, flat form-urlencoded, multipart, and raw octet-stream
+requests. Responses support exact, range, and default statuses and media ranges.
+Security supports API keys, HTTP basic and bearer, OAuth2, and public, optional,
+and combined requirements. Schemas include arbitrary JSON, `anyOf` and `oneOf`
+unions, [recursive local
 references](REFERENCE.md#recursive-schemas), and [supported `allOf`
 compositions](REFERENCE.md#allof-composition). Unrelated extensions require an
-ignore list.
+ignore list. [Content types](REFERENCE.md#content-types)
 
 Unsupported features produce an error before files change. These include
 external schema references, mixed fixed fields and typed dynamic maps,

@@ -131,9 +131,9 @@ Applications run generated code and its declared dependencies. Shared helpers
 are copied into each output set. Core and direct-call modules have no package
 runtime dependencies; query modules require Query Core.
 
-Requests and responses use their respective schemas. Validation copies JSON and
-native file references; response bodies remain mutable. Immutable browser files
-may retain identity. Response parsing selects one status and media declaration,
+Requests and responses use their respective schemas. Validation copies JSON,
+native file references, and raw request byte views. Response bodies remain
+mutable. Immutable browser files may retain identity. Response parsing selects one status and media declaration,
 preserves the observed status and headers, and reports validation failures
 without trying a less specific declaration. The
 [reference](REFERENCE.md#response-evidence) defines that selection order.

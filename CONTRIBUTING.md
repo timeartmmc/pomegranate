@@ -151,9 +151,8 @@ and validators, and typechecks a standalone consumer before accepting source
 sizes.
 
 `bench/output-growth.ts` fixes the expected file inventory and reference UTF-8
-source sizes. Most references come from compiler `da32f73`; policy version 6
-updates only `runtime.ts`. The file records its source digest and the history of
-reviewed size increases.
+source sizes. Most references come from compiler `da32f73`. The file records the
+reviewed reference digest and size history for `runtime.ts`.
 
 Each file allows the larger of 512 extra bytes or
 `ceil(reference bytes * 5 / 100)` extra bytes. Combined operation/schema growth

@@ -32,7 +32,7 @@ These selection keys are shared with programmatic compilation:
 | Key                     | Purpose                                                                                                                                         |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `surfaces`              | Optional complete map of surface names to operation IDs for contracts without inline membership; see [surfaces](#client-surfaces-and-security). |
-| `formats`               | Optional named string-pattern validators; see [registered formats](#registered-formats).                                                        |
+| `formats`               | Named string patterns and numeric constraints. See [registered formats](#registered-formats).                                                   |
 | `clients`               | Required array of declared surfaces; may be empty when `standalone` selects at least one root.                                                  |
 | `ignoreExtensions`      | Exact unrelated `x-…` annotation keywords to ignore; POM metadata remains validated.                                                            |
 | `excludeOperations`     | Exact operation IDs to remove before contract interpretation; unknown or ambiguous IDs fail.                                                    |
@@ -198,7 +198,14 @@ when using `compile`:
       "type": "string",
       "pattern": "^RES-[0-9]{6}$"
     },
+    "uint8": { "type": "integer", "minimum": 0, "maximum": 255 },
+    "uint16": { "type": "integer", "minimum": 0, "maximum": 65535 },
     "uint32": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "unix-time": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
     "decimal": { "type": "number", "multipleOf": 0.01 }
   }
 }
@@ -206,12 +213,17 @@ when using `compile`:
 
 Use `"type": "string", "format": "booking-code"` in the OpenAPI schema. POM
 checks the named pattern on requests, responses, and standalone validators.
-Format names match exactly, including case. Undefined names fail compilation,
-and built-in names cannot be overridden. Every definition is checked, including
-unused ones, before outputs change. Only definitions reachable from a selected
+Format names match exactly, including case. Diagnostics for undefined formats
+identify the name and how to register it for a supported scalar type. Format
+type mismatches identify the required type. Built-in names are reserved.
+Every definition is checked, including unused ones, before outputs change.
+Only definitions reachable from a selected
 schema enter generated code. Use an application-specific prefix to avoid name
 collisions with future built-in formats. A collision fails compilation before
 files change.
+
+Remove a format that merely repeats the schema type, such as `format: "string"`
+on a string schema, when the exporter intended no additional constraint.
 
 String definitions accept exactly `type: "string"` and a string `pattern`, using the
 same Unicode regular-expression syntax and limits as schema patterns. Registered
@@ -232,6 +244,11 @@ The schema must declare the same type as the registered format. Format and
 schema constraints both apply, including distinct `multipleOf` assertions.
 Contradictory bounds and literals receive diagnostics. A type-only registration,
 such as `{ "type": "number" }`, adds no rule beyond that type.
+
+The `unix-time` example assumes signed integer seconds since the Unix epoch
+within JavaScript's safe-integer range. It accepts pre-epoch timestamps and
+timestamps beyond the signed 32-bit range. Declare any narrower time bounds in
+the schema.
 
 Numeric formats use the existing JavaScript number representation and do not
 provide arbitrary decimal precision or parse numeric strings. Generated code
@@ -354,8 +371,10 @@ Relative URL references are accepted. Required scopes must appear in at least
 one of the scheme's flows. An empty requirement array means no scopes are
 required. Flow URLs and available scope descriptions are validated but are not
 emitted: the application owns provider configuration and token acquisition.
-Non-OAuth requirements must use empty arrays; nonempty role requirements remain
-explicitly unsupported, including in OpenAPI 3.1.
+OpenAPI 3.0 requires empty requirement arrays for HTTP and API key schemes.
+Correct exports that populate those arrays with roles and keep role enforcement
+in the API. OpenAPI 3.1 permits role entries for those schemes. POM supports
+empty arrays for them and diagnoses nonempty role requirements.
 
 An operation inherits document security when its own `security` field is absent.
 Its own `[]` or `[{}]` declares public access; absence at both levels also means
@@ -480,15 +499,15 @@ selected for output.
 
 ## Supported vocabulary
 
-| Surface     | Current support                                                                                                                                                                                                                                                                                                                                            |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input       | Local OpenAPI 3.0.x or 3.1.x JSON or YAML 1.2 with any patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                                              |
-| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; path placeholders in complete segments or within a segment                                                                                                                                                                                                       |
-| Parameters  | Path-item inheritance and operation overrides; local component references and aliases; primitive path/query parameters; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; primitive/array request headers and optional nullable primitive headers; simple path/header and form query serialization |
-| Bodies      | Required or optional JSON/text, flat form-urlencoded and multipart bodies; response statuses 200–599, ranges `2XX`–`5XX`, and `default`, with at least one possible success; JSON, text, or bodyless responses; primitive/array response headers; local component references and aliases                                                                   |
-| Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; productive local schema references; restricted unions and maps described below                                                                                |
-| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length and `uniqueItems`, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                    |
-| Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `ipv4`, `ipv6`, and `byte`; string `password` hint; integer `int32` and safe numeric `int64`; string `int64`; number `float` and `double`; no coercion                                                                                                                                                 |
+| Surface     | Current support                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input       | Local OpenAPI 3.0.x or 3.1.x JSON or YAML 1.2 with any patch version; version 2 JSON configuration; optional version 3 policy                                                                                                                                                                                                                                                         |
+| Operations  | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; unique explicit or generated operation IDs; path placeholders in complete segments or within a segment                                                                                                                                                                                                                                  |
+| Parameters  | Path-item inheritance and operation overrides; local component references and aliases; scalar path/query parameters and nonnullable scalar unions; optional nullable primitive queries; primitive query arrays with repeated keys or comma-separated values; primitive/array request headers and optional nullable primitive headers; simple path/header and form query serialization |
+| Bodies      | Required or optional JSON, text, flat form-urlencoded, multipart and raw octet-stream requests. Response statuses 200–599, ranges `2XX`–`5XX`, and `default`, with at least one possible success. JSON, text, or bodyless responses, primitive/array response headers, and local component references.                                                                                |
+| Schemas     | Unconstrained JSON; explicit object, array, string, number, integer, and boolean types; 3.1 also supports null types and scalar `const`; scalar `enum`; directional fixed-object properties; productive local schema references; restricted unions and maps described below                                                                                                           |
+| Constraints | String length in Unicode code points, Unicode ECMAScript patterns, array length and `uniqueItems`, object property counts, inclusive/exclusive numeric bounds, `multipleOf`, and required object fields                                                                                                                                                                               |
+| Formats     | String `date`, `date-time`, `uuid`, `email`, `uri`, `uri-reference`, `ipv4`, `ipv6`, and `byte`. String `password` hint, integer `int32` and safe numeric `int64`, string `int64`, and number `float` and `double`. Values retain their declared types.                                                                                                                               |
 
 Empty Path Items and Path Items containing only supported metadata are accepted
 and generate no operations. Their paths, annotations, parameters, and servers
@@ -570,15 +589,16 @@ Request and response content supports `application/json`, `text/json`, concrete
 media types with a `+json` suffix, and strings under `text/plain`, `text/html`,
 `text/csv`, `text/markdown`, `text/x-markdown`, `text/x-diff`, `text/x-patch`,
 `text/calendar`, `text/yaml`, `text/x-yaml`, `application/yaml`, and
-`application/x-yaml`; requests also support flat form-urlencoded and multipart
-bodies as below, and responses also support media ranges. One representation is selected
-for each request. Request preference is `application/json`, then other JSON
+`application/x-yaml`. Requests also support flat form-urlencoded, multipart, and
+raw `application/octet-stream` bodies. Responses also support media ranges.
+One representation is selected for each request. Request preference is
+`application/json`, then other JSON
 types sorted by their lowercase names, then text types in the same order, then
-form-urlencoded, then multipart. Charset parameters do not affect this order.
+form-urlencoded, then multipart, then octet-stream. Charset parameters do not affect this order.
 Request selection is independent of declaration order. All declarations still
 receive validation, including nonpreferred request entries; unsupported media
 types and schemas still fail compilation. Requiredness applies to the selected
-request representation, including form and multipart bodies.
+request representation.
 
 Concrete content-map keys may have one `charset` parameter, with a token or
 quoted token value. POM preserves its normalized value in the selected request
@@ -588,8 +608,9 @@ serialize JSON and encode request text as UTF-8, so another charset fails
 compilation. Response declarations may name any charset. Multiple declarations
 of the same media type, even with different charsets, are rejected. Other
 parameters, including `stream=watch`, are
-unsupported. Multipart declarations accept no parameters; the transport supplies
-the boundary. Request keys must be concrete; wildcard request media is rejected.
+unsupported. Multipart and octet-stream declarations accept no parameters.
+The transport supplies the multipart boundary. Request keys must be concrete.
+Wildcard request media is rejected.
 Response keys may also be the
 ranges `type/*` and `*/*`. Other wildcard spellings, such as `*/json` or
 `application/*+json`, are rejected. Case-insensitive duplicates fail. JSON
@@ -1045,20 +1066,18 @@ grammar, including its requirement that `::` replace at least two groups. This
 is a syntax check: DNS, delivery and SMTP transport length limits are not
 checked. Declare field lengths explicitly when required.
 
-`uri` checks ASCII [RFC 3986 generic
-syntax](https://www.rfc-editor.org/rfc/rfc3986.html#appendix-A), requiring a
-scheme. It accepts non-HTTP schemes, IPv6 and IPvFuture hosts, and well-formed
-percent escapes. Relative references, raw non-ASCII text, malformed escapes,
-backslashes, controls and IPv6 zone identifiers are rejected. Empty hierarchical
-components and ports are permitted; numeric ports have no implicit range limit.
-Scheme-specific rules and host existence are application concerns. Use `pattern`
-to restrict schemes or impose a narrower application profile.
+`uri` requires a scheme. `uri-reference` accepts absolute URIs and relative
+references, including an empty string, `../items`, `?page=2`, `#section`, and
+`//example.invalid/items`. Both check ASCII RFC 3986 syntax, including non-HTTP schemes,
+IPv6 and IPvFuture hosts, and well-formed percent escapes. Raw non-ASCII text,
+backslashes, controls, and IPv6 zone identifiers fail validation. Empty
+hierarchical components and ports are permitted, and numeric ports have no
+implicit range limit. Validation preserves the input string. Use `pattern` to
+restrict schemes or impose a narrower application profile. See the
+[RFC 3986 grammar](https://www.rfc-editor.org/rfc/rfc3986.html#appendix-A).
 
-Both formats preserve the original string, including case and percent spelling;
-neither resolves, decodes or normalizes values. `idn-email`, `iri`, and
-`uri-reference` have no built-in validator and require an explicit definition to
-be used. Documentation URLs and contact emails remain shape-checked annotations,
-independent of schema format assertions.
+Register custom formats such as `idn-email` and `iri` to use them. Documentation
+URLs and contact emails are shape-checked annotations.
 
 Format mismatches fail request validation and produce protocol failures for
 responses. For example, a bare hostname does not satisfy `format: "uri"`; use a
@@ -1444,13 +1463,18 @@ rejects both flags being true at the same schema, including through aliases.
 Entire source declarations, including excluded fields, still receive syntax,
 reference and constraint checks. Usage checks then inspect visible fields: an
 excluded write-only field may have a binary schema without affecting response
-validation. Visible binary values retain their multipart-only restriction.
+validation. Binary values can be sent in multipart fields or as the complete
+octet-stream request body.
 Defaults remain documentation in both directions.
 
-Projection operates at fixed object property boundaries. If an active flag would
-exclude an entire body, parameter/header, standalone root, array item or map
-value, generation fails; POM does not silently omit those values. Inactive flags
-are permitted, such as a read-only response root. True flags on `anyOf` or
+Projection operates at fixed object property boundaries. For supported flat
+OpenAPI 3.0 path, query, and header parameters, POM keeps the values and warns
+about true access annotations on their schemas. Referenced schemas still
+control object-property projection wherever they describe a property.
+
+In other contexts, generation fails if an active flag would exclude an entire
+body, parameter, header, standalone root, array item, or map value. Inactive
+flags are permitted, such as a read-only response root. True flags on `anyOf` or
 `oneOf` branch roots are unsupported because their applicability can depend on
 which branch succeeds; place a shared flag on the containing property or union
 instead. A discriminator field must remain present and required in the direction
@@ -1503,8 +1527,8 @@ returns `'none' | 'text'`. Narrow by `bodyKind` before reading `body` or
 `contentType`. Present JSON/text requests expose the selected `contentType`.
 Applications JSON-encode the `json` branch, send the `text` branch as its raw
 string, and set Content-Type from `request.contentType`. Omitted bodies expose
-neither field. Optional form and multipart bodies likewise prepare `none` when
-omitted and validate the complete body when present. Required bodies retain
+neither field. Optional form, multipart, and binary bodies likewise prepare
+`none` when omitted and validate the complete body when present. Required bodies retain
 their required inputs. All GET/HEAD request bodies remain unsupported. Response
 validation is independent of whether a request body was sent.
 
@@ -1528,6 +1552,12 @@ override. Path placeholders must match the effective path parameters exactly.
 References resolve before inheritance and duplicate checks, using the target's
 `name` and `in`. Errors identify the invalid component declaration or list
 entry.
+
+Path and query parameters can use a union of nonnullable scalar branches. The
+builder validates the typed input before applying ordinary scalar conversion
+and percent encoding. `oneOf` still requires exactly one matching branch.
+If the schema permits both the number `1` and the string `"1"`, both encode as
+`1` on the wire. The receiving API interprets the decoded text.
 
 Configuration may name declared request headers in `transportHeaders`, for
 example `"transportHeaders": ["X-Origin"]`. These headers are absent from
@@ -1610,14 +1640,42 @@ percent-decoding each item, as for query arrays. Part headers, per-field media
 types, other styles and `allowReserved: true` receive explicit diagnostics.
 Field names and string values must contain well-formed Unicode.
 
+### Raw byte requests
+
+`application/octet-stream` request media prepares `bodyKind: "binary"` with a
+byte array in `body` and the media type in `contentType`. You can omit the
+schema, use an empty schema, or declare `{ "type": "string", "format": "binary" }`.
+These forms also work through local references to an empty or binary schema.
+In 3.1, `type: "string"` with `contentMediaType: "application/octet-stream"`
+also describes binary data. The content-map key determines the prepared media
+type. An inline `maxLength` sets an upper bound in bytes.
+Encoded or structured schemas and nullable binary schemas receive diagnostics.
+This body kind is available for requests with the documented JSON, text, or
+bodyless responses.
+
+Pass a `Uint8Array` view. Node `Buffer` views also work. POM validates the
+view and any byte limit, then copies its visible bytes into an owned
+`Uint8Array<ArrayBuffer>`. The copy is prepared synchronously, including
+for executable calls, so later changes to the input cannot change the request.
+Shared or detached backing buffers are rejected. An empty view sends zero
+bytes. Omitting an optional body prepares `bodyKind: "none"`.
+
+The transport sends the prepared bytes directly and sets Content-Type from
+`request.contentType`. Browser callers can obtain bytes with
+`new Uint8Array(await file.arrayBuffer())`. Native applications read the file
+using their platform's APIs. The application owns file access, progress, and
+retries. Use the prepared copy for a retry and keep its bytes intact between
+attempts.
+
 ### Multipart requests
 
 Multipart clients require an explicit target, for example
 `"targets": { "web": "browser", "mobile": "native" }` for those selected
-clients. A `multipart/form-data` body is a fixed object of strings,
-files, and file arrays. Files use `type: "string"` with `format: "binary"` in
-both dialects. In 3.1, `contentMediaType: "application/octet-stream"` is also
-supported. Browser inputs require `File`; native inputs use
+clients. A `multipart/form-data` body is a fixed object of strings, numbers,
+integers, booleans, files, and file arrays. Files use `type: "string"` with
+`format: "binary"` in both dialects. OpenAPI 3.1 also supports
+`contentMediaType: "application/octet-stream"`. Browser inputs require `File`.
+Native inputs use
 `{ uri: string, name?: string, mediaType?: string }`, with nonempty strings.
 Browser files must be instances of the environment's current `File` constructor,
 with valid File metadata and Blob backing. Their identity is preserved. Native
@@ -1640,10 +1698,12 @@ and a `multipart` field inventory (`name`, `kind`, `multiple`, `required`).
 An omitted optional body prepares `bodyKind: "none"` without body or inventory;
 a present optional body has the same validation and file requirements as a
 required body.
-Applications resolve native references and serialize present fields, repeating
-parts for file arrays. Builders omit optional fields whose value is `undefined`.
-Serializers skip absent or `undefined` values and optional empty arrays;
-required file arrays cannot be empty.
+The `text` kind covers scalar parts. Builders preserve validated numbers and
+booleans in `body` and omit optional `undefined` values. Append each present
+text part as `String(value)`, including `0`, `false`, and allowed empty strings.
+Resolve native references and repeat parts for file arrays. Skip absent or
+`undefined` values and optional empty arrays. Required file arrays need at least
+one file.
 
 Multipart objects with `minProperties` or `maxProperties` require each optional
 file array to have an effective `minItems` of at least 1; local reference
@@ -1656,9 +1716,9 @@ values must contain well-formed Unicode. Builders normalize isolated CR and LF
 to CRLF in detached text values before schema validation, preserving existing
 CRLF pairs and leaving caller inputs unchanged. Length, pattern, literal and
 format constraints apply to the normalized value returned in the prepared body,
-so FormData serialization preserves the validated text. Nested objects, nullable
-files, custom part encodings, and binary values in JSON or standalone validators
-are unsupported.
+so FormData serialization preserves the validated string. Nested objects,
+scalar arrays, nullable fields, custom part encodings, and binary values in JSON
+or standalone validators are unsupported.
 
 ### Schema validation
 

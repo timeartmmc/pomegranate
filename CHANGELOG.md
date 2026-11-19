@@ -4,6 +4,13 @@
 
 ### Breaking changes
 
+`PreparedRequest` and `Executor` include a `binary` body kind. Exhaustive
+transport switches must account for it.
+
+The compiler reserves `uri-reference` for the RFC 3986 validator. If your
+configuration registers that name, remove the registration to use standard
+syntax or rename both the custom registration and its schema references.
+
 `oneOf` checks directional source membership before request field policy or
 response stripping. Closed branch objects now enforce their source closure
 within `oneOf`, including nested schemas. An open `Basic`/`Full` overlap rejects
@@ -17,6 +24,20 @@ exhaustively inspect body kinds must handle it or reject it explicitly, even
 when no operation declares a form body.
 
 ### Features
+
+Raw octet-stream requests validate size bounds in bytes and snapshot the supplied
+`Uint8Array` view for transport. See [raw byte requests](REFERENCE.md#raw-byte-requests).
+
+String schemas support `uri-reference` with absolute URIs and relative
+references. Format diagnostics identify unknown names, matching
+registrations, and required types. See [string formats](REFERENCE.md#string-validation-and-formats).
+
+OpenAPI 3.0 flat parameter schemas keep their values and warn when
+`readOnly` or `writeOnly` has no effect. Role-array diagnostics distinguish
+invalid OpenAPI 3.0 exports from unsupported OpenAPI 3.1 role requirements.
+
+Path and query parameters accept nonnullable scalar unions with their
+existing validation and wire serialization rules.
 
 Schema references and standalone roots accept schema-valued local JSON Pointers,
 including escaped property names and fragments inside reusable HTTP components.
@@ -68,8 +89,10 @@ callback definitions remain unsupported.
 Flat form-urlencoded bodies validate typed fields and prepare an encoded string;
 send it directly with the prepared Content-Type. Optional multipart bodies now
 prepare no body when omitted and retain complete browser/native validation when
-present. Headers support primitive and primitive array schemas while retaining
-string HTTP evidence. See [wire serialization](REFERENCE.md#header-serialization).
+present. Multipart forms also validate number, integer, and boolean parts for
+applications to serialize as text. See [multipart requests](REFERENCE.md#multipart-requests).
+Headers support primitive and primitive array schemas while retaining string
+HTTP evidence. See [wire serialization](REFERENCE.md#header-serialization).
 
 Schema `xml` annotations are accepted as metadata in OpenAPI 3.0 and 3.1.
 Their fields are checked without changing JSON property names or validation;
